@@ -22,6 +22,15 @@
 
 #define CSID_NUM_CLK_MAX  16
 
+enum csiphy_lane_assign {
+	PHY_LANE_D0,
+	PHY_LANE_CLK,
+	PHY_LANE_D1,
+	PHY_LANE_D2,
+	PHY_LANE_D3,
+	PHY_LANE_MAX,
+};
+
 struct csid_reg_parms_t {
 /* MIPI	CSID registers */
 	uint32_t csid_hw_version_addr;
@@ -58,10 +67,18 @@ struct csid_reg_parms_t {
 	uint32_t csid_dl_input_sel_shift;
 	uint32_t csid_phy_sel_shift;
 	uint32_t csid_version;
+	uint32_t csid_3p_ctrl_0_addr;
+	uint32_t csid_3p_pkt_hdr_addr;
+	uint32_t csid_test_bus_ctrl;
+	uint32_t csid_irq_mask_val;
+	uint32_t csid_err_lane_overflow_offset_2p;
+	uint32_t csid_err_lane_overflow_offset_3p;
+	uint32_t csid_phy_sel_shift_3p;
 };
 
 struct csid_ctrl_t {
 	struct csid_reg_parms_t csid_reg;
+	uint8_t *csid_lane_assign;
 };
 
 enum msm_csid_state_t {
@@ -89,6 +106,10 @@ struct csid_device {
 	struct clk *csid_clk[CSID_NUM_CLK_MAX];
 	uint32_t csid_clk_index;
 	uint32_t csid_max_clk;
+	uint32_t csid_3p_enabled;
+	struct camera_vreg_t *csid_vreg;
+	struct regulator *csid_reg_ptr[MAX_REGULATOR];
+	int32_t regulator_count;
 	uint8_t is_testmode;
 	struct msm_camera_csid_testmode_parms testmode_params;
 	uint32_t csid_sof_debug;

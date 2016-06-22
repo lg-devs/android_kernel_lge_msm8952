@@ -562,6 +562,11 @@ static u32 kpdbl_master_period_us;
 DECLARE_BITMAP(kpdbl_leds_in_use, NUM_KPDBL_LEDS);
 static bool is_kpdbl_master_turn_on;
 
+#ifdef CONFIG_LEDS_PMI8996_EMOTIONAL
+static int qpnp_pattern_solid(struct qpnp_led_data *led);
+static void qpnp_pattern_config(struct qpnp_led_data *led);
+#endif
+
 static int
 qpnp_led_masked_write(struct qpnp_led_data *led, u16 addr, u8 mask, u8 val)
 {
@@ -680,7 +685,7 @@ static int qpnp_wled_set(struct qpnp_led_data *led)
 				return rc;
 			}
 
-			usleep(WLED_OVP_DELAY);
+			usleep_range(WLED_OVP_DELAY, WLED_OVP_DELAY);
 		} else if (led->wled_cfg->pmic_version == PMIC_VER_8941) {
 			if (led->wled_cfg->num_physical_strings <=
 					WLED_THREE_STRINGS) {
@@ -715,7 +720,7 @@ static int qpnp_wled_set(struct qpnp_led_data *led)
 						"WLED write sink reg failed");
 					return rc;
 				}
-				usleep(WLED_OVP_DELAY);
+				usleep_range(WLED_OVP_DELAY, WLED_OVP_DELAY);
 			} else {
 				val = WLED_DISABLE_ALL_SINKS;
 				rc = spmi_ext_register_writel(
@@ -746,7 +751,7 @@ static int qpnp_wled_set(struct qpnp_led_data *led)
 					msleep(WLED_OVP_DELAY_LOOP);
 					tries++;
 				}
-				usleep(WLED_OVP_DELAY);
+				usleep_range(WLED_OVP_DELAY, WLED_OVP_DELAY);
 			}
 		}
 
@@ -1448,7 +1453,7 @@ static int qpnp_flash_set(struct qpnp_led_data *led)
 			/*
 			 * Add 1ms delay for bharger enter stable state
 			 */
-			usleep(FLASH_RAMP_UP_DELAY_US);
+			usleep_range(FLASH_RAMP_UP_DELAY_US, FLASH_RAMP_UP_DELAY_US);
 
 			if (!led->flash_cfg->strobe_type)
 				led->flash_cfg->trigger_flash &=
@@ -1512,7 +1517,7 @@ static int qpnp_flash_set(struct qpnp_led_data *led)
 			 * Disable module after ramp down complete for stable
 			 * behavior
 			 */
-			usleep(FLASH_RAMP_DN_DELAY_US);
+			usleep_range(FLASH_RAMP_UP_DELAY_US, FLASH_RAMP_UP_DELAY_US);
 
 			rc = qpnp_led_masked_write(led,
 				FLASH_ENABLE_CONTROL(led->base),
@@ -1844,7 +1849,11 @@ static void __qpnp_led_work(struct qpnp_led_data *led,
 	case QPNP_ID_RGB_RED:
 	case QPNP_ID_RGB_GREEN:
 	case QPNP_ID_RGB_BLUE:
+#ifdef CONFIG_LEDS_PMI8996_EMOTIONAL
+		rc = qpnp_pattern_solid(led);
+#else
 		rc = qpnp_rgb_set(led);
+#endif
 		if (rc < 0)
 			dev_err(&led->spmi_dev->dev,
 				"RGB set brightness failed (%d)\n", rc);
@@ -3675,6 +3684,10 @@ static int qpnp_get_config_rgb(struct qpnp_led_data *led,
 	rc = qpnp_get_config_pwm(led->rgb_cfg->pwm_cfg, led->spmi_dev, node);
 	if (rc < 0)
 		return rc;
+
+#ifdef CONFIG_LEDS_PMI8996_EMOTIONAL
+		qpnp_pattern_config(led);
+#endif
 
 	return 0;
 }

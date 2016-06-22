@@ -17,7 +17,6 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/wcd9xxx/core-resource.h>
 #include <linux/mfd/wcd9xxx/wcd9xxx_registers.h>
-#include <linux/mfd/wcd9xxx/wcd9310_registers.h>
 #include <linux/delay.h>
 #include <linux/irqdomain.h>
 #include <linux/interrupt.h>
@@ -26,6 +25,8 @@
 #include <linux/slab.h>
 #include <linux/ratelimit.h>
 #include <soc/qcom/pm.h>
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
 
 #define BYTE_BIT_MASK(nr)		(1UL << ((nr) % BITS_PER_BYTE))
 #define BIT_BYTE(nr)			((nr) / BITS_PER_BYTE)
@@ -702,14 +703,19 @@ static int wcd9xxx_irq_probe(struct platform_device *pdev)
 	int irq;
 	struct irq_domain *domain;
 	struct wcd9xxx_irq_drv_data *data;
+	struct device_node *node = pdev->dev.of_node;
 	int ret = -EINVAL;
 
-	irq = platform_get_irq_byname(pdev, "cdc-int");
-	if (irq < 0) {
-		dev_err(&pdev->dev, "%s: Couldn't find cdc-int node(%d)\n",
-			__func__, irq);
-		return -EINVAL;
+	irq = of_get_named_gpio(node, "qcom,gpio-connect", 0);
+	if (!gpio_is_valid(irq)) {
+		dev_err(&pdev->dev, "TLMM connect gpio not found\n");
+		return -EPROBE_DEFER;
 	} else {
+		irq = gpio_to_irq(irq);
+		if (irq < 0) {
+			dev_err(&pdev->dev, "Unable to configure irq\n");
+			return irq;
+		}
 		dev_dbg(&pdev->dev, "%s: virq = %d\n", __func__, irq);
 		domain = irq_find_host(pdev->dev.of_node);
 		if (unlikely(!domain)) {

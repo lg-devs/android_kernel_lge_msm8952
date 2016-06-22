@@ -11,8 +11,8 @@
 #ifndef __LINUX_SND_SOC_DPCM_H
 #define __LINUX_SND_SOC_DPCM_H
 
-#include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/list.h>
 #include <sound/pcm.h>
 
 struct snd_soc_pcm_runtime;
@@ -104,6 +104,8 @@ struct snd_soc_dpcm_runtime {
 	/* state and update */
 	enum snd_soc_dpcm_update runtime_update;
 	enum snd_soc_dpcm_state state;
+
+	int trigger_pending; /* trigger cmd + 1 if pending, 0 if not */
 };
 
 /* can this BE stop and free */
@@ -136,7 +138,7 @@ void snd_soc_dpcm_be_set_state(struct snd_soc_pcm_runtime *be, int stream,
 /* internal use only */
 int soc_dpcm_be_digital_mute(struct snd_soc_pcm_runtime *fe, int mute);
 int soc_dpcm_debugfs_add(struct snd_soc_pcm_runtime *rtd);
-int soc_dpcm_runtime_update(struct snd_soc_dapm_widget *);
+int soc_dpcm_runtime_update(struct snd_soc_card *);
 
 int dpcm_path_get(struct snd_soc_pcm_runtime *fe,
 	int stream, struct snd_soc_dapm_widget_list **list_);
@@ -155,12 +157,13 @@ int dpcm_be_dai_trigger(struct snd_soc_pcm_runtime *fe, int stream, int cmd);
 int dpcm_be_dai_prepare(struct snd_soc_pcm_runtime *fe, int stream);
 int dpcm_fe_dai_prepare_be(struct snd_soc_pcm_runtime *fe,
 		struct snd_soc_pcm_runtime *be, int stream);
-int dpcm_dapm_stream_event(struct snd_soc_pcm_runtime *fe,
-	int dir, int event);
+int dpcm_dapm_stream_event(struct snd_soc_pcm_runtime *fe, int dir,
+	int event);
 
 static inline void dpcm_path_put(struct snd_soc_dapm_widget_list **list)
 {
 	kfree(*list);
 }
+
 
 #endif

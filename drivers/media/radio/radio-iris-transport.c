@@ -1,7 +1,7 @@
 /*
- *  Qualcomm's FM Shared Memory Transport Driver
+ *  QTI's FM Shared Memory Transport Driver
  *
- *  FM HCI_SMD ( FM HCI Shared Memory Driver) is Qualcomm's Shared memory driver
+ *  FM HCI_SMD ( FM HCI Shared Memory Driver) is QTI's Shared memory driver
  *  for the HCI protocol. This file is based on drivers/bluetooth/hci_vhci.c
  *
  *  Copyright (c) 2000-2001, 2011-2012, 2014-2015 The Linux Foundation.
@@ -58,6 +58,7 @@ static void radio_hci_smd_recv_event(unsigned long temp)
 	struct sk_buff *skb;
 	unsigned  char *buf;
 	struct radio_data *hsmd = &hs;
+
 	len = smd_read_avail(hsmd->fm_channel);
 
 	while (len) {
@@ -219,6 +220,7 @@ static void radio_hci_smd_exit(void)
 static int hcismd_fm_set_enable(const char *val, struct kernel_param *kp)
 {
 	int ret = 0;
+
 	mutex_lock(&fm_smd_enable);
 	ret = param_set_int(val, kp);
 	if (ret)
@@ -239,5 +241,4 @@ done:
 	return ret;
 }
 MODULE_DESCRIPTION("FM SMD driver");
-MODULE_AUTHOR("Ankur Nandwani <ankurn@codeaurora.org>");
 MODULE_LICENSE("GPL v2");

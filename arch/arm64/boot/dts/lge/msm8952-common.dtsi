@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/ {
+	memory {
+		ramoops_mem: ramoops_region@0x84800000 {
+			linux,reserve-contiguous-region;
+			linux,reserve-region;
+			linux,remove-completely;
+			reg = <0x0 0x84800000 0x0 0x100000>;
+			label = "ramoops_mem";
+		};
+
+		crash_fb_mem: crash_fb_mem@0x84000000 {
+			linux,reserve-contiguous-region;
+			linux,reserve-region;
+			reg = <0x0 0x84000000 0x0 0x800000>;
+			label = "crash_mem";
+		};
+	};
+};
+
+&soc {
+	ramoops {
+		compatible = "ramoops";
+		mem-size = <0x80000>;
+		mem-address = <0x84800000>;
+		record-size = <4096>;
+		console-size = <0x40000>;
+		ftrace-size = <0x40000>;
+		dump-oops = <1>;
+	};
+
+	crash_fb {
+		compatible = "crash_fb";
+		mem-addr = <0x84000000>;
+		mem-size = <0x800000>;
+	};
+
+	bootlog {
+		compatible = "bootlog";
+	};
+};

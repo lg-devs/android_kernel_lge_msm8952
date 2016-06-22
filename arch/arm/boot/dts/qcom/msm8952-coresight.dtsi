@@ -714,7 +714,7 @@
 		clocks = <&clock_gcc clk_qdss_clk>,
 			 <&clock_gcc clk_qdss_a_clk>;
 		clock-names = "core_clk", "core_a_clk";
-        };
+	};
 
 	rpm_etm0 {
 		compatible = "qcom,coresight-remote-etm";
@@ -788,7 +788,7 @@
 		      <0x78c5010 0x4>,
 		      <0x7885010 0x4>;
 		reg-names = "wrapper-mux", "wrapper-lockaccess", "usbbam-mux",
-		            "blsp-mux";
+				"blsp-mux";
 		coresight-id = <47>;
 		coresight-name = "coresight-hwevent";
 		coresight-nr-inports = <0>;

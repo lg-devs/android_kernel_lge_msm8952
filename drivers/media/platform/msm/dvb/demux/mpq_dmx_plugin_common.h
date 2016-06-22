@@ -308,8 +308,7 @@ struct mpq_video_feed_info {
 	u32 pes_header_offset;
 	int fullness_wait_cancel;
 	enum mpq_adapter_stream_if stream_interface;
-	const struct dvb_dmx_video_patterns
-		*patterns[DVB_DMX_MAX_SEARCH_PATTERN_NUM];
+	const struct dvb_dmx_video_patterns *patterns[DVB_DMX_MAX_SEARCH_PATTERN_NUM];
 	int patterns_num;
 	char prev_pattern[DVB_DMX_MAX_PATTERN_LEN];
 	u32 frame_offset;

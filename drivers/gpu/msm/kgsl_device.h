@@ -55,6 +55,7 @@
 #define KGSL_STATE_SUSPEND	0x00000010
 #define KGSL_STATE_AWARE	0x00000020
 #define KGSL_STATE_SLUMBER	0x00000080
+#define KGSL_STATE_DEEP_NAP	0x00000100
 
 #define KGSL_GRAPHICS_MEMORY_LOW_WATERMARK  0x1000000
 
@@ -103,8 +104,8 @@ enum kgsl_event_results {
 #define KGSL_CONTEXT_ID(_context) \
 	((_context != NULL) ? (_context)->id : KGSL_MEMSTORE_GLOBAL)
 
-/* Allocate 512K for the snapshot static region*/
-#define KGSL_SNAPSHOT_MEMSIZE (512 * 1024)
+/* Allocate 600K for the snapshot static region*/
+#define KGSL_SNAPSHOT_MEMSIZE (600 * 1024)
 
 struct kgsl_device;
 struct platform_device;
@@ -177,6 +178,7 @@ struct kgsl_functable {
 	void (*regulator_disable)(struct kgsl_device *);
 	void (*pwrlevel_change_settings)(struct kgsl_device *device,
 		unsigned int prelevel, unsigned int postlevel, bool post);
+	void (*regulator_disable_poll)(struct kgsl_device *device);
 };
 
 struct kgsl_ioctl {
@@ -250,6 +252,7 @@ struct kgsl_device {
 	int open_count;
 
 	struct mutex mutex;
+	struct mutex mutex_mmu_sync;
 	uint32_t state;
 	uint32_t requested_state;
 
@@ -257,7 +260,6 @@ struct kgsl_device {
 
 	wait_queue_head_t wait_queue;
 	wait_queue_head_t active_cnt_wq;
-	struct workqueue_struct *work_queue;
 	struct platform_device *pdev;
 	struct dentry *d_debugfs;
 	struct idr context_idr;
@@ -303,6 +305,7 @@ struct kgsl_device {
 	.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER((_dev).wait_queue),\
 	.active_cnt_wq = __WAIT_QUEUE_HEAD_INITIALIZER((_dev).active_cnt_wq),\
 	.mutex = __MUTEX_INITIALIZER((_dev).mutex),\
+	.mutex_mmu_sync = __MUTEX_INITIALIZER((_dev).mutex_mmu_sync),\
 	.state = KGSL_STATE_NONE,\
 	.ver_major = DRIVER_VERSION_MAJOR,\
 	.ver_minor = DRIVER_VERSION_MINOR
@@ -394,7 +397,6 @@ struct kgsl_context {
  * @comm: task name of the process
  * @mem_lock: Spinlock to protect the process memory lists
  * @refcount: kref object for reference counting the process
- * @mem_rb: RB tree node for the memory owned by this process
  * @idr: Iterator for assigning IDs to memory allocations
  * @pagetable: Pointer to the pagetable owned by this process
  * @kobj: Pointer to a kobj for the sysfs directory for this process
@@ -410,7 +412,6 @@ struct kgsl_process_private {
 	char comm[TASK_COMM_LEN];
 	spinlock_t mem_lock;
 	struct kref refcount;
-	struct rb_root mem_rb;
 	struct idr mem_idr;
 	struct kgsl_pagetable *pagetable;
 	struct list_head list;
@@ -452,6 +453,7 @@ struct kgsl_device_private {
  * @work: worker to dump the frozen memory
  * @dump_gate: completion gate signaled by worker when it is finished.
  * @process: the process that caused the hang, if known.
+ * @sysfs_read: An atomic for concurrent snapshot reads via syfs.
  */
 struct kgsl_snapshot {
 	u8 *start;
@@ -466,6 +468,7 @@ struct kgsl_snapshot {
 	struct work_struct work;
 	struct completion dump_gate;
 	struct kgsl_process_private *process;
+	atomic_t sysfs_read;
 };
 
 /**
@@ -484,16 +487,6 @@ struct kgsl_snapshot_object {
 	int type;
 	struct kgsl_mem_entry *entry;
 	struct list_head node;
-};
-
-/**
- * struct kgsl_protected_registers - Protected register range
- * @base: Offset of the range to be protected
- * @range: Range (# of registers = 2 ** range)
- */
-struct kgsl_protected_registers {
-	unsigned int base;
-	int range;
 };
 
 struct kgsl_device *kgsl_get_device(int dev_idx);
@@ -518,6 +511,17 @@ static inline void kgsl_regwrite(struct kgsl_device *device,
 				 unsigned int value)
 {
 	device->ftbl->regwrite(device, offsetwords, value);
+}
+
+static inline void kgsl_regrmw(struct kgsl_device *device,
+		unsigned int offsetwords,
+		unsigned int mask, unsigned int bits)
+{
+	unsigned int val = 0;
+
+	device->ftbl->regread(device, offsetwords, &val);
+	val &= ~mask;
+	device->ftbl->regwrite(device, offsetwords, val | bits);
 }
 
 static inline int kgsl_idle(struct kgsl_device *device)
@@ -582,7 +586,7 @@ void kgsl_device_platform_remove(struct kgsl_device *device);
 const char *kgsl_pwrstate_to_str(unsigned int state);
 
 int kgsl_device_snapshot_init(struct kgsl_device *device);
-int kgsl_device_snapshot(struct kgsl_device *device,
+void kgsl_device_snapshot(struct kgsl_device *device,
 			struct kgsl_context *context);
 void kgsl_device_snapshot_close(struct kgsl_device *device);
 void kgsl_snapshot_save_frozen_objs(struct work_struct *work);
@@ -621,8 +625,8 @@ int kgsl_context_init(struct kgsl_device_private *, struct kgsl_context
 
 void kgsl_context_dump(struct kgsl_context *context);
 
-int kgsl_memfree_find_entry(pid_t pid, uint64_t *gpuaddr,
-	uint64_t *size, uint64_t *flags);
+int kgsl_memfree_find_entry(pid_t ptname, uint64_t *gpuaddr,
+	uint64_t *size, uint64_t *flags, pid_t *pid);
 
 long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
@@ -868,16 +872,6 @@ void kgsl_snapshot_add_section(struct kgsl_device *device, u16 id,
 	struct kgsl_snapshot *snapshot,
 	size_t (*func)(struct kgsl_device *, u8 *, size_t, void *),
 	void *priv);
-
-/**
- * kgsl_device_max_memsize() - Return the maximum GPU address allowable on this
- * device
- * @device: Pointer to a kgsl_device struct
- */
-static inline uint64_t kgsl_device_max_gpuaddr(struct kgsl_device *device)
-{
-	return (uint64_t) UINT_MAX;
-}
 
 /**
  * struct kgsl_pwr_limit - limit structure for each client

@@ -145,10 +145,12 @@ struct hfi_extradata_header {
 	(HFI_PROPERTY_PARAM_OX_START + 0x009)
 #define HFI_PROPERTY_PARAM_ERR_DETECTION_CODE_EXTRADATA \
 	(HFI_PROPERTY_PARAM_OX_START + 0x00A)
-#define  HFI_PROPERTY_PARAM_BUFFER_ALLOC_MODE_SUPPORTED	\
+#define HFI_PROPERTY_PARAM_BUFFER_ALLOC_MODE_SUPPORTED	\
 	(HFI_PROPERTY_PARAM_OX_START + 0x00B)
-#define  HFI_PROPERTY_PARAM_BUFFER_SIZE_MINIMUM			\
+#define HFI_PROPERTY_PARAM_BUFFER_SIZE_MINIMUM			\
 	(HFI_PROPERTY_PARAM_OX_START + 0x00C)
+#define HFI_PROPERTY_PARAM_SYNC_BASED_INTERRUPT			\
+	(HFI_PROPERTY_PARAM_OX_START + 0x00E)
 
 #define HFI_PROPERTY_CONFIG_OX_START					\
 	(HFI_DOMAIN_BASE_COMMON + HFI_ARCH_OX_OFFSET + 0x02000)
@@ -212,15 +214,21 @@ struct hfi_extradata_header {
 	(HFI_PROPERTY_PARAM_VDEC_OX_START + 0x019)
 #define HFI_PROPERTY_PARAM_VDEC_SCS_THRESHOLD \
 	(HFI_PROPERTY_PARAM_VDEC_OX_START + 0x01A)
+#define HFI_PROPERTY_PARAM_VUI_DISPLAY_INFO_EXTRADATA \
+	(HFI_PROPERTY_PARAM_VDEC_OX_START + 0x01B)
+#define HFI_PROPERTY_PARAM_VDEC_VQZIP_SEI_EXTRADATA \
+	(HFI_PROPERTY_PARAM_VDEC_OX_START + 0x001C)
 
 #define HFI_PROPERTY_CONFIG_VDEC_OX_START				\
-	(HFI_DOMAIN_BASE_VDEC + HFI_ARCH_OX_OFFSET + 0x0000)
+	(HFI_DOMAIN_BASE_VDEC + HFI_ARCH_OX_OFFSET + 0x4000)
 #define HFI_PROPERTY_CONFIG_VDEC_POST_LOOP_DEBLOCKER	\
 	(HFI_PROPERTY_CONFIG_VDEC_OX_START + 0x001)
 #define HFI_PROPERTY_CONFIG_VDEC_MB_ERROR_MAP_REPORTING	\
 	(HFI_PROPERTY_CONFIG_VDEC_OX_START + 0x002)
 #define HFI_PROPERTY_CONFIG_VDEC_MB_ERROR_MAP			\
 	(HFI_PROPERTY_CONFIG_VDEC_OX_START + 0x003)
+#define HFI_PROPERTY_CONFIG_VDEC_ENTROPY \
+	(HFI_PROPERTY_CONFIG_VDEC_OX_START + 0x004)
 
 #define HFI_PROPERTY_PARAM_VENC_OX_START				\
 	(HFI_DOMAIN_BASE_VENC + HFI_ARCH_OX_OFFSET + 0x5000)
@@ -232,6 +240,12 @@ struct hfi_extradata_header {
 	(HFI_PROPERTY_PARAM_VENC_OX_START + 0x003)
 #define  HFI_PROPERTY_PARAM_VENC_MBI_DUMPING				\
 	(HFI_PROPERTY_PARAM_VENC_OX_START + 0x005)
+#define HFI_PROPERTY_PARAM_VENC_FRAME_QP_EXTRADATA		\
+	(HFI_PROPERTY_PARAM_VENC_OX_START + 0x006)
+#define  HFI_PROPERTY_PARAM_VENC_YUVSTAT_INFO_EXTRADATA		\
+	(HFI_PROPERTY_PARAM_VENC_OX_START + 0x007)
+#define  HFI_PROPERTY_PARAM_VENC_ROI_QP_EXTRADATA		\
+	(HFI_PROPERTY_PARAM_VENC_OX_START + 0x008)
 
 #define HFI_PROPERTY_CONFIG_VENC_OX_START				\
 	(HFI_DOMAIN_BASE_VENC + HFI_ARCH_OX_OFFSET + 0x6000)
@@ -371,7 +385,8 @@ struct hfi_uncompressed_plane_actual_constraints_info {
 	(HFI_CMD_SESSION_OX_START + 0x00B)
 #define HFI_CMD_SESSION_RELEASE_RESOURCES	\
 	(HFI_CMD_SESSION_OX_START + 0x00C)
-#define  HFI_CMD_SESSION_CONTINUE  (HFI_CMD_SESSION_OX_START + 0x00D)
+#define HFI_CMD_SESSION_CONTINUE	(HFI_CMD_SESSION_OX_START + 0x00D)
+#define HFI_CMD_SESSION_SYNC		(HFI_CMD_SESSION_OX_START + 0x00E)
 
 #define HFI_MSG_SYS_OX_START			\
 (HFI_DOMAIN_BASE_COMMON + HFI_ARCH_OX_OFFSET + HFI_MSG_START_OFFSET + 0x0000)
@@ -864,9 +879,7 @@ struct hfi_cmd_session_continue_packet {
 struct hal_session {
 	struct list_head list;
 	void *session_id;
-	enum hal_video_codec codec;
-	enum hal_domain domain;
-	u32 is_decoder;
+	bool is_decoder;
 	void *device;
 };
 
@@ -879,20 +892,7 @@ struct msm_vidc_fw {
 	void *cookie;
 };
 
-u32 hfi_process_msg_packet(msm_vidc_callback callback,
-		u32 device_id, struct vidc_hal_msg_pkt_hdr *msg_hdr,
-		struct list_head *sessions, struct mutex *session_lock);
-
-struct hal_session *hfi_process_get_session(
-		struct list_head *sessions, u32 session_id);
-
-enum vidc_status hfi_process_sys_init_done_prop_read(
-	struct hfi_msg_sys_init_done_packet *pkt,
-	struct vidc_hal_sys_init_done *sys_init_done);
-
-enum vidc_status hfi_process_session_init_done_prop_read(
-	struct hfi_msg_sys_session_init_done_packet *pkt,
-	struct vidc_hal_session_init_done *session_init_done);
-
+int hfi_process_msg_packet(u32 device_id, struct vidc_hal_msg_pkt_hdr *msg_hdr,
+		struct msm_vidc_cb_info *info);
 #endif
 

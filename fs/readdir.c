@@ -13,6 +13,7 @@
 #include <linux/stat.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/fsnotify.h>
 #include <linux/dirent.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
@@ -24,7 +25,7 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);
 	int res = -ENOTDIR;
-	if (!file->f_op || (!file->f_op->readdir && !file->f_op->iterate))
+	if (!file->f_op->iterate)
 		goto out;
 
 	res = security_file_permission(file, MAY_READ);
@@ -37,14 +38,10 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 
 	res = -ENOENT;
 	if (!IS_DEADDIR(inode)) {
-		if (file->f_op->iterate) {
-			ctx->pos = file->f_pos;
-			res = file->f_op->iterate(file, ctx);
-			file->f_pos = ctx->pos;
-		} else {
-			res = file->f_op->readdir(file, ctx, ctx->actor);
-			ctx->pos = file->f_pos;
-		}
+		ctx->pos = file->f_pos;
+		res = file->f_op->iterate(file, ctx);
+		file->f_pos = ctx->pos;
+		fsnotify_access(file);
 		file_accessed(file);
 	}
 	mutex_unlock(&inode->i_mutex);

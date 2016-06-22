@@ -28,7 +28,6 @@
 #include <linux/msm-bus.h>
 #include <linux/uaccess.h>
 #include <linux/dma-mapping.h>
-#include <soc/qcom/avs.h>
 #include <soc/qcom/spm.h>
 #include <soc/qcom/pm.h>
 #include <soc/qcom/scm.h>
@@ -40,6 +39,7 @@
 #ifdef CONFIG_VFP
 #include <asm/vfp.h>
 #endif
+#include <soc/qcom/jtag.h>
 #include "idle.h"
 #include "pm-boot.h"
 
@@ -209,6 +209,25 @@ static bool msm_pm_pc_hotplug(void)
 	return 0;
 }
 
+static bool msm_pm_fastpc(bool from_idle)
+{
+	int ret = 0;
+	unsigned int cpu = smp_processor_id();
+
+	ret = msm_spm_set_low_power_mode(MSM_SPM_MODE_FASTPC, false);
+	WARN_ON(ret);
+
+	if (from_idle || cpu_online(cpu))
+		msm_arch_idle();
+	else
+		msm_pm_pc_hotplug();
+
+	ret = msm_spm_set_low_power_mode(MSM_SPM_MODE_CLOCK_GATING, false);
+	WARN_ON(ret);
+
+	return true;
+}
+
 int msm_pm_collapse(unsigned long unused)
 {
 	uint32_t cpu = smp_processor_id();
@@ -264,8 +283,12 @@ static bool __ref msm_pm_spm_power_collapse(
 		pr_info("CPU%u: %s: program vector to %p\n",
 			cpu, __func__, entry);
 
+	msm_jtag_save_state();
+
 	collapsed = save_cpu_regs ?
 		!__cpu_suspend(0, msm_pm_collapse) : msm_pm_pc_hotplug();
+
+	msm_jtag_restore_state();
 
 	if (collapsed)
 		local_fiq_enable();
@@ -285,18 +308,10 @@ static bool msm_pm_power_collapse_standalone(
 		bool from_idle)
 {
 	unsigned int cpu = smp_processor_id();
-	unsigned int avsdscr;
-	unsigned int avscsr;
 	bool collapsed;
-
-	avsdscr = avs_get_avsdscr();
-	avscsr = avs_get_avscsr();
-	avs_set_avscsr(0); /* Disable AVS */
 
 	collapsed = msm_pm_spm_power_collapse(cpu, from_idle, false);
 
-	avs_set_avsdscr(avsdscr);
-	avs_set_avscsr(avscsr);
 	return collapsed;
 }
 
@@ -339,8 +354,6 @@ static bool msm_pm_power_collapse(bool from_idle)
 {
 	unsigned int cpu = smp_processor_id();
 	unsigned long saved_acpuclk_rate = 0;
-	unsigned int avsdscr;
-	unsigned int avscsr;
 	bool collapsed;
 
 	if (MSM_PM_DEBUG_POWER_COLLAPSE & msm_pm_debug_mask)
@@ -350,10 +363,6 @@ static bool msm_pm_power_collapse(bool from_idle)
 	if (MSM_PM_DEBUG_POWER_COLLAPSE & msm_pm_debug_mask)
 		pr_info("CPU%u: %s: pre power down\n", cpu, __func__);
 
-	avsdscr = avs_get_avsdscr();
-	avscsr = avs_get_avscsr();
-	avs_set_avscsr(0); /* Disable AVS */
-
 	if (cpu_online(cpu) && !msm_no_ramp_down_pc)
 		saved_acpuclk_rate = ramp_down_last_cpu(cpu);
 
@@ -361,9 +370,6 @@ static bool msm_pm_power_collapse(bool from_idle)
 
 	if (cpu_online(cpu) && !msm_no_ramp_down_pc)
 		ramp_up_first_cpu(cpu, saved_acpuclk_rate);
-
-	avs_set_avsdscr(avsdscr);
-	avs_set_avscsr(avscsr);
 
 	if (MSM_PM_DEBUG_POWER_COLLAPSE & msm_pm_debug_mask)
 		pr_info("CPU%u: %s: post power up\n", cpu, __func__);
@@ -386,6 +392,7 @@ static bool (*execute[MSM_PM_SLEEP_MODE_NR])(bool idle) = {
 	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE] =
 		msm_pm_power_collapse_standalone,
 	[MSM_PM_SLEEP_MODE_RETENTION] = msm_pm_retention,
+	[MSM_PM_SLEEP_MODE_FASTPC] = msm_pm_fastpc,
 	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE] = msm_pm_power_collapse,
 };
 
@@ -848,25 +855,15 @@ static int __init msm_pm_drv_init(void)
 
 	rc = platform_driver_register(&msm_cpu_pm_snoc_client_driver);
 
-	if (rc)
+	if (rc) {
 		pr_err("%s(): failed to register driver %s\n", __func__,
 				msm_cpu_pm_snoc_client_driver.driver.name);
-	return rc;
+		return rc;
+	}
+
+	return platform_driver_register(&msm_cpu_pm_driver);
 }
 late_initcall(msm_pm_drv_init);
-
-static int __init msm_pm_debug_counters_init(void)
-{
-	int rc;
-
-	rc = platform_driver_register(&msm_cpu_pm_driver);
-
-	if (rc)
-		pr_err("%s(): failed to register driver %s\n", __func__,
-				msm_cpu_pm_driver.driver.name);
-	return rc;
-}
-fs_initcall(msm_pm_debug_counters_init);
 
 int __init msm_pm_sleep_status_init(void)
 {

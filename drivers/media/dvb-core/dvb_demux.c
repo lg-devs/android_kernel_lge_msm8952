@@ -879,7 +879,7 @@ static int dvb_demux_save_idx_event(struct dvb_demux_feed *feed,
 
 	/* get entry from free list */
 	if (list_empty(&feed->rec_info->idx_info.free_list)) {
-		printk(KERN_ERR "%s: index free list is empty\n", __func__);
+		pr_err("%s: index free list is empty\n", __func__);
 		return -ENOMEM;
 	}
 
@@ -1322,8 +1322,8 @@ static inline int dvb_dmx_swfilter_buffer_check(
 	 * Check that there's enough free space for data output.
 	 * If there no space, wait for it (block).
 	 * Since this function is called while spinlock
-	 * is aquired, the lock should be released first.
-	 * Once we get control back, lock is aquired back
+	 * is acquired, the lock should be released first.
+	 * Once we get control back, lock is acquired back
 	 * and checks that the filter is still valid.
 	 */
 	for (j = 0; j < demux->feednum; j++) {
@@ -1508,9 +1508,9 @@ static void dvb_dmx_swfilter_one_packet(struct dvb_demux *demux, const u8 *buf,
 					(u64)timespec_to_ns(&delta_time);
 				speed_timedelta = div64_u64(speed_timedelta,
 						1000000); /* nsec -> usec */
-				printk(KERN_INFO "TS speed %llu Kbits/sec \n",
-						div64_u64(speed_bytes,
-							speed_timedelta));
+				pr_info("TS speed %llu Kbits/sec\n",
+					div64_u64(speed_bytes,
+						speed_timedelta));
 			}
 
 			demux->speed_last_time = cur_time;
@@ -1519,10 +1519,9 @@ static void dvb_dmx_swfilter_one_packet(struct dvb_demux *demux, const u8 *buf,
 	}
 
 	if (buf[1] & 0x80) {
-		dprintk_tscheck("TEI detected. "
-				"PID=0x%x data1=0x%x\n",
-				pid, buf[1]);
-		/* data in this packet cant be trusted - drop it unless
+		dprintk_tscheck("TEI detected. PID=0x%x data1=0x%x\n", pid,
+			buf[1]);
+		/* data in this packet can't be trusted - drop it unless
 		 * module option dvb_demux_feed_err_pkts is set */
 		if (!dvb_demux_feed_err_pkts)
 			return;
@@ -1532,10 +1531,12 @@ static void dvb_dmx_swfilter_one_packet(struct dvb_demux *demux, const u8 *buf,
 			if (pid < MAX_PID) {
 				if (buf[3] & 0x10)
 					demux->cnt_storage[pid] =
-						(demux->cnt_storage[pid] + 1) & 0xf;
+						(demux->cnt_storage[pid] + 1) &
+						0xf;
 
 				if ((buf[3] & 0xf) != demux->cnt_storage[pid]) {
-					dprintk_tscheck("TS packet counter mismatch. PID=0x%x expected 0x%x got 0x%x\n",
+					dprintk_tscheck(
+						"TS packet counter mismatch. PID=0x%x expected 0x%x got 0x%x\n",
 						pid, demux->cnt_storage[pid],
 						buf[3] & 0xf);
 					demux->cnt_storage[pid] = buf[3] & 0xf;
@@ -1621,6 +1622,7 @@ static inline int find_next_packet(const u8 *buf, int pos, size_t count,
 	if (lost) {
 		/* This garbage is part of a valid packet? */
 		int backtrack = pos - pktsize;
+
 		if (backtrack >= 0 && (buf[backtrack] == 0x47 ||
 		    (pktsize == 204 && buf[backtrack] == 0xB8) ||
 			(pktsize == 192 &&
@@ -1776,9 +1778,8 @@ void dvb_dmx_swfilter_format(
 		break;
 
 	default:
-		printk(KERN_ERR "%s: invalid TS packet format (format=%d)\n",
-			   __func__,
-			   tsp_format);
+		pr_err("%s: invalid TS packet format (format=%d)\n", __func__,
+			tsp_format);
 		break;
 	}
 }
@@ -2071,13 +2072,11 @@ static void dvb_dmx_free_rec_info(struct dmx_ts_feed *ts_feed)
 	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)ts_feed;
 
 	if (!feed->rec_info || !feed->rec_info->ref_count) {
-		printk(KERN_ERR "%s: invalid idx info state\n", __func__);
+		pr_err("%s: invalid idx info state\n", __func__);
 		return;
 	}
 
 	feed->rec_info->ref_count--;
-
-	return;
 }
 
 static int dvb_demux_feed_find(struct dvb_demux_feed *feed)
@@ -2095,7 +2094,7 @@ static void dvb_demux_feed_add(struct dvb_demux_feed *feed)
 {
 	spin_lock_irq(&feed->demux->lock);
 	if (dvb_demux_feed_find(feed)) {
-		printk(KERN_ERR "%s: feed already in list (type=%x state=%x pid=%x)\n",
+		pr_err("%s: feed already in list (type=%x state=%x pid=%x)\n",
 		       __func__, feed->type, feed->state, feed->pid);
 		goto out;
 	}
@@ -2109,7 +2108,7 @@ static void dvb_demux_feed_del(struct dvb_demux_feed *feed)
 {
 	spin_lock_irq(&feed->demux->lock);
 	if (!(dvb_demux_feed_find(feed))) {
-		printk(KERN_ERR "%s: feed not in list (type=%x state=%x pid=%x)\n",
+		pr_err("%s: feed not in list (type=%x state=%x pid=%x)\n",
 		       __func__, feed->type, feed->state, feed->pid);
 		goto out;
 	}
@@ -2214,7 +2213,8 @@ static int dmx_ts_feed_start_filtering(struct dmx_ts_feed *ts_feed)
 		feed->rec_info = NULL;
 	}
 
-	if ((ret = demux->start_feed(feed)) < 0) {
+	ret = demux->start_feed(feed);
+	if (ret < 0) {
 		if ((feed->ts_type & TS_PACKET) &&
 		    !(feed->ts_type & TS_PAYLOAD_ONLY)) {
 			dvb_dmx_free_rec_info(ts_feed);
@@ -2929,8 +2929,13 @@ static int dmx_section_feed_release_filter(struct dmx_section_feed *feed,
 		return -EINVAL;
 	}
 
-	if (feed->is_filtering)
+	if (feed->is_filtering) {
+		/* release dvbdmx->mutex as far as it is
+		   acquired by stop_filtering() itself */
+		mutex_unlock(&dvbdmx->mutex);
 		feed->stop_filtering(feed);
+		mutex_lock(&dvbdmx->mutex);
+	}
 
 	spin_lock_irq(&dvbdmx->lock);
 	f = dvbdmxfeed->filter;
@@ -3127,11 +3132,14 @@ static int dvbdmx_write(struct dmx_demux *demux, const char *buf, size_t count)
 	struct dvb_demux *dvbdemux = (struct dvb_demux *)demux;
 
 	if (!demux->frontend || !buf || demux->dvr_input_protected ||
-		(demux->frontend->source != DMX_MEMORY_FE)) {
+		(demux->frontend->source != DMX_MEMORY_FE))
 		return -EINVAL;
-	}
+	if (mutex_lock_interruptible(&dvbdemux->mutex))
+		return -ERESTARTSYS;
 
 	dvb_dmx_swfilter_format(dvbdemux, buf, count, dvbdemux->tsp_format);
+
+	mutex_unlock(&dvbdemux->mutex);
 
 	if (signal_pending(current))
 		return -EINTR;

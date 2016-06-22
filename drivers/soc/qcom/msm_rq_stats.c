@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,9 +10,7 @@
  * GNU General Public License for more details.
  *
  */
-/*
- * Qualcomm MSM Runqueue Stats and cpu utilization Interface for Userspace
- */
+
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -128,6 +126,7 @@ static int cpufreq_transition_handler(struct notifier_block *nb,
 	case CPUFREQ_POSTCHANGE:
 		for_each_cpu(j, this_cpu->related_cpus) {
 			struct cpu_load_data *pcpu = &per_cpu(cpuload, j);
+
 			mutex_lock(&pcpu->cpu_load_mutex);
 			update_average_load(freqs->old, j);
 			pcpu->cur_freq = freqs->new;
@@ -161,6 +160,7 @@ static int cpu_hotplug_handler(struct notifier_block *nb,
 		if (!this_cpu->cur_freq)
 			this_cpu->cur_freq = cpufreq_quick_get(cpu);
 		update_related_cpus();
+		/* fall through */
 	case CPU_ONLINE_FROZEN:
 		this_cpu->avg_load_maxfreq = 0;
 	}
@@ -191,8 +191,8 @@ static int system_suspend_handler(struct notifier_block *nb,
 static ssize_t hotplug_disable_show(struct kobject *kobj,
 		struct kobj_attribute *attr, char *buf)
 {
-	unsigned int val = 0;
-	val = rq_info.hotplug_disabled;
+	unsigned int val = rq_info.hotplug_disabled;
+
 	return snprintf(buf, MAX_LONG_SIZE, "%d\n", val);
 }
 
@@ -246,8 +246,10 @@ static ssize_t store_run_queue_poll_ms(struct kobject *kobj,
 	mutex_lock(&lock_poll_ms);
 
 	spin_lock_irqsave(&rq_lock, flags);
-	sscanf(buf, "%u", &val);
-	rq_info.rq_poll_jiffies = msecs_to_jiffies(val);
+	if (kstrtouint(buf, 0, &val))
+		count = -EINVAL;
+	else
+		rq_info.rq_poll_jiffies = msecs_to_jiffies(val);
 	spin_unlock_irqrestore(&rq_lock, flags);
 
 	mutex_unlock(&lock_poll_ms);
@@ -277,7 +279,9 @@ static ssize_t store_def_timer_ms(struct kobject *kobj,
 {
 	unsigned int val = 0;
 
-	sscanf(buf, "%u", &val);
+	if (kstrtouint(buf, 0, &val))
+		return -EINVAL;
+
 	rq_info.def_timer_jiffies = msecs_to_jiffies(val);
 
 	rq_info.def_start_time = ktime_to_ns(ktime_get());
@@ -360,6 +364,7 @@ static int __init msm_rq_stats_init(void)
 
 	for_each_possible_cpu(i) {
 		struct cpu_load_data *pcpu = &per_cpu(cpuload, i);
+
 		mutex_init(&pcpu->cpu_load_mutex);
 		cpufreq_get_policy(&cpu_policy, i);
 		pcpu->policy_max = cpu_policy.cpuinfo.max_freq;

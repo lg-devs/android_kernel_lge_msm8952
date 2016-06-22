@@ -19,7 +19,15 @@
 #include <linux/regulator/consumer.h>
 
 #undef CDBG
-#define CDBG(fmt, args...) pr_debug(fmt, ##args)
+#define CDBG(fmt, args...) pr_err(fmt, ##args)
+
+/* LGE_CHANGE_S, LGE Preview tunning for lowlight, dongjin.ha */
+#if defined(CONFIG_LGE_CAM_PREVIEW_TUNE)
+#define CAM_PREVIEW_TUNE_ON 1
+#define CAM_PREVIEW_TUNE_OFF 0
+extern int pp_set_cam_preview_tune_status(int flag);
+#endif
+/* LGE_CHANGE_E, LGE Preview tunning for lowlight, dongjin.ha */
 
 static struct v4l2_file_operations msm_sensor_v4l2_subdev_fops;
 static void msm_sensor_adjust_mclk(struct msm_camera_power_ctrl_t *ctrl)
@@ -760,7 +768,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 		conf_array.delay = conf_array32.delay;
 		conf_array.size = conf_array32.size;
 		conf_array.reg_setting = compat_ptr(conf_array32.reg_setting);
-		conf_array.qup_i2c_batch = conf_array32.qup_i2c_batch;
 
 		if (!conf_array.size ||
 			conf_array.size > I2C_REG_DATA_MAX) {
@@ -955,6 +962,13 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 
 		kfree(s_ctrl->stop_setting.reg_setting);
 		s_ctrl->stop_setting.reg_setting = NULL;
+/* LGE_CHANGE_S, LGE Preview tunning for lowlight, dongjin.ha */
+#if defined(CONFIG_LGE_CAM_PREVIEW_TUNE)
+		pr_err("CAM_PREVIEW_TUNE_OFF\n");
+		pp_set_cam_preview_tune_status(CAM_PREVIEW_TUNE_OFF);
+#endif
+/* LGE_CHANGE_E, LGE Preview tunning for lowlight, dongjin.ha */
+
 		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
 			pr_err("%s:%d failed: invalid state %d\n", __func__,
 				__LINE__, s_ctrl->sensor_state);
@@ -999,7 +1013,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 		stop_setting->data_type = stop_setting32.data_type;
 		stop_setting->delay = stop_setting32.delay;
 		stop_setting->size = stop_setting32.size;
-		stop_setting->qup_i2c_batch = stop_setting32.qup_i2c_batch;
 
 		reg_setting = compat_ptr(stop_setting32.reg_setting);
 
@@ -1060,9 +1073,24 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			rc = -EFAULT;
 			break;
 		}
-
-	}
 		break;
+	}
+	case CFG_SET_PREVIEW_TUNE_ON: {
+/* LGE_CHANGE_S, LGE Preview tunning for lowlight, dongjin.ha */
+#if defined(CONFIG_LGE_CAM_PREVIEW_TUNE)
+	pr_err("CAM_PREVIEW_TUNE_ON\n");
+	pp_set_cam_preview_tune_status(CAM_PREVIEW_TUNE_ON);
+#endif
+	}
+	break;
+	case CFG_SET_PREVIEW_TUNE_OFF: {
+#if defined(CONFIG_LGE_CAM_PREVIEW_TUNE)
+	pr_err("CAM_PREVIEW_TUNE_OFF\n");
+	pp_set_cam_preview_tune_status(CAM_PREVIEW_TUNE_OFF);
+#endif
+	}
+	break;
+/* LGE_CHANGE_E, LGE Preview tunning for lowlight, dongjin.ha */
 
 	default:
 		rc = -EFAULT;
@@ -1277,7 +1305,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			write_config.conf_array.size);
 
 		if (!write_config.conf_array.size ||
-			write_config.conf_array.size > I2C_SEQ_REG_DATA_MAX) {
+			write_config.conf_array.size > I2C_REG_DATA_MAX) {
 			pr_err("%s:%d failed\n", __func__, __LINE__);
 			rc = -EFAULT;
 			break;
@@ -1412,7 +1440,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 				break;
 			}
 			s_ctrl->sensor_state = MSM_SENSOR_POWER_UP;
-			pr_err("%s:%d sensor state %d\n", __func__, __LINE__,
+			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
 				s_ctrl->sensor_state);
 		} else {
 			rc = -EFAULT;
@@ -1442,7 +1470,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 				break;
 			}
 			s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
-			pr_err("%s:%d sensor state %d\n", __func__, __LINE__,
+			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
 				s_ctrl->sensor_state);
 		} else {
 			rc = -EFAULT;
@@ -1524,9 +1552,8 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			rc = -EFAULT;
 			break;
 		}
-
-	}
 		break;
+	}
 
 	default:
 		rc = -EFAULT;
@@ -1709,11 +1736,11 @@ int32_t msm_sensor_platform_probe(struct platform_device *pdev,
 	s_ctrl->msm_sd.sd.entity.name =
 		s_ctrl->msm_sd.sd.name;
 
-	mount_pos = s_ctrl->sensordata->sensor_info->position << 16 |
-		((s_ctrl->is_yuv & 0x1) << 25);
+	mount_pos = s_ctrl->sensordata->sensor_info->position << 16;
 	mount_pos = mount_pos | ((s_ctrl->sensordata->sensor_info->
 					sensor_mount_angle / 90) << 8);
 	s_ctrl->msm_sd.sd.entity.flags = mount_pos | MEDIA_ENT_FL_DEFAULT;
+
 	rc = camera_init_v4l2(&s_ctrl->pdev->dev, &session_id);
 	CDBG("%s rc %d session_id %d\n", __func__, rc, session_id);
 	s_ctrl->sensordata->sensor_info->session_id = session_id;
@@ -1837,8 +1864,7 @@ int msm_sensor_i2c_probe(struct i2c_client *client,
 	s_ctrl->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_SENSOR;
 	s_ctrl->msm_sd.sd.entity.name =
 		s_ctrl->msm_sd.sd.name;
-	mount_pos = s_ctrl->sensordata->sensor_info->position << 16 |
-		((s_ctrl->is_yuv & 0x1) << 25);
+	mount_pos = s_ctrl->sensordata->sensor_info->position << 16;
 	mount_pos = mount_pos | ((s_ctrl->sensordata->sensor_info->
 					sensor_mount_angle / 90) << 8);
 	s_ctrl->msm_sd.sd.entity.flags = mount_pos | MEDIA_ENT_FL_DEFAULT;

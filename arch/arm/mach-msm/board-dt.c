@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,9 +13,6 @@
 #include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
-#include <soc/qcom/scm.h>
-#include <asm/mach/map.h>
-#include <mach/msm_iomap.h>
 
 #include "board-dt.h"
 

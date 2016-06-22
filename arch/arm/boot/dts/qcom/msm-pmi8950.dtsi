@@ -102,9 +102,10 @@
 				qcom,decimation = <0>;
 				qcom,pre-div-channel-scaling = <0>;
 				qcom,calibration-type = "absolute";
-				qcom,scale-function = <16>;
+				qcom,scale-function = <3>;
 				qcom,hw-settle-time = <0>;
 				qcom,fast-avg-setup = <0>;
+				qcom,vadc-thermal-node;
 			};
 
 			chan@43 {
@@ -193,6 +194,7 @@
 			#size-cells = <1>;
 
 			qcom,iterm-ma = <100>;
+			qcom,fastchg-current-ma = <2000>;
 			qcom,float-voltage-mv = <4200>;
 			qcom,resume-delta-mv = <200>;
 			qcom,chg-inhibit-fg;
@@ -202,11 +204,8 @@
 			qcom,parallel-usb-min-current-ma = <1400>;
 			qcom,parallel-usb-9v-min-current-ma = <900>;
 			qcom,parallel-allowed-lowering-ma = <500>;
-			qcom,autoadjust-vfloat;
+			qcom,enable-hvdcp-9v;
 			qcom,pmic-revid = <&pmi8950_revid>;
-			qcom,charge-unknown-battery;
-			qcom,force-aicl-rerun;
-			qcom,aicl-rerun-period-s = <180>;
 
 			qcom,chgr@1000 {
 				reg = <0x1000 0x100>;
@@ -308,12 +307,9 @@
 			status = "okay";
 			qcom,bcl-lm-threshold-ma = <127>;
 			qcom,bcl-mh-threshold-ma = <405>;
-			qcom,fg-iterm-ma = <150>;
+			qcom,fg-iterm-ma = <100>;
 			qcom,fg-chg-iterm-ma = <100>;
 			qcom,pmic-revid = <&pmi8950_revid>;
-			qcom,cycle-counter-en;
-			qcom,capacity-learning-on;
-			qcom,fg-cutoff-voltage-mv = <3500>;
 
 			qcom,fg-soc@4000 {
 			status = "okay";
@@ -440,7 +436,7 @@
 
 				qcom,qpnp-ibb-soft-start = <1000>;
 
-				qcom,qpnp-ibb-discharge-resistor = <300>;
+				qcom,qpnp-ibb-discharge-resistor = <32>;
 				qcom,qpnp-ibb-lab-pwrup-delay = <8000>;
 				qcom,qpnp-ibb-lab-pwrdn-delay = <8000>;
 				qcom,qpnp-ibb-en-discharge;
@@ -513,12 +509,11 @@
 			qcom,dim-method = "linear";
 			qcom,hyb-thres = <625>;
 			qcom,sync-dly-us = <800>;
-			qcom,fs-curr-ua = <30000>;
+			qcom,fs-curr-ua = <20000>;
 			qcom,en-phase-stag;
 			qcom,ibb-pwrup-dly = <8>;
 			qcom,led-strings-list = [00 01];
 			qcom,en-ext-pfet-sc-pro;
-			qcom,cons-sync-write-delay-us = <1000>;
 		};
 
 		flash_led: qcom,leds@d300 {

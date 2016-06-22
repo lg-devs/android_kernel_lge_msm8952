@@ -8,23 +8,23 @@ to the rest of the system.
 
 Required properties:
 
- - compatible		: should be "focaltech,5x06"
- - reg			: i2c slave address of the device
- - interrupt-parent	: parent of interrupt
+ - compatible		: should be "focaltech,5x06".
+ - reg			: i2c slave address of the device.
+ - interrupt-parent	: parent of interrupt.
  - interrupts		: touch sample interrupt to indicate presense or release
 				of fingers on the panel.
- - vdd-supply		: Power supply needed to power up the device
- - vcc_i2c-supply	: Power source required to power up i2c bus
- - focaltech,family-id	: family identification of the controller
+ - vdd-supply		: Power supply needed to power up the device.
+ - vcc_i2c-supply	: Power source required to power up i2c bus.
+ - focaltech,family-id	: family identification of the controller.
  - focaltech,irq-gpio	: irq gpio which is to provide interrupts to host,
 				same as "interrupts" node. It will also
 				contain active low or active high information.
- - focaltech,reset-gpio	: reset gpio to control the reset of chip
+ - focaltech,reset-gpio	: reset gpio to control the reset of chip.
  - focaltech,display-coords : display coordinates in pixels. It is a four
 				tuple consisting of min x, min y, max x and
 				max y values
+ - focaltech,name	: name of the controller
  - focaltech,group-id	: group id of this device
- - focaltech,num-max-touches	 : maximum number of touches supported
  - focaltech,hard-reset-delay-ms : hard reset delay in ms
  - focaltech,soft-reset-delay-ms : soft reset delay in ms
  - focaltech,fw-delay-aa-ms : specify the delay in ms after programming 0xaa
@@ -48,12 +48,20 @@ Required properties:
 
 Optional properties:
 
- - focaltech,name	: name of the controller
- - focaltech,i2c-pull-up : to specify pull up is required
- - focaltech,no-force-update : to specify force update is allowed
+ - focaltech,panel-coords : panel coordinates for the chip in pixels.
+				It is a four tuple consisting of min x,
+				min y, max x and max y values.
+ - focaltech,i2c-pull-up : to specify pull up is required.
+ - focaltech,no-force-update : to specify force update is allowed.
  - focaltech,button-map : button map of key codes. The number
- - focaltech,fw-vkey-support	: specify if virtual keys are supported through firmware
 				of key codes depend on panel
+ - focaltech,fw-name	: specify the firmware file name
+ - focaltech,fw-delay-aa-ms : specify the "aa" delay in ms for firmware upgrade
+ - focaltech,fw-delay-55-ms : specify the "55" delay in ms for firmware upgrade
+ - focaltech,fw-upgrade-id1 : specify the upgrade id1 for firmware upgrade
+ - focaltech,fw-upgrade-id2 : specify the upgrade id2 for firmware upgrade
+ - focaltech,fw-delay-readid-ms : specify the read id delay in ms for firmware upgrade
+ - focaltech,fw-delay-era-flsh-ms : specify the erase flash delay in ms for firmware upgrade
  - focaltech,fw-auto-cal	: specify whether calibration is needed after firmware upgrade
  - focaltech,fw-vkey-support	: specify if virtual keys are supported through firmware
  - focaltech,ignore-id-check : specify ignore family-id check
@@ -63,7 +71,6 @@ Optional properties:
  - focaltech,fw-name	: specify the firmware file name
  - focaltech,psensor-support	: specify whether support the proximity sensor
  - focaltech,gesture-support	: specify whether support gesture feature
- - focaltech,resume-in-workqueue : specifiy whether to defer the resume to workqueue
 
 Example:
 	i2c@f9923000{

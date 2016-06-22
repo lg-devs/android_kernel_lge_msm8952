@@ -81,6 +81,7 @@ static DEFINE_PER_CPU(struct cpu_status, cpu_stats);
 static unsigned int num_online_managed(struct cpumask *mask);
 static int init_cluster_control(void);
 static int rm_high_pwr_cost_cpus(struct cluster *cl);
+static int init_events_group(void);
 
 static DEFINE_PER_CPU(unsigned int, cpu_power_cost);
 
@@ -93,6 +94,15 @@ struct load_stats {
 	unsigned int cpu_load;
 };
 static DEFINE_PER_CPU(struct load_stats, cpu_load_stats);
+
+struct events {
+	spinlock_t cpu_hotplug_lock;
+	bool cpu_hotplug;
+	bool init_success;
+};
+static struct events events_group;
+static struct task_struct *events_notify_thread;
+
 #define LAST_UPDATE_TOL		USEC_PER_MSEC
 
 /* Bitmask to keep track of the workloads being detected */
@@ -184,7 +194,7 @@ static int set_max_cpus(const char *buf, const struct kernel_param *kp)
 
 		managed_clusters[i]->max_cpu_request = val;
 
-		cp = strchr(cp, ':');
+		cp = strnchr(cp, strlen(cp), ':');
 		cp++;
 		trace_set_max_cpus(cpumask_bits(managed_clusters[i]->cpus)[0],
 								val);
@@ -339,7 +349,7 @@ static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 		i_cpu_stats->min = val;
 		cpumask_set_cpu(cpu, limit_mask);
 
-		cp = strchr(cp, ' ');
+		cp = strnchr(cp, strlen(cp), ' ');
 		cp++;
 	}
 
@@ -422,7 +432,7 @@ static int set_cpu_max_freq(const char *buf, const struct kernel_param *kp)
 		i_cpu_stats->max = val;
 		cpumask_set_cpu(cpu, limit_mask);
 
-		cp = strchr(cp, ' ');
+		cp = strnchr(cp, strlen(cp), ' ');
 		cp++;
 	}
 
@@ -1082,6 +1092,25 @@ static struct attribute_group attr_group = {
 	.attrs = attrs,
 };
 
+/* CPU Hotplug */
+static struct kobject *events_kobj;
+
+static ssize_t show_cpu_hotplug(struct kobject *kobj,
+					struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "\n");
+}
+static struct kobj_attribute cpu_hotplug_attr =
+__ATTR(cpu_hotplug, 0444, show_cpu_hotplug, NULL);
+
+static struct attribute *events_attrs[] = {
+	&cpu_hotplug_attr.attr,
+	NULL,
+};
+
+static struct attribute_group events_attr_group = {
+	.attrs = events_attrs,
+};
 /*******************************sysfs ends************************************/
 
 static unsigned int num_online_managed(struct cpumask *mask)
@@ -1180,6 +1209,54 @@ static int notify_userspace(void *data)
 			pr_debug("msm_perf: Notifying CPU mode:%u\n",
 								aggr_mode);
 		}
+	}
+
+	return 0;
+}
+
+static void hotplug_notify(int action)
+{
+	unsigned long flags;
+
+	if (!events_group.init_success)
+		return;
+
+	if ((action == CPU_ONLINE) || (action == CPU_DEAD)) {
+		spin_lock_irqsave(&(events_group.cpu_hotplug_lock), flags);
+		events_group.cpu_hotplug = true;
+		spin_unlock_irqrestore(&(events_group.cpu_hotplug_lock), flags);
+		wake_up_process(events_notify_thread);
+	}
+}
+
+static int events_notify_userspace(void *data)
+{
+	unsigned long flags;
+	bool notify_change;
+
+	while (1) {
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		spin_lock_irqsave(&(events_group.cpu_hotplug_lock), flags);
+
+		if (!events_group.cpu_hotplug) {
+			spin_unlock_irqrestore(&(events_group.cpu_hotplug_lock),
+									flags);
+
+			schedule();
+			if (kthread_should_stop())
+				break;
+			spin_lock_irqsave(&(events_group.cpu_hotplug_lock),
+									flags);
+		}
+
+		set_current_state(TASK_RUNNING);
+		notify_change = events_group.cpu_hotplug;
+		events_group.cpu_hotplug = false;
+		spin_unlock_irqrestore(&(events_group.cpu_hotplug_lock), flags);
+
+		if (notify_change)
+			sysfs_notify(events_kobj, NULL, "cpu_hotplug");
 	}
 
 	return 0;
@@ -1635,6 +1712,8 @@ static int __ref msm_performance_cpu_callback(struct notifier_block *nfb,
 	unsigned int i;
 	struct cluster *i_cl = NULL;
 
+	hotplug_notify(action);
+
 	if (!clusters_inited)
 		return NOTIFY_OK;
 
@@ -1696,6 +1775,7 @@ static void single_mod_exit_timer(unsigned long data)
 	int i;
 	struct cluster *i_cl = NULL;
 	unsigned long flags;
+
 	if (!clusters_inited)
 		return;
 
@@ -1730,34 +1810,34 @@ static void single_mod_exit_timer(unsigned long data)
 static int init_cluster_control(void)
 {
 	unsigned int i;
-	int ret;
+	int ret = 0;
 	struct kobject *module_kobj;
 
-	managed_clusters = kzalloc(num_clusters * sizeof(struct cluster *),
+	managed_clusters = kcalloc(num_clusters, sizeof(struct cluster *),
 								GFP_KERNEL);
-	if (!managed_clusters) {
-		pr_err("msm_perf: Memory allocation failed\n");
+	if (!managed_clusters)
 		return -ENOMEM;
-	}
-
 	for (i = 0; i < num_clusters; i++) {
-		managed_clusters[i] = kzalloc(sizeof(struct cluster),
+		managed_clusters[i] = kcalloc(1, sizeof(struct cluster),
 								GFP_KERNEL);
 		if (!managed_clusters[i]) {
 			pr_err("msm_perf:Cluster %u mem alloc failed\n", i);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto error;
 		}
 		if (!alloc_cpumask_var(&managed_clusters[i]->cpus,
 		     GFP_KERNEL)) {
 			pr_err("msm_perf:Cluster %u cpu alloc failed\n",
 			       i);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto error;
 		}
 		if (!alloc_cpumask_var(&managed_clusters[i]->offlined_cpus,
 		     GFP_KERNEL)) {
 			pr_err("msm_perf:Cluster %u off_cpus alloc failed\n",
 			       i);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto error;
 		}
 		managed_clusters[i]->max_cpu_request = -1;
 		managed_clusters[i]->single_enter_load = DEF_SINGLE_ENT;
@@ -1786,21 +1866,73 @@ static int init_cluster_control(void)
 	module_kobj = kset_find_obj(module_kset, KBUILD_MODNAME);
 	if (!module_kobj) {
 		pr_err("msm_perf: Couldn't find module kobject\n");
-		return -ENOENT;
+		ret = -ENOENT;
+		goto error;
 	}
 	mode_kobj = kobject_create_and_add("workload_modes", module_kobj);
 	if (!mode_kobj) {
 		pr_err("msm_perf: Failed to add mode_kobj\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		kobject_put(module_kobj);
+		goto error;
 	}
 	ret = sysfs_create_group(mode_kobj, &attr_group);
+	if (ret) {
+		pr_err("msm_perf: Failed to create sysfs\n");
+		kobject_put(module_kobj);
+		kobject_put(mode_kobj);
+		goto error;
+	}
+
+	notify_thread = kthread_run(notify_userspace, NULL, "wrkld_notify");
+	clusters_inited = true;
+
+	return 0;
+
+error:
+	for (i = 0; i < num_clusters; i++) {
+		if (!managed_clusters[i])
+			break;
+		if (managed_clusters[i]->offlined_cpus)
+			free_cpumask_var(managed_clusters[i]->offlined_cpus);
+		if (managed_clusters[i]->cpus)
+			free_cpumask_var(managed_clusters[i]->cpus);
+		kfree(managed_clusters[i]);
+	}
+	kfree(managed_clusters);
+	return ret;
+}
+
+static int init_events_group(void)
+{
+	int ret;
+	struct kobject *module_kobj;
+
+	module_kobj = kset_find_obj(module_kset, KBUILD_MODNAME);
+	if (!module_kobj) {
+		pr_err("msm_perf: Couldn't find module kobject\n");
+		return -ENOENT;
+	}
+
+	events_kobj = kobject_create_and_add("events", module_kobj);
+	if (!events_kobj) {
+		pr_err("msm_perf: Failed to add events_kobj\n");
+		return -ENOMEM;
+	}
+
+	ret = sysfs_create_group(events_kobj, &events_attr_group);
 	if (ret) {
 		pr_err("msm_perf: Failed to create sysfs\n");
 		return ret;
 	}
 
-	notify_thread = kthread_run(notify_userspace, NULL, "wrkld_notify");
-	clusters_inited = true;
+	spin_lock_init(&(events_group.cpu_hotplug_lock));
+	events_notify_thread = kthread_run(events_notify_userspace,
+					NULL, "msm_perf:events_notify");
+	if (IS_ERR(events_notify_thread))
+		return PTR_ERR(events_notify_thread);
+
+	events_group.init_success = true;
 
 	return 0;
 }
@@ -1816,6 +1948,8 @@ static int __init msm_performance_init(void)
 		per_cpu(cpu_stats, cpu).max = UINT_MAX;
 
 	register_cpu_notifier(&msm_performance_cpu_notifier);
+
+	init_events_group();
 
 	return 0;
 }

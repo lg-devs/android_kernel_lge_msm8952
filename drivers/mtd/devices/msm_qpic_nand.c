@@ -15,6 +15,8 @@
 
 #include "msm_qpic_nand.h"
 
+#define QPIC_BAM_DEFAULT_IPC_LOGLVL 2
+
 static bool enable_euclean;
 
 /*
@@ -90,6 +92,7 @@ static dma_addr_t msm_nand_dma_map(struct device *dev, void *addr, size_t size,
 {
 	struct page *page;
 	unsigned long offset = (unsigned long)addr & ~PAGE_MASK;
+
 	if (virt_addr_valid(addr))
 		page = virt_to_page(addr);
 	else {
@@ -177,9 +180,7 @@ static int msm_nand_runtime_resume(struct device *dev)
 
 static void msm_nand_print_rpm_info(struct device *dev)
 {
-	pr_err("RPM: runtime_status=%d, usage_count=%d," \
-		" is_suspended=%d, disable_depth=%d, runtime_error=%d," \
-		" request_pending=%d, request=%d\n",
+	pr_err("RPM: runtime_status=%d, usage_count=%d, is_suspended=%d, disable_depth=%d, runtime_error=%d, request_pending=%d, request=%d\n",
 		dev->power.runtime_status, atomic_read(&dev->power.usage_count),
 		dev->power.is_suspended, dev->power.disable_depth,
 		dev->power.runtime_error, dev->power.request_pending,
@@ -327,6 +328,21 @@ static inline void msm_nand_prep_ce(struct sps_command_element *ce,
 	ce->mask = 0xFFFFFFFF;
 }
 
+static int msm_nand_sps_get_iovec(struct sps_pipe *pipe, uint32_t indx,
+				unsigned int cnt, struct sps_iovec *iovec)
+{
+	int ret = 0;
+
+	do {
+		do {
+			ret = sps_get_iovec((pipe), (iovec));
+		} while (((iovec)->addr == 0x0) && ((iovec)->size == 0x0));
+		if (ret)
+			return ret;
+	} while (--(cnt));
+	return ret;
+}
+
 /*
  * Wrapper function to prepare a single command descriptor with a single
  * SPS command element with the data that is passed to this function.
@@ -379,9 +395,14 @@ static int msm_nand_flash_rd_reg(struct msm_nand_info *info, uint32_t addr,
 		msm_nand_put_device(chip->dev);
 		goto out;
 	}
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	ret = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index, submitted_num_desc,
-			ret, out, &iovec_temp);
+			&iovec_temp);
+	if (ret) {
+		pr_err("Failed to get iovec for pipe %d: (ret%d)\n",
+				(info->sps.cmd_pipe.index), ret);
+		goto out;
+	}
 	ret = msm_nand_put_device(chip->dev);
 	if (ret)
 		goto out;
@@ -477,9 +498,15 @@ static int msm_nand_flash_read_id(struct msm_nand_info *info,
 		msm_nand_put_device(chip->dev);
 		goto out;
 	}
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	err = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index, dma_buffer->xfer.iovec_count,
-			err, out, &iovec_temp);
+			&iovec_temp);
+
+	if (err) {
+		pr_err("Failed to get iovec for pipe %d: (err:%d)\n",
+				(info->sps.cmd_pipe.index), err);
+		goto out;
+	}
 	pr_debug("Read ID register value 0x%x\n", dma_buffer->data[3]);
 	if (!read_onfi_signature)
 		pr_debug("nandid: %x maker %02x device %02x\n",
@@ -569,7 +596,7 @@ static uint16_t msm_nand_flash_onfi_crc_check(uint8_t *buffer, uint16_t count)
 
 /*
  * Structure that contains NANDc register data for commands required
- * for reading ONFI paramter page.
+ * for reading ONFI parameter page.
  */
 struct msm_nand_flash_onfi_data {
 	struct msm_nand_common_cfgs cfg;
@@ -704,8 +731,7 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 
 	/* Lookup the 'APPS' partition's first page address */
 	for (i = 0; i < FLASH_PTABLE_MAX_PARTS_V4; i++) {
-		if (!strncmp("apps", mtd_part[i].name,
-				strlen(mtd_part[i].name))) {
+		if (!strcmp("apps", mtd_part[i].name)) {
 			page_address = mtd_part[i].offset << 6;
 			break;
 		}
@@ -794,12 +820,23 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 		goto put_dev;
 	}
 
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	ret = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index, dma_buffer->xfer.iovec_count,
-			ret, put_dev, &iovec_temp);
-	msm_nand_sps_get_iovec(info->sps.data_prod.handle,
+			&iovec_temp);
+
+	if (ret) {
+		pr_err("Failed to get iovec for pipe %d: (ret:%d)\n",
+				(info->sps.cmd_pipe.index), ret);
+		goto put_dev;
+	}
+	ret = msm_nand_sps_get_iovec(info->sps.data_prod.handle,
 			info->sps.data_prod.index, submitted_num_desc,
-			ret, out, &iovec_temp);
+			&iovec_temp);
+	if (ret) {
+		pr_err("Failed to get iovec for pipe %d: (ret:%d)\n",
+				(info->sps.data_prod.index), ret);
+		goto put_dev;
+	}
 
 	ret = msm_nand_put_device(chip->dev);
 	if (ret)
@@ -855,7 +892,7 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 	 * to ONFi specification it is reporting
 	 * as 16 bit device though it is 8 bit device!!!
 	 */
-	if (!strncmp(onfi_param_page_ptr->device_model, "MT29F4G08ABC", 12))
+	if (!strcmp(onfi_param_page_ptr->device_model, "MT29F4G08ABC"))
 		flash->widebus  = 0;
 	goto unlock_mutex;
 put_dev:
@@ -1408,6 +1445,7 @@ static int msm_nand_is_erased_page(struct mtd_info *mtd, loff_t from,
 	data.addr1 = (rw_params->page >> 16) & 0xff;
 	for (n = rw_params->start_sector; n < cwperpage; n++) {
 		struct sps_command_element *curr_ce, *start_ce;
+
 		dma_buffer->result[n].flash_status = 0xeeeeeeee;
 		dma_buffer->result[n].buffer_status = 0xeeeeeeee;
 		dma_buffer->result[n].erased_cw_status = 0xeeeeee00;
@@ -1488,13 +1526,23 @@ static int msm_nand_is_erased_page(struct mtd_info *mtd, loff_t from,
 		goto put_dev;
 	}
 
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	err = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index,
 			dma_buffer->xfer.iovec_count,
-			err, put_dev, &iovec_temp);
-	msm_nand_sps_get_iovec(info->sps.data_prod.handle,
+			&iovec_temp);
+	if (err) {
+		pr_err("Failed to get iovec for pipe %d: (err:%d)\n",
+				(info->sps.cmd_pipe.index), err);
+		goto put_dev;
+	}
+	err = msm_nand_sps_get_iovec(info->sps.data_prod.handle,
 			info->sps.data_prod.index, submitted_num_desc,
-			err, put_dev, &iovec_temp);
+			&iovec_temp);
+	if (err) {
+		pr_err("Failed to get iovec for pipe %d: (err:%d)\n",
+				(info->sps.data_prod.index), err);
+		goto put_dev;
+	}
 
 	err = msm_nand_put_device(chip->dev);
 	mutex_unlock(&info->lock);
@@ -1615,11 +1663,14 @@ static int msm_nand_read_oob(struct mtd_info *mtd, loff_t from,
 
 	while (rw_params.page_count-- > 0) {
 		uint32_t cw_desc_cnt = 0;
+
 		erased_page = false;
 		data.addr0 = (rw_params.page << 16) | rw_params.oob_col;
 		data.addr1 = (rw_params.page >> 16) & 0xff;
+
 		for (n = rw_params.start_sector; n < cwperpage; n++) {
 			struct sps_command_element *curr_ce, *start_ce;
+
 			dma_buffer->result[n].flash_status = 0xeeeeeeee;
 			dma_buffer->result[n].buffer_status = 0xeeeeeeee;
 			dma_buffer->result[n].erased_cw_status = 0xeeeeee00;
@@ -1707,13 +1758,23 @@ static int msm_nand_read_oob(struct mtd_info *mtd, loff_t from,
 			goto put_dev;
 		}
 
-		msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+		err = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 				info->sps.cmd_pipe.index,
 				dma_buffer->xfer.iovec_count,
-				err, put_dev, &iovec_temp);
-		msm_nand_sps_get_iovec(info->sps.data_prod.handle,
+				&iovec_temp);
+		if (err) {
+			pr_err("Failed to get iovec for pipe %d: (err: %d)\n",
+					(info->sps.cmd_pipe.index), err);
+			goto put_dev;
+		}
+		err = msm_nand_sps_get_iovec(info->sps.data_prod.handle,
 				info->sps.data_prod.index, submitted_num_desc,
-				err, put_dev, &iovec_temp);
+				&iovec_temp);
+		if (err) {
+			pr_err("Failed to get iovec for pipe %d: (err: %d)\n",
+					(info->sps.data_prod.index), err);
+			goto put_dev;
+		}
 
 		err = msm_nand_put_device(chip->dev);
 		mutex_unlock(&info->lock);
@@ -1771,11 +1832,10 @@ static int msm_nand_read_oob(struct mtd_info *mtd, loff_t from,
 						mtd->ecc_stats.failed++;
 						pageerr = -EBADMSG;
 						break;
-					} else {
-						pageerr = 0;
-						pr_debug("Uncorrectable ECC errors dectected on an erased page and has been fixed.\n");
-						break;
 					}
+					pageerr = 0;
+					pr_debug("Uncorrectable ECC errors dectected on an erased page and has been fixed.\n");
+					break;
 				}
 			}
 		}
@@ -1883,7 +1943,6 @@ static int msm_nand_read_partial_page(struct mtd_info *mtd,
 
 	bounce_buf = kmalloc(mtd->writesize, GFP_KERNEL);
 	if (!bounce_buf) {
-		pr_err("%s: could not allocate memory\n", __func__);
 		err = -ENOMEM;
 		goto out;
 	}
@@ -1971,8 +2030,6 @@ static int msm_nand_read(struct mtd_info *mtd, loff_t from, size_t len,
 
 			bounce_buf = kmalloc(ops.len, GFP_KERNEL);
 			if (!bounce_buf) {
-				pr_err("%s: unable to allocate memory\n",
-						__func__);
 				ret = -ENOMEM;
 				goto out;
 			}
@@ -2092,6 +2149,7 @@ static int msm_nand_write_oob(struct mtd_info *mtd, loff_t to,
 	while (rw_params.page_count-- > 0) {
 		uint32_t cw_desc_cnt = 0;
 		struct sps_command_element *curr_ce, *start_ce;
+
 		data.addr0 = (rw_params.page << 16);
 		data.addr1 = (rw_params.page >> 16) & 0xff;
 
@@ -2176,13 +2234,23 @@ static int msm_nand_write_oob(struct mtd_info *mtd, loff_t to,
 			goto put_dev;
 		}
 
-		msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+		err = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 				info->sps.cmd_pipe.index,
 				dma_buffer->xfer.iovec_count,
-				err, put_dev, &iovec_temp);
-		msm_nand_sps_get_iovec(info->sps.data_cons.handle,
+				&iovec_temp);
+		if (err) {
+			pr_err("Failed to get iovec for pipe %d (err:%d)\n",
+					(info->sps.cmd_pipe.index), err);
+			goto put_dev;
+		}
+		err = msm_nand_sps_get_iovec(info->sps.data_cons.handle,
 				info->sps.data_cons.index, submitted_num_desc,
-				err, put_dev, &iovec_temp);
+				&iovec_temp);
+		if (err) {
+			pr_err("Failed to get iovec for pipe %d (err:%d)\n",
+					(info->sps.data_cons.index), err);
+			goto put_dev;
+		}
 
 		err = msm_nand_put_device(chip->dev);
 		mutex_unlock(&info->lock);
@@ -2277,8 +2345,6 @@ static int msm_nand_write(struct mtd_info *mtd, loff_t to, size_t len,
 
 		bounce_buf = kmalloc(ops.len, GFP_KERNEL);
 		if (!bounce_buf) {
-			pr_err("%s: unable to allocate memory\n",
-					__func__);
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -2428,9 +2494,14 @@ static int msm_nand_erase(struct mtd_info *mtd, struct erase_info *instr)
 		pr_err("Failed to submit commands %d\n", err);
 		goto put_dev;
 	}
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	err = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index, dma_buffer->xfer.iovec_count,
-			err, put_dev, &iovec_temp);
+			&iovec_temp);
+	if (err) {
+		pr_err("Failed to get iovec for pipe %d (err: %d)\n",
+				(info->sps.cmd_pipe.index), err);
+		goto put_dev;
+	}
 	err = msm_nand_put_device(chip->dev);
 	if (err)
 		goto unlock_mutex;
@@ -2604,12 +2675,22 @@ static int msm_nand_block_isbad(struct mtd_info *mtd, loff_t ofs)
 		goto put_dev;
 	}
 
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	ret = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index, dma_buffer->xfer.iovec_count,
-			ret, put_dev, &iovec_temp);
-	msm_nand_sps_get_iovec(info->sps.data_prod.handle,
+			&iovec_temp);
+	if (ret) {
+		pr_err("Failed to get iovec for pipe %d (ret: %d)\n",
+				(info->sps.cmd_pipe.index), ret);
+		goto put_dev;
+	}
+	ret = msm_nand_sps_get_iovec(info->sps.data_prod.handle,
 			info->sps.data_prod.index, submitted_num_desc,
-			ret, put_dev, &iovec_temp);
+			&iovec_temp);
+	if (ret) {
+		pr_err("Failed to get iovec for pipe %d (ret: %d)\n",
+				(info->sps.data_prod.index), ret);
+		goto put_dev;
+	}
 
 	ret = msm_nand_put_device(chip->dev);
 	mutex_unlock(&info->lock);
@@ -2772,8 +2853,8 @@ int msm_nand_scan(struct mtd_info *mtd)
 			supported_flash->blksize = flashdev->erasesize;
 			supported_flash->oobsize = flashdev->oobsize;
 			supported_flash->ecc_correctability =
-					flashdev->ecc_correctable_bits;
-			if (!flashdev->ecc_correctable_bits)
+					flashdev->ecc.strength_ds;
+			if (!flashdev->ecc.strength_ds)
 				pr_err("num ecc correctable bit not specified and defaults to 4 bit BCH\n");
 		}
 		supported_flash->flash_id = flash_id;
@@ -3042,6 +3123,7 @@ static int msm_nand_bam_init(struct msm_nand_info *nand_info)
 	 * and thus the flag SPS_BAM_MGR_MULTI_EE is set.
 	 */
 	bam.manage = SPS_BAM_MGR_DEVICE_REMOTE | SPS_BAM_MGR_MULTI_EE;
+	bam.ipc_loglevel = QPIC_BAM_DEFAULT_IPC_LOGLVL;
 
 	rc = sps_phy2h(bam.phys_addr, &nand_info->sps.bam_handle);
 	if (!rc)
@@ -3117,9 +3199,14 @@ static int msm_nand_enable_dma(struct msm_nand_info *info)
 		pr_err("Failed to submit command: %d\n", ret);
 		goto put_dev;
 	}
-	msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
+	ret = msm_nand_sps_get_iovec(info->sps.cmd_pipe.handle,
 			info->sps.cmd_pipe.index, submitted_num_desc,
-			ret, put_dev, &iovec_temp);
+			&iovec_temp);
+	if (ret) {
+		pr_err("Failed to get iovec for pipe %d (ret: %d)\n",
+				(info->sps.cmd_pipe.index), ret);
+		goto put_dev;
+	}
 put_dev:
 	ret = msm_nand_put_device(chip->dev);
 out:
@@ -3236,7 +3323,7 @@ static int msm_nand_probe(struct platform_device *pdev)
 	struct msm_nand_info *info;
 	struct resource *res;
 	int i, err, nr_parts;
-
+	struct device *dev;
 	/*
 	 * The partition information can also be passed from kernel command
 	 * line. Also, the MTD core layer supports adding the whole device as
@@ -3245,7 +3332,6 @@ static int msm_nand_probe(struct platform_device *pdev)
 	info = devm_kzalloc(&pdev->dev, sizeof(struct msm_nand_info),
 				GFP_KERNEL);
 	if (!info) {
-		pr_err("Unable to allocate memory for msm_nand_info\n");
 		err = -ENOMEM;
 		goto out;
 	}
@@ -3287,6 +3373,12 @@ static int msm_nand_probe(struct platform_device *pdev)
 	info->nand_chip.dev = &pdev->dev;
 	init_waitqueue_head(&info->nand_chip.dma_wait_queue);
 	mutex_init(&info->lock);
+
+	dev = &pdev->dev;
+	if (dma_supported(dev, DMA_BIT_MASK(32))) {
+		info->dma_mask = DMA_BIT_MASK(32);
+		dev->coherent_dma_mask = info->dma_mask;
+	}
 
 	info->nand_chip.dma_virt_addr =
 		dmam_alloc_coherent(&pdev->dev, MSM_NAND_DMA_BUFFER_SIZE,

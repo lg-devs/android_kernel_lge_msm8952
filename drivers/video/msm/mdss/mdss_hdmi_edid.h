@@ -22,20 +22,25 @@
 
 struct hdmi_edid_init_data {
 	struct kobject *kobj;
-	struct hdmi_util_ds_data ds_data;
-	u32 id;
+	struct hdmi_util_ds_data *ds_data;
+	u32 max_pclk_khz;
 	u8 *buf;
 	u32 buf_size;
 };
 
 int hdmi_edid_parser(void *edid_ctrl);
+#ifdef CONFIG_SLIMPORT_COMMON
+int hdmi_edid_reset_parser(void *edid_ctrl);
+#endif
 u32 hdmi_edid_get_raw_data(void *edid_ctrl, u8 *buf, u32 size);
 u8 hdmi_edid_get_sink_scaninfo(void *edid_ctrl, u32 resolution);
 u32 hdmi_edid_get_sink_mode(void *edid_ctrl);
-u32 hdmi_edid_get_video_modes(void *edid_ctrl, u32 *mode_cnt, u32 *modes);
+bool hdmi_edid_get_sink_scrambler_support(void *input);
+bool hdmi_edid_get_scdc_support(void *input);
 int hdmi_edid_get_audio_blk(void *edid_ctrl,
 	struct msm_hdmi_audio_edid_blk *blk);
-void hdmi_edid_set_video_resolution(void *edid_ctrl, u32 resolution);
+void hdmi_edid_set_video_resolution(void *edid_ctrl, u32 resolution,
+	bool reset);
 void hdmi_edid_deinit(void *edid_ctrl);
 void *hdmi_edid_init(struct hdmi_edid_init_data *init_data);
 bool hdmi_edid_is_s3d_mode_supported(void *input,

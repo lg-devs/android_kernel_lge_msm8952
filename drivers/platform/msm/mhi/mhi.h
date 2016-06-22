@@ -22,18 +22,22 @@
 #include <linux/spinlock.h>
 #include <linux/sched.h>
 #include <linux/cdev.h>
-#include <mach/msm_pcie.h>
+#include <linux/msm_pcie.h>
 #include <linux/sched.h>
+#include <linux/irqreturn.h>
+#include <linux/list.h>
+#include <linux/dma-mapping.h>
 
 extern struct mhi_pcie_devices mhi_devices;
 
 enum MHI_DEBUG_LEVEL {
-	MHI_MSG_VERBOSE = 0x1,
-	MHI_MSG_INFO = 0x2,
-	MHI_MSG_DBG = 0x4,
-	MHI_MSG_WARNING = 0x8,
-	MHI_MSG_ERROR = 0x10,
-	MHI_MSG_CRITICAL = 0x20,
+	MHI_MSG_RAW = 0x1,
+	MHI_MSG_VERBOSE = 0x2,
+	MHI_MSG_INFO = 0x4,
+	MHI_MSG_DBG = 0x8,
+	MHI_MSG_WARNING = 0x10,
+	MHI_MSG_ERROR = 0x20,
+	MHI_MSG_CRITICAL = 0x40,
 	MHI_MSG_reserved = 0x80000000
 };
 
@@ -550,11 +554,12 @@ enum MHI_STATUS get_element_index(struct mhi_ring *ring, void *address,
 enum MHI_STATUS recycle_trb_and_ring(struct mhi_device_ctxt *mhi_dev_ctxt,
 	struct mhi_ring *ring, enum MHI_RING_TYPE ring_type, u32 ring_index);
 enum MHI_STATUS parse_xfer_event(struct mhi_device_ctxt *ctxt,
-					union mhi_event_pkt *event);
-enum MHI_EVENT_CCS get_cmd_pkt(union mhi_event_pkt *ev_pkt,
-			       union mhi_cmd_pkt **cmd_pkt);
+				union mhi_event_pkt *event, u32 event_id);
+enum MHI_EVENT_CCS get_cmd_pkt(struct mhi_device_ctxt *mhi_dev_ctxt,
+				union mhi_event_pkt *ev_pkt,
+				union mhi_cmd_pkt **cmd_pkt, u32 event_index);
 enum MHI_STATUS parse_cmd_event(struct mhi_device_ctxt *ctxt,
-					union mhi_event_pkt *event);
+				union mhi_event_pkt *event, u32 event_index);
 int parse_event_thread(void *ctxt);
 enum MHI_STATUS mhi_test_for_device_ready(
 					struct mhi_device_ctxt *mhi_dev_ctxt);

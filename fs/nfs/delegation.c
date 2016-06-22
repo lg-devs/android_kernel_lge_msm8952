@@ -20,6 +20,7 @@
 #include "nfs4_fs.h"
 #include "delegation.h"
 #include "internal.h"
+#include "nfs4trace.h"
 
 static void nfs_free_delegation(struct nfs_delegation *delegation)
 {
@@ -40,14 +41,8 @@ void nfs_mark_delegation_referenced(struct nfs_delegation *delegation)
 	set_bit(NFS_DELEGATION_REFERENCED, &delegation->flags);
 }
 
-/**
- * nfs_have_delegation - check if inode has a delegation
- * @inode: inode to check
- * @flags: delegation types to check for
- *
- * Returns one if inode has the indicated delegation, otherwise zero.
- */
-int nfs4_have_delegation(struct inode *inode, fmode_t flags)
+static int
+nfs4_do_check_delegation(struct inode *inode, fmode_t flags, bool mark)
 {
 	struct nfs_delegation *delegation;
 	int ret = 0;
@@ -57,11 +52,33 @@ int nfs4_have_delegation(struct inode *inode, fmode_t flags)
 	delegation = rcu_dereference(NFS_I(inode)->delegation);
 	if (delegation != NULL && (delegation->type & flags) == flags &&
 	    !test_bit(NFS_DELEGATION_RETURNING, &delegation->flags)) {
-		nfs_mark_delegation_referenced(delegation);
+		if (mark)
+			nfs_mark_delegation_referenced(delegation);
 		ret = 1;
 	}
 	rcu_read_unlock();
 	return ret;
+}
+/**
+ * nfs_have_delegation - check if inode has a delegation, mark it
+ * NFS_DELEGATION_REFERENCED if there is one.
+ * @inode: inode to check
+ * @flags: delegation types to check for
+ *
+ * Returns one if inode has the indicated delegation, otherwise zero.
+ */
+int nfs4_have_delegation(struct inode *inode, fmode_t flags)
+{
+	return nfs4_do_check_delegation(inode, flags, true);
+}
+
+/*
+ * nfs4_check_delegation - check if inode has a delegation, do not mark
+ * NFS_DELEGATION_REFERENCED if it has one.
+ */
+int nfs4_check_delegation(struct inode *inode, fmode_t flags)
+{
+	return nfs4_do_check_delegation(inode, flags, false);
 }
 
 static int nfs_delegation_claim_locks(struct nfs_open_context *ctx, struct nfs4_state *state, const nfs4_stateid *stateid)
@@ -73,20 +90,20 @@ static int nfs_delegation_claim_locks(struct nfs_open_context *ctx, struct nfs4_
 	if (inode->i_flock == NULL)
 		goto out;
 
-	/* Protect inode->i_flock using the file locks lock */
-	lock_flocks();
+	/* Protect inode->i_flock using the i_lock */
+	spin_lock(&inode->i_lock);
 	for (fl = inode->i_flock; fl != NULL; fl = fl->fl_next) {
 		if (!(fl->fl_flags & (FL_POSIX|FL_FLOCK)))
 			continue;
 		if (nfs_file_open_context(fl->fl_file) != ctx)
 			continue;
-		unlock_flocks();
+		spin_unlock(&inode->i_lock);
 		status = nfs4_lock_delegation_recall(fl, state, stateid);
 		if (status < 0)
 			goto out;
-		lock_flocks();
+		spin_lock(&inode->i_lock);
 	}
-	unlock_flocks();
+	spin_unlock(&inode->i_lock);
 out:
 	return status;
 }
@@ -160,8 +177,9 @@ void nfs_inode_reclaim_delegation(struct inode *inode, struct rpc_cred *cred,
 				  &delegation->flags);
 			NFS_I(inode)->delegation_state = delegation->type;
 			spin_unlock(&delegation->lock);
-			put_rpccred(oldcred);
 			rcu_read_unlock();
+			put_rpccred(oldcred);
+			trace_nfs4_reclaim_delegation(inode, res->delegation_type);
 		} else {
 			/* We appear to have raced with a delegation return. */
 			spin_unlock(&delegation->lock);
@@ -350,6 +368,7 @@ int nfs_inode_set_delegation(struct inode *inode, struct rpc_cred *cred, struct 
 	spin_lock(&inode->i_lock);
 	nfsi->cache_validity |= NFS_INO_REVAL_FORCED;
 	spin_unlock(&inode->i_lock);
+	trace_nfs4_set_delegation(inode, res->delegation_type);
 
 out:
 	spin_unlock(&clp->cl_lock);

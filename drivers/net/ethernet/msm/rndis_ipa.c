@@ -1694,7 +1694,7 @@ static int rndis_ipa_create_rm_resource(struct rndis_ipa_dev *rndis_ipa_ctx)
 	RNDIS_IPA_DEBUG("rm_it client was created\n");
 
 	result = ipa_rm_add_dependency_sync(DRV_RESOURCE_ID,
-				IPA_RM_RESOURCE_USB_CONS);
+					    IPA_RM_RESOURCE_USB_CONS);
 
 	if (result && result != -EINPROGRESS)
 		RNDIS_IPA_ERROR("unable to add RNDIS/USB dependency (%d)\n",
@@ -1703,7 +1703,7 @@ static int rndis_ipa_create_rm_resource(struct rndis_ipa_dev *rndis_ipa_ctx)
 		RNDIS_IPA_DEBUG("RNDIS/USB dependency was set\n");
 
 	result = ipa_rm_add_dependency_sync(IPA_RM_RESOURCE_USB_PROD,
-				IPA_RM_RESOURCE_APPS_CONS);
+					    IPA_RM_RESOURCE_APPS_CONS);
 	if (result && result != -EINPROGRESS)
 		RNDIS_IPA_ERROR("unable to add USB/APPS dependency (%d)\n",
 				result);

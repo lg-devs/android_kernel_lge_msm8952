@@ -11,7 +11,6 @@
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/proc_fs.h>
-#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/wait.h>
@@ -415,14 +414,14 @@ EXPORT_SYMBOL_GPL(tty_ldisc_flush);
  *	they are not on hot paths so a little discipline won't do
  *	any harm.
  *
- *	Locking: takes termios_mutex
+ *	Locking: takes termios_rwsem
  */
 
 static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
 {
-	mutex_lock(&tty->termios_mutex);
+	down_write(&tty->termios_rwsem);
 	tty->termios.c_line = num;
-	mutex_unlock(&tty->termios_mutex);
+	up_write(&tty->termios_rwsem);
 }
 
 /**
@@ -517,7 +516,7 @@ static void tty_ldisc_restore(struct tty_struct *tty, struct tty_ldisc *old)
 int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 {
 	int retval;
-	struct tty_ldisc *o_ldisc, *new_ldisc;
+	struct tty_ldisc *old_ldisc, *new_ldisc;
 	struct tty_struct *o_tty = tty->link;
 
 	new_ldisc = tty_ldisc_get(tty, ldisc);
@@ -540,16 +539,11 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 		return 0;
 	}
 
-	/* FIXME: why 'shutoff' input if the ldisc is locked? */
-	tty->receive_room = 0;
-
-	o_ldisc = tty->ldisc;
+	old_ldisc = tty->ldisc;
 	tty_lock(tty);
 
-	/* FIXME: for testing only */
-	WARN_ON(test_bit(TTY_HUPPED, &tty->flags));
-
-	if (test_bit(TTY_HUPPING, &tty->flags)) {
+	if (test_bit(TTY_HUPPING, &tty->flags) ||
+	    test_bit(TTY_HUPPED, &tty->flags)) {
 		/* We were raced by the hangup method. It will have stomped
 		   the ldisc data and closed the ldisc down */
 		tty_ldisc_enable_pair(tty, o_tty);
@@ -558,8 +552,8 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 		return -EIO;
 	}
 
-	/* Shutdown the current discipline. */
-	tty_ldisc_close(tty, o_ldisc);
+	/* Shutdown the old discipline. */
+	tty_ldisc_close(tty, old_ldisc);
 
 	/* Now set up the new line discipline. */
 	tty->ldisc = new_ldisc;
@@ -569,17 +563,19 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	if (retval < 0) {
 		/* Back to the old one or N_TTY if we can't */
 		tty_ldisc_put(new_ldisc);
-		tty_ldisc_restore(tty, o_ldisc);
+		tty_ldisc_restore(tty, old_ldisc);
 	}
 
-	/* At this point we hold a reference to the new ldisc and a
-	   a reference to the old ldisc. If we ended up flipping back
-	   to the existing ldisc we have two references to it */
-
-	if (tty->ldisc->ops->num != o_ldisc->ops->num && tty->ops->set_ldisc)
+	if (tty->ldisc->ops->num != old_ldisc->ops->num && tty->ops->set_ldisc)
 		tty->ops->set_ldisc(tty);
 
-	tty_ldisc_put(o_ldisc);
+	/* At this point we hold a reference to the new ldisc and a
+	   reference to the old ldisc, or we hold two references to
+	   the old ldisc (if it was restored as part of error cleanup
+	   above). In either case, releasing a single reference from
+	   the old ldisc is correct. */
+
+	tty_ldisc_put(old_ldisc);
 
 	/*
 	 *	Allow ldisc referencing to occur again
@@ -605,11 +601,11 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 
 static void tty_reset_termios(struct tty_struct *tty)
 {
-	mutex_lock(&tty->termios_mutex);
+	down_write(&tty->termios_rwsem);
 	tty->termios = tty->driver->init_termios;
 	tty->termios.c_ispeed = tty_termios_input_baud_rate(&tty->termios);
 	tty->termios.c_ospeed = tty_termios_baud_rate(&tty->termios);
-	mutex_unlock(&tty->termios_mutex);
+	up_write(&tty->termios_rwsem);
 }
 
 

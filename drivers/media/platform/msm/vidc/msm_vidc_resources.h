@@ -14,25 +14,21 @@
 #ifndef __MSM_VIDC_RESOURCES_H__
 #define __MSM_VIDC_RESOURCES_H__
 
+#include <linux/devfreq.h>
 #include <linux/platform_device.h>
 #include <media/msm_vidc.h>
 #define MAX_BUFFER_TYPES 32
-#define IDLE_TIME_WINDOW_SIZE 30
 
-struct clock_voltage_table {
-	u32 clock_freq;
-	u32 voltage_idx;
-};
-
-struct clock_voltage_info {
-	struct clock_voltage_table *cv_table;
-	u32 count;
-};
 
 struct load_freq_table {
 	u32 load;
 	u32 freq;
 	u32 supported_codecs;
+};
+
+struct imem_ab_table {
+	u32 core_freq;
+	u32 imem_ab;
 };
 
 struct reg_value_pair {
@@ -55,19 +51,14 @@ struct addr_set {
 	int count;
 };
 
-struct iommu_info {
+struct context_bank_info {
+	struct list_head list;
 	const char *name;
-	u32 buffer_type[MAX_BUFFER_TYPES];
-	struct iommu_group *group;
-	int domain;
+	u32 buffer_type;
 	bool is_secure;
-	struct addr_range addr_range[MAX_BUFFER_TYPES];
-	int npartitions;
-};
-
-struct iommu_set {
-	struct iommu_info *iommu_maps;
-	u32 count;
+	struct addr_range addr_range;
+	struct device *dev;
+	struct dma_iommu_mapping *mapping;
 };
 
 struct buffer_usage_table {
@@ -104,24 +95,28 @@ struct clock_set {
 	u32 count;
 };
 
-enum msm_vidc_power_mode {
-	VIDC_POWER_NORMAL = BIT(0),
-	VIDC_POWER_LOW = BIT(1),
-	VIDC_POWER_TURBO = BIT(2),
-	VIDC_POWER_LOW_LATENCY = BIT(3),
-};
-
 struct bus_info {
-	struct msm_bus_scale_pdata *pdata;
-	u32 priv;
-	u32 sessions_supported; /* bitmask */
-	bool passive;
-	enum msm_vidc_power_mode power_mode;
+	char *name;
+	int master;
+	int slave;
+	unsigned int range[2];
+	const char *governor;
+	struct device *dev;
+	struct devfreq_dev_profile devfreq_prof;
+	struct devfreq *devfreq;
+	struct msm_bus_client_handle *client;
 };
 
 struct bus_set {
 	struct bus_info *bus_tbl;
 	u32 count;
+};
+
+enum imem_type {
+	IMEM_NONE,
+	IMEM_OCMEM,
+	IMEM_VMEM,
+	IMEM_MAX,
 };
 
 struct msm_vidc_platform_resources {
@@ -131,36 +126,34 @@ struct msm_vidc_platform_resources {
 	uint32_t irq;
 	struct load_freq_table *load_freq_tbl;
 	uint32_t load_freq_tbl_size;
+	struct imem_ab_table *imem_ab_tbl;
+	u32 imem_ab_tbl_size;
 	struct reg_set reg_set;
 	struct addr_set qdss_addr_set;
-	struct iommu_set iommu_group_set;
 	struct buffer_usage_set buffer_usage_set;
-	uint32_t ocmem_size;
+	uint32_t imem_size;
+	enum imem_type imem_type;
 	uint32_t max_load;
-	uint32_t dcvs_min_load;
-	uint32_t dcvs_min_mbperframe;
 	struct platform_device *pdev;
 	struct regulator_set regulator_set;
 	struct clock_set clock_set;
-	struct clock_voltage_info cv_info;
-	struct clock_voltage_info cv_info_vp9d;
 	struct bus_set bus_set;
-	uint32_t power_modes;
-	bool dynamic_bw_update;
 	bool use_non_secure_pil;
 	bool sw_power_collapsible;
 	bool sys_idle_indicator;
-	bool early_fw_load;
+	struct list_head context_banks;
 	bool thermal_mitigable;
 	const char *fw_name;
+	const char *hfi_version;
+	bool never_unload_fw;
+	uint32_t pm_qos_latency_us;
+	uint32_t max_inst_count;
+	uint32_t max_secure_inst_count;
 };
 
-static inline int is_iommu_present(struct msm_vidc_platform_resources *res)
+static inline bool is_iommu_present(struct msm_vidc_platform_resources *res)
 {
-	if (res)
-		return (res->iommu_group_set.count > 0 &&
-				res->iommu_group_set.iommu_maps != NULL);
-	return 0;
+	return !list_empty(&res->context_banks);
 }
 
 extern uint32_t msm_vidc_pwr_collapse_delay;

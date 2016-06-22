@@ -57,6 +57,11 @@ u8 reg_dump_option;
 u32 testbus_sel;
 u32 bam_pipe_sel;
 u32 desc_option;
+/**
+ * Specifies range of log level from level 0 to level 3 to have fine-granularity for logging
+ * to serve all BAM use cases.
+ */
+u32 log_level_sel;
 
 static char *debugfs_buf;
 static u32 debugfs_buf_size;
@@ -73,6 +78,7 @@ struct dentry *dfile_testbus_sel;
 struct dentry *dfile_bam_pipe_sel;
 struct dentry *dfile_desc_option;
 struct dentry *dfile_bam_addr;
+struct dentry *dfile_log_level_sel;
 
 static struct sps_bam *phy2bam(phys_addr_t phys_addr);
 
@@ -283,6 +289,7 @@ static ssize_t sps_set_bam_addr(struct file *file, const char __user *buf,
 	} else {
 		vir_addr = &bam->base;
 		num_pipes = bam->props.num_pipes;
+		bam->ipc_loglevel = log_level_sel;
 	}
 
 	switch (reg_dump_option) {
@@ -493,6 +500,7 @@ static void sps_debugfs_init(void)
 	debugfs_buf_size = 0;
 	debugfs_buf_used = 0;
 	wraparound = false;
+	log_level_sel = 0;
 
 	dent = debugfs_create_dir("sps", 0);
 	if (IS_ERR(dent)) {
@@ -568,8 +576,17 @@ static void sps_debugfs_init(void)
 		goto bam_addr_err;
 	}
 
+	dfile_log_level_sel = debugfs_create_u32("log_level_sel", 0664,
+						dent, &log_level_sel);
+	if (!dfile_log_level_sel || IS_ERR(dfile_log_level_sel)) {
+		pr_err("sps:fail to create debug_fs file for log_level_sel.\n");
+		goto bam_log_level_err;
+	}
+
 	return;
 
+bam_log_level_err:
+	debugfs_remove(dfile_bam_addr);
 bam_addr_err:
 	debugfs_remove(dfile_desc_option);
 desc_option_err:
@@ -612,6 +629,7 @@ static void sps_debugfs_exit(void)
 		debugfs_remove(dfile_bam_addr);
 	if (dent)
 		debugfs_remove(dent);
+	debugfs_remove(dfile_log_level_sel);
 	kfree(debugfs_buf);
 	debugfs_buf = NULL;
 }
@@ -2049,7 +2067,9 @@ int sps_register_bam_device(const struct sps_bam_props *bam_props,
 {
 	struct sps_bam *bam = NULL;
 	void *virt_addr = NULL;
+#ifdef CONFIG_IPC_LOGGING
 	char bam_name[MAX_MSG_LEN];
+#endif
 	u32 manage;
 	int ok;
 	int result;
@@ -2143,6 +2163,7 @@ int sps_register_bam_device(const struct sps_bam_props *bam_props,
 	if (virt_addr != NULL)
 		bam->props.virt_addr = virt_addr;
 
+#ifdef CONFIG_IPC_LOGGING
 	snprintf(bam_name, sizeof(bam_name), "sps_bam_%pa_0",
 					&bam->props.phys_addr);
 	bam->ipc_log0 = ipc_log_context_create(SPS_IPC_LOGPAGES,
@@ -2188,6 +2209,7 @@ int sps_register_bam_device(const struct sps_bam_props *bam_props,
 					__func__, &bam->props.phys_addr);
 		goto exit_err;
 	}
+#endif
 
 	if (bam_props->ipc_loglevel)
 		bam->ipc_loglevel = bam_props->ipc_loglevel;
@@ -2287,8 +2309,10 @@ int sps_deregister_bam_device(unsigned long dev_handle)
 	mutex_lock(&bam->lock);
 	sps_bam_device_de_init(bam);
 	mutex_unlock(&bam->lock);
+#ifdef CONFIG_IPC_LOGGING
 	ipc_log_context_destroy(bam->ipc_log1);
 	ipc_log_context_destroy(bam->ipc_log2);
+#endif
 	if (bam->props.virt_size)
 		(void)iounmap(bam->props.virt_addr);
 
@@ -2482,6 +2506,7 @@ EXPORT_SYMBOL(sps_pipe_pending_desc);
 int sps_bam_process_irq(unsigned long dev)
 {
 	struct sps_bam *bam;
+	int ret = 0;
 
 	if (!dev) {
 		SPS_ERR(sps, "sps:%s:BAM handle is NULL.\n", __func__);
@@ -2496,9 +2521,9 @@ int sps_bam_process_irq(unsigned long dev)
 
 	SPS_DBG1(bam, "sps:%s; BAM: %pa.\n", __func__, BAM_ID(bam));
 
-	sps_bam_check_irq(bam);
+	ret = sps_bam_check_irq(bam);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL(sps_bam_process_irq);
 
@@ -2976,6 +3001,7 @@ static int __init sps_init(void)
 	if (sps == NULL)
 		return -ENOMEM;
 
+#ifdef CONFIG_IPC_LOGGING
 	sps->ipc_log0 = ipc_log_context_create(SPS_IPC_LOGPAGES,
 							"sps_ipc_log0", 0);
 	if (!sps->ipc_log0)
@@ -2996,6 +3022,7 @@ static int __init sps_init(void)
 							"sps_ipc_log4", 0);
 	if (!sps->ipc_log4)
 		pr_err("Failed to create IPC log4\n");
+#endif
 
 	ret = platform_driver_register(&msm_sps_driver);
 

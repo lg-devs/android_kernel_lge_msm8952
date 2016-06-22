@@ -12,11 +12,22 @@
 #ifndef _SOC_QCOM_GLINK_PRIVATE_H_
 #define _SOC_QCOM_GLINK_PRIVATE_H_
 
+#include <linux/bug.h>
+#include <linux/completion.h>
+#include <linux/dcache.h>
 #include <linux/ipc_logging.h>
+#include <linux/kernel.h>
+#include <linux/kref.h>
+#include <linux/ratelimit.h>
+#include <linux/seq_file.h>
+#include <linux/spinlock.h>
+#include <linux/types.h>
+#include <soc/qcom/glink.h>
 
-#ifdef INIT_COMPLETION
-#define reinit_completion(x) INIT_COMPLETION(*(x))
-#endif /* INIT_COMPLETION */
+struct glink_core_xprt_ctx;
+struct channel_ctx;
+enum transport_state_e;
+enum local_channel_state_e;
 
 /* Logging Macros */
 enum {
@@ -81,11 +92,6 @@ struct glink_ch_intent_info {
 	spinlock_t *ri_lst_lock;
 	struct list_head *ri_list;
 };
-
-struct glink_core_xprt_ctx;
-struct channel_ctx;
-enum transport_state_e;
-enum local_channel_state_e;
 
 /* Tracer Packet Event IDs for G-Link */
 enum glink_tracer_pkt_events {
@@ -285,18 +291,18 @@ const char *glink_get_ch_state_string(enum local_channel_state_e enum_id);
 } while (0)
 
 #define GLINK_ERR(x...) do {                              \
-	pr_err("<CORE> " x); \
+	pr_err_ratelimited("<CORE> " x); \
 	GLINK_IPC_LOG_STR("<CORE> " x);  \
 } while (0)
 
 #define GLINK_ERR_XPRT(xprt, fmt, args...) do { \
-	pr_err("<CORE> %s:%s " fmt, \
+	pr_err_ratelimited("<CORE> %s:%s " fmt, \
 		xprt->name, xprt->edge, args);  \
 	GLINK_INFO_XPRT(xprt, fmt, args); \
 } while (0)
 
 #define GLINK_ERR_CH(ctx, fmt, args...) do { \
-	pr_err("<CORE> %s:%s:%s[%u:%u] " fmt, \
+	pr_err_ratelimited("<CORE> %s:%s:%s[%u:%u] " fmt, \
 		ctx->transport_ptr->name, \
 		ctx->transport_ptr->edge, \
 		ctx->name, \
@@ -306,7 +312,7 @@ const char *glink_get_ch_state_string(enum local_channel_state_e enum_id);
 } while (0)
 
 #define GLINK_ERR_CH_XPRT(ctx, xprt, fmt, args...) do { \
-	pr_err("<CORE> %s:%s:%s[%u:%u] " fmt, \
+	pr_err_ratelimited("<CORE> %s:%s:%s[%u:%u] " fmt, \
 		xprt->name, \
 		xprt->edge, \
 		ctx->name, \
@@ -641,6 +647,26 @@ enum ssr_command {
 };
 
 /**
+ * struct ssr_notify_data - Contains private data used for client notifications
+ *                          from G-Link.
+ * tx_done:		Indicates whether or not the tx_done notification has
+ *			been received.
+ * event:		The state notification event received.
+ * responded:		Indicates whether or not a cleanup_done response was
+ *			received.
+ * edge:		The G-Link edge name for the channel associated with
+ *			this callback data
+ * do_cleanup_data:	Structure containing the G-Link SSR do_cleanup message.
+ */
+struct ssr_notify_data {
+	bool tx_done;
+	unsigned event;
+	bool responded;
+	const char *edge;
+	struct do_cleanup_msg *do_cleanup_data;
+};
+
+/**
  * struct subsys_info - Subsystem info structure
  * ssr_name:		name of the subsystem recognized by the SSR framework
  * edge:		name of the G-Link edge
@@ -719,27 +745,6 @@ struct cleanup_done_msg {
 	uint32_t version;
 	uint32_t response;
 	uint32_t seq_num;
-};
-
-/**
- * struct ssr_notify_data - Contains private data used for client notifications
- *                          from G-Link.
- * tx_done:	Indicates whether or not the tx_done notification has been
- *		received.
- * event:	The state notification event received.
- * responded:	Indicates whether or not a cleanup_done response was received.
- * version:	G-Link SSR protocol version
- * seq_num:	G-Link SSR protocol sequence number
- * edge:	The G-Link edge name for the channel associated with this
- *		callback data
- */
-struct ssr_notify_data {
-	bool tx_done;
-	unsigned event;
-	bool responded;
-	uint32_t version;
-	uint32_t seq_num;
-	const char *edge;
 };
 
 /**

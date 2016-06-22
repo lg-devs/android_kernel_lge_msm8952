@@ -46,7 +46,6 @@ struct clk_freq_tbl {
 #define FREQ_END	(ULONG_MAX-1)
 #define F_END { .freq_hz = FREQ_END }
 #define	FIXED_CLK_SRC	0
-
 /*
  * Generic clock-definition struct and macros
  */
@@ -58,6 +57,8 @@ struct clk_freq_tbl {
  * @current_freq: current RCG frequency
  * @c: generic clock data
  * @non_local_children: set if RCG has at least one branch owned by a diff EE
+ * @force_enable_rcgr: set if RCG needs to be force enabled/disabled during
+ * power sequence
  * @base: pointer to base address of ioremapped registers.
  */
 struct rcg_clk {
@@ -70,6 +71,7 @@ struct rcg_clk {
 	struct clk	c;
 
 	bool non_local_children;
+	bool force_enable_rcgr;
 	void *const __iomem *base;
 };
 
@@ -93,6 +95,8 @@ extern struct clk_freq_tbl rcg_dummy_freq;
  * @toggle_memory: toggle memory during enable/disable if true
  * @no_halt_check_on_disable: When set, do not check status bit during
  *			      clk_disable().
+ * @check_enable_bit: Check the enable bit to determine clock status
+				during handoff.
  * @base: pointer to base address of ioremapped registers.
  */
 struct branch_clk {
@@ -106,6 +110,7 @@ struct branch_clk {
 	const u32 halt_check;
 	bool toggle_memory;
 	bool no_halt_check_on_disable;
+	bool check_enable_bit;
 	void *const __iomem *base;
 };
 
@@ -232,6 +237,7 @@ extern struct clk_ops clk_ops_gate;
 extern struct clk_ops clk_ops_rst;
 extern struct clk_mux_ops mux_reg_ops;
 extern struct mux_div_ops rcg_mux_div_ops;
+extern struct clk_div_ops postdiv_reg_ops;
 
 enum handoff pixel_rcg_handoff(struct clk *clk);
 enum handoff byte_rcg_handoff(struct clk *clk);

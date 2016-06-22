@@ -14,17 +14,21 @@
 # Based on the ia64 boot/Makefile.
 #
 
+ifneq ($(CONFIG_MACH_LGE), y)
 include $(srctree)/arch/arm64/boot/dts/qcom/Makefile
+else
+include $(srctree)/arch/arm64/boot/dts/lge/Makefile
+endif
 
 targets := Image Image.gz
 
 DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES))
 ifneq ($(DTB_NAMES),)
 DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
-else
-DTB_LIST := $(dtb-y)
-endif
 DTB_OBJS := $(addprefix $(obj)/dts/,$(DTB_LIST))
+else
+DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb)
+endif
 
 $(obj)/Image: vmlinux FORCE
 	$(call if_changed,objcopy)

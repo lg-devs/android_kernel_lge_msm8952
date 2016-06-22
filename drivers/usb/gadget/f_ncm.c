@@ -112,7 +112,7 @@ static inline unsigned ncm_bitrate(struct usb_gadget *g)
  * to NCM's dwNtbInMaxSize to save bus bandwidth
  */
 
-#define	MAX_TX_NONFIXED		(512 * 3)
+#define	MAX_TX_NONFIXED		(512 * 4)
 
 #define FORMATS_SUPPORTED	(USB_CDC_NCM_NTB16_SUPPORTED |	\
 				 USB_CDC_NCM_NTB32_SUPPORTED)
@@ -983,9 +983,13 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 		return NULL;
 	}
 
+	skb2 = skb_realloc_headroom(skb, ncb_len);
+
+	#if 0
 	skb2 = skb_copy_expand(skb, ncb_len,
 			       max_size - skb->len - ncb_len - crc_len,
 			       GFP_ATOMIC);
+#endif
 	dev_kfree_skb_any(skb);
 	if (!skb2)
 		return NULL;
@@ -1024,6 +1028,7 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 				skb->data + ncb_len,
 				skb->len - ncb_len);
 		put_unaligned_le32(crc, skb->data + skb->len);
+		pr_err("CRC is 1\n");
 		skb_put(skb, crc_len);
 	}
 
@@ -1033,9 +1038,11 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 	put_ncm(&tmp, opts->dgram_item_len, skb->len - ncb_len);
 	/* (d)wDatagramIndex[1] and  (d)wDatagramLength[1] already zeroed */
 
-	if (skb->len > MAX_TX_NONFIXED)
+	if (skb->len > MAX_TX_NONFIXED) {
+		pr_err("skb put in memset\n");
 		memset(skb_put(skb, max_size - skb->len),
 		       0, max_size - skb->len);
+	}
 
 	return skb;
 }

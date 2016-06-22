@@ -14,14 +14,7 @@
 #include <linux/kernel.h>
 #include <asm/mach/map.h>
 #include <asm/mach/arch.h>
-#include <mach/board.h>
-#include <mach/msm_iomap.h>
 #include "board-dt.h"
-
-static void __init mdmfermium_map_io(void)
-{
-	msm_map_mdmfermium_io();
-}
 
 static const char *mdmfermium_dt_match[] __initconst = {
 	"qcom,mdmfermium",
@@ -35,7 +28,6 @@ static void __init mdmfermium_init(void)
 
 DT_MACHINE_START(MDMFERMIUM_DT,
 	"Qualcomm Technologies, Inc. MDM FERMIUM (Flattened Device Tree)")
-	.init_machine = mdmfermium_init,
-	.dt_compat = mdmfermium_dt_match,
-	.map_io = mdmfermium_map_io,
+	.init_machine	= mdmfermium_init,
+	.dt_compat	= mdmfermium_dt_match,
 MACHINE_END

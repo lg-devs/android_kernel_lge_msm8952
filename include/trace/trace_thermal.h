@@ -19,74 +19,7 @@
 
 #include <linux/tracepoint.h>
 
-#ifdef TRACE_SUPPLY_LM
-DECLARE_EVENT_CLASS(supply_lm_scm_ctl,
-
-	TP_PROTO(unsigned int value),
-
-	TP_ARGS(value),
-
-	TP_STRUCT__entry(
-		__field(unsigned int, value)
-	),
-
-	TP_fast_assign(
-		__entry->value = value;
-	),
-
-	TP_printk("inp=0x%x", __entry->value)
-);
-
-DEFINE_EVENT(supply_lm_scm_ctl, supply_lm_pre_scm,
-
-	TP_PROTO(unsigned int value),
-
-	TP_ARGS(value)
-);
-
-DEFINE_EVENT(supply_lm_scm_ctl, supply_lm_post_scm,
-
-	TP_PROTO(unsigned int ret),
-
-	TP_ARGS(ret)
-);
-
-DECLARE_EVENT_CLASS(supply_lm_inp_ctl,
-
-	TP_PROTO(unsigned int inp, unsigned int val),
-
-	TP_ARGS(inp, val),
-
-	TP_STRUCT__entry(
-		__field(unsigned int, inp)
-		__field(unsigned int, val)
-	),
-
-	TP_fast_assign(
-		__entry->inp = inp;
-		__entry->val = val;
-	),
-
-	TP_printk("inp=%u val=%u",
-		 __entry->inp, __entry->val)
-);
-
-DEFINE_EVENT(supply_lm_inp_ctl, supply_lm_inp_start_trig,
-
-	TP_PROTO(unsigned int inp, unsigned int val),
-
-	TP_ARGS(inp, val)
-);
-
-DEFINE_EVENT(supply_lm_inp_ctl, supply_lm_inp_end_trig,
-
-	TP_PROTO(unsigned int inp, unsigned int val),
-
-	TP_ARGS(inp, val)
-);
-
-#elif defined(TRACE_MSM_LMH)
-
+#ifdef TRACE_MSM_LMH
 DECLARE_EVENT_CLASS(msm_lmh_print_sensor_reading,
 
 	TP_PROTO(const char *sensor_name, unsigned int intensity),
@@ -153,94 +86,34 @@ DEFINE_EVENT(msm_lmh_print_event, lmh_event_call,
 	TP_ARGS(event_name)
 );
 
+TRACE_EVENT(lmh_debug_data,
+	TP_PROTO(const char *pre_data, uint32_t *data_buf, uint32_t buffer_len),
+
+	TP_ARGS(
+		pre_data, data_buf, buffer_len
+	),
+
+	TP_STRUCT__entry(
+		__string(_data, pre_data)
+		__field(u32, _buffer_len)
+		__dynamic_array(u32, _buffer, buffer_len)
+	),
+
+	TP_fast_assign(
+		__assign_str(_data, pre_data);
+		__entry->_buffer_len = buffer_len * sizeof(uint32_t);
+		memcpy(__get_dynamic_array(_buffer), data_buf,
+			buffer_len * sizeof(uint32_t));
+	),
+
+	TP_printk("%s:\t %s",
+		__get_str(_data), __print_hex(__get_dynamic_array(_buffer),
+			__entry->_buffer_len)
+	)
+);
+
+
 #elif defined(TRACE_MSM_THERMAL)
-
-DECLARE_EVENT_CLASS(msm_thermal_progressive_sampling,
-
-	TP_PROTO(const char *sensor, long temp),
-
-	TP_ARGS(sensor, temp),
-
-	TP_STRUCT__entry(
-		__string(_name, sensor)
-		__field(long, temp)
-	),
-
-	TP_fast_assign(
-		__assign_str(_name, sensor);
-		__entry->temp = temp;
-	),
-
-	TP_printk("prog_sampling:sensor=%s temp=%ld",
-		  __get_str(_name), __entry->temp)
-);
-
-DECLARE_EVENT_CLASS(msm_thermal_progressive_state,
-
-	TP_PROTO(const char *sensor, const char *type, int curr_state),
-
-	TP_ARGS(sensor, type, curr_state),
-
-	TP_STRUCT__entry(
-		__string(_name, sensor)
-		__string(_type, type)
-		__field(int, curr_state)
-	),
-
-	TP_fast_assign(
-		__assign_str(_name, sensor);
-		__assign_str(_type, type);
-		__entry->curr_state = curr_state;
-	),
-
-	TP_printk("prog_state:sensor=%s type=%s curr_state=%s",
-		__get_str(_name), __get_str(_type),
-		__entry->curr_state ? (__entry->curr_state == 1 ?
-		"paused" : "monitor") : "sampling")
-);
-
-DECLARE_EVENT_CLASS(msm_thermal_progressive_mitigate,
-
-	TP_PROTO(const char *sensor, unsigned int cluster, unsigned int freq),
-
-	TP_ARGS(sensor, cluster, freq),
-
-	TP_STRUCT__entry(
-		__string(_name, sensor)
-		__field(unsigned int, cluster)
-		__field(unsigned int, freq)
-	),
-
-	TP_fast_assign(
-		__assign_str(_name, sensor);
-		__entry->cluster = cluster;
-		__entry->freq = freq;
-	),
-
-	TP_printk("prog_mitigate:sensor=%s device=cluster%u freq=%u",
-		__get_str(_name), __entry->cluster, __entry->freq)
-);
-
-DEFINE_EVENT(msm_thermal_progressive_sampling, thermal_progressive_sampling,
-
-	TP_PROTO(const char *sensor, long temp),
-
-	TP_ARGS(sensor, temp)
-);
-
-DEFINE_EVENT(msm_thermal_progressive_state, thermal_progressive_state,
-
-	TP_PROTO(const char *sensor, const char *type, int curr_state),
-
-	TP_ARGS(sensor, type, curr_state)
-);
-
-DEFINE_EVENT(msm_thermal_progressive_mitigate, thermal_progressive_mitigate,
-
-	TP_PROTO(const char *sensor, unsigned int cluster, unsigned int freq),
-
-	TP_ARGS(sensor, cluster, freq)
-);
 
 DECLARE_EVENT_CLASS(msm_thermal_post_core_ctl,
 

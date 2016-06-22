@@ -27,9 +27,7 @@
 #define TZ_INFO_GET_SECURE_STATE	0x4
 
 /* Secure State Check */
-#define SEC_STATE_VALID(a)       (a & BIT(0))
-#define SCM_SECURE_BOOT_ENABLED  1
-#define SCM_SECURE_BOOT_DISABLED 0
+#define SEC_STATE_VALID(a) (a & (BIT(0) | BIT(2) | BIT(6)))
 
 /* Register Offsets */
 #define GLADIATOR_ID_COREID	0x0
@@ -371,6 +369,7 @@ static void decode_obs_errlog(u32 err_reg, unsigned int err_log)
 static u32 get_gld_offset(unsigned int err_log)
 {
 	u32 offset = 0;
+
 	switch (err_log) {
 	case ERR_LOG0:
 		offset = GLADIATOR_ERRLOG0;
@@ -409,6 +408,7 @@ static u32 get_gld_offset(unsigned int err_log)
 static u32 get_obs_offset(unsigned int err_log)
 {
 	u32 offset = 0;
+
 	switch (err_log) {
 	case ERR_LOG0:
 		offset = OBSERVER_0_ERRLOG0;
@@ -616,11 +616,9 @@ static int scm_is_gladiator_erp_available(void)
 	}
 
 	if (SEC_STATE_VALID(desc.ret[0]))
-		ret = SCM_SECURE_BOOT_DISABLED;
+		return 0;
 	else
-		ret = SCM_SECURE_BOOT_ENABLED;
-
-	return ret;
+		return -ENODEV;
 }
 
 static struct platform_driver gladiator_erp_driver = {
@@ -635,9 +633,10 @@ static struct platform_driver gladiator_erp_driver = {
 static int init_gladiator_erp(void)
 {
 	int ret;
+
 	ret = scm_is_gladiator_erp_available();
 	if (ret) {
-		pr_info("Gladiator Error Reporting not available %d\n", ret);
+		pr_info("Gladiator Error Reporting not available\n");
 		return -ENODEV;
 	}
 

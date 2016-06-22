@@ -19,7 +19,6 @@ obj-$(CONFIG_PARISC)		+= parisc/
 obj-$(CONFIG_RAPIDIO)		+= rapidio/
 obj-y				+= video/
 obj-y				+= idle/
-obj-y				+= soc/
 
 # IPMI must come before ACPI in order to provide IPMI opregion support
 obj-$(CONFIG_IPMI_HANDLER)	+= char/ipmi/
@@ -33,6 +32,9 @@ obj-y				+= amba/
 # Many drivers will want to use DMA so this has to be made available
 # really early.
 obj-$(CONFIG_DMADEVICES)	+= dma/
+
+# SOC specific infrastructure drivers.
+obj-y				+= soc/
 
 obj-$(CONFIG_VIRTIO)		+= virtio/
 obj-$(CONFIG_XEN)		+= xen/
@@ -54,11 +56,12 @@ obj-y				+= gpu/
 obj-$(CONFIG_CONNECTOR)		+= connector/
 
 # i810fb and intelfb depend on char/agp/
-obj-$(CONFIG_FB_I810)           += video/i810/
-obj-$(CONFIG_FB_INTEL)          += video/intelfb/
+obj-$(CONFIG_FB_I810)           += video/fbdev/i810/
+obj-$(CONFIG_FB_INTEL)          += video/fbdev/intelfb/
 
 obj-$(CONFIG_PARPORT)		+= parport/
 obj-y				+= base/ block/ misc/ mfd/ nfc/ soc/
+obj-$(CONFIG_DMA_SHARED_BUFFER) += dma-buf/
 obj-$(CONFIG_NUBUS)		+= nubus/
 obj-y				+= macintosh/
 obj-$(CONFIG_IDE)		+= ide/
@@ -84,7 +87,6 @@ obj-$(CONFIG_PCCARD)		+= pcmcia/
 obj-$(CONFIG_DIO)		+= dio/
 obj-$(CONFIG_SBUS)		+= sbus/
 obj-$(CONFIG_ZORRO)		+= zorro/
-obj-$(CONFIG_MAC)		+= macintosh/
 obj-$(CONFIG_ATA_OVER_ETH)	+= block/aoe/
 obj-$(CONFIG_PARIDE) 		+= block/paride/
 obj-$(CONFIG_TC)		+= tc/
@@ -124,7 +126,6 @@ obj-$(CONFIG_SGI_SN)		+= sn/
 obj-y				+= firmware/
 obj-$(CONFIG_SUPERH)		+= sh/
 obj-$(CONFIG_ARCH_SHMOBILE)	+= sh/
-obj-$(CONFIG_SSBI)		+= ssbi/
 ifndef CONFIG_ARCH_USES_GETTIMEOFFSET
 obj-y				+= clocksource/
 endif
@@ -143,7 +144,6 @@ obj-y				+= clk/
 
 obj-$(CONFIG_MAILBOX)		+= mailbox/
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
-obj-$(CONFIG_NFC)		+= nfc/
 obj-$(CONFIG_IOMMU_SUPPORT)	+= iommu/
 obj-$(CONFIG_REMOTEPROC)	+= remoteproc/
 obj-$(CONFIG_RPMSG)		+= rpmsg/
@@ -159,14 +159,23 @@ obj-$(CONFIG_IIO)		+= iio/
 obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
-obj-$(CONFIG_ANDROID)		+= android/
-
-#MobiCore
-obj-$(CONFIG_MOBICORE_SUPPORT)  += gud/
-
+obj-$(CONFIG_FMC)		+= fmc/
+obj-$(CONFIG_POWERCAP)		+= powercap/
+obj-$(CONFIG_MCB)		+= mcb/
+obj-$(CONFIG_RAS)		+= ras/
+obj-$(CONFIG_THUNDERBOLT)	+= thunderbolt/
 obj-$(CONFIG_CORESIGHT)		+= coresight/
 obj-$(CONFIG_ESOC)		+= esoc/
 
 obj-$(CONFIG_BIF)		+= bif/
-obj-$(CONFIG_SENSORS)		+= sensors/
+
 obj-$(CONFIG_SENSORS_SSC)	+= sensors/
+
+#TDMB
+obj-$(CONFIG_LGE_BROADCAST_TDMB) += broadcast/
+
+# LGE_BROADCAST_ISDBT_JAPAN
+obj-$(CONFIG_LGE_BROADCAST_ISDBT_JAPAN) += broadcast/
+
+# <t-base drivers
+obj-$(CONFIG_TRUSTONIC_TEE)	+= gud/

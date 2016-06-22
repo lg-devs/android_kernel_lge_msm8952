@@ -571,7 +571,12 @@ static irqreturn_t tsif_isr(int irq, void *dev)
 /*** callbacks ***/
 static void tspp_sps_complete_cb(struct sps_event_notify *notify)
 {
-	struct tspp_device *pdev = notify->user;
+	struct tspp_device *pdev;
+
+	if (!notify || !notify->user)
+		return;
+
+	pdev = notify->user;
 	tasklet_schedule(&pdev->tlet);
 }
 
@@ -592,6 +597,7 @@ static void tspp_sps_complete_tlet(unsigned long data)
 	struct sps_iovec iovec;
 	struct tspp_channel *channel;
 	struct tspp_device *device = (struct tspp_device *)data;
+
 	spin_lock_irqsave(&device->spinlock, flags);
 
 	for (i = 0; i < TSPP_NUM_CHANNELS; i++) {
@@ -958,6 +964,7 @@ static int tspp_start_tsif(struct tspp_tsif_device *tsif_device)
 		writel_relaxed(ctl, tsif_device->base + TSIF_STS_CTL_OFF);
 		writel_relaxed(tsif_device->time_limit,
 			  tsif_device->base + TSIF_TIME_LIMIT_OFF);
+		/* assure register configuration is done before starting TSIF */
 		wmb();
 		writel_relaxed(ctl | TSIF_STS_CTL_START,
 			  tsif_device->base + TSIF_STS_CTL_OFF);
@@ -991,6 +998,7 @@ static int tspp_channels_in_use(struct tspp_device *pdev)
 {
 	int i;
 	int count = 0;
+
 	for (i = 0; i < TSPP_NUM_CHANNELS; i++)
 		count += (pdev->channels[i].used ? 1 : 0);
 
@@ -1000,6 +1008,7 @@ static int tspp_channels_in_use(struct tspp_device *pdev)
 static struct tspp_device *tspp_find_by_id(int id)
 {
 	struct tspp_device *dev;
+
 	list_for_each_entry(dev, &tspp_devices, devlist) {
 		if (dev->pdev->id == id)
 			return dev;
@@ -1010,6 +1019,7 @@ static struct tspp_device *tspp_find_by_id(int id)
 static int tspp_get_key_entry(void)
 {
 	int i;
+
 	for (i = 0; i < TSPP_NUM_KEYS; i++) {
 		if (!(tspp_key_entry & (1 << i))) {
 			tspp_key_entry |= (1 << i);
@@ -1103,6 +1113,7 @@ static int tspp_global_reset(struct tspp_device *pdev)
 		pdev->tsif[i].enable_inverse = 0;
 	}
 	writel_relaxed(TSPP_RST_RESET, pdev->base + TSPP_RST);
+	/* assure state is reset before continuing with configuration */
 	wmb();
 
 	/* TSPP tables */
@@ -2567,12 +2578,14 @@ static void tsif_debugfs_init(struct tspp_tsif_device *tsif_device,
 	int instance)
 {
 	char name[10];
+
 	snprintf(name, 10, "tsif%i", instance);
 	tsif_device->dent_tsif = debugfs_create_dir(
 	      name, NULL);
 	if (tsif_device->dent_tsif) {
 		int i;
 		void __iomem *base = tsif_device->base;
+
 		for (i = 0; i < ARRAY_SIZE(debugfs_tsif_regs); i++) {
 			tsif_device->debugfs_tsif_regs[i] =
 			   debugfs_create_file(
@@ -2611,25 +2624,26 @@ static void tsif_debugfs_init(struct tspp_tsif_device *tsif_device,
 
 static void tsif_debugfs_exit(struct tspp_tsif_device *tsif_device)
 {
-	if (tsif_device->dent_tsif) {
-		int i;
-		debugfs_remove_recursive(tsif_device->dent_tsif);
-		tsif_device->dent_tsif = NULL;
-		for (i = 0; i < ARRAY_SIZE(debugfs_tsif_regs); i++)
-			tsif_device->debugfs_tsif_regs[i] = NULL;
-	}
+	int i;
+
+	debugfs_remove_recursive(tsif_device->dent_tsif);
+	tsif_device->dent_tsif = NULL;
+	for (i = 0; i < ARRAY_SIZE(debugfs_tsif_regs); i++)
+		tsif_device->debugfs_tsif_regs[i] = NULL;
 }
 
 static void tspp_debugfs_init(struct tspp_device *device, int instance)
 {
 	char name[10];
+
 	snprintf(name, 10, "tspp%i", instance);
 	device->dent = debugfs_create_dir(
 	      name, NULL);
 	if (device->dent) {
 		int i;
 		void __iomem *base = device->base;
-		for (i = 0; i < ARRAY_SIZE(debugfs_tspp_regs); i++) {
+
+		for (i = 0; i < ARRAY_SIZE(debugfs_tspp_regs); i++)
 			device->debugfs_regs[i] =
 			   debugfs_create_file(
 				debugfs_tspp_regs[i].name,
@@ -2637,19 +2651,16 @@ static void tspp_debugfs_init(struct tspp_device *device, int instance)
 				device->dent,
 				base + debugfs_tspp_regs[i].offset,
 				&fops_iomem_x32);
-		}
 	}
 }
 
 static void tspp_debugfs_exit(struct tspp_device *device)
 {
-	if (device->dent) {
-		int i;
-		debugfs_remove_recursive(device->dent);
-		device->dent = NULL;
-		for (i = 0; i < ARRAY_SIZE(debugfs_tspp_regs); i++)
-			device->debugfs_regs[i] = NULL;
-	}
+	int i;
+
+	debugfs_remove_recursive(device->dent);
+	for (i = 0; i < ARRAY_SIZE(debugfs_tspp_regs); i++)
+		device->debugfs_regs[i] = NULL;
 }
 
 static int msm_tspp_map_irqs(struct platform_device *pdev,
@@ -2724,7 +2735,6 @@ static int msm_tspp_probe(struct platform_device *pdev)
 	/* OK, we will use this device */
 	device = kzalloc(sizeof(struct tspp_device), GFP_KERNEL);
 	if (!device) {
-		pr_err("tspp: Failed to allocate memory for device\n");
 		rc = -ENOMEM;
 		goto out;
 	}
@@ -2751,7 +2761,7 @@ static int msm_tspp_probe(struct platform_device *pdev)
 	}
 
 	/* map regulators */
-	device->tsif_vreg = devm_regulator_get(&pdev->dev, "vdd_cx");
+	device->tsif_vreg = devm_regulator_get_optional(&pdev->dev, "vdd_cx");
 	if (IS_ERR(device->tsif_vreg)) {
 		rc = PTR_ERR(device->tsif_vreg);
 		device->tsif_vreg = NULL;
@@ -2970,9 +2980,8 @@ static int msm_tspp_remove(struct platform_device *pdev)
 		tspp_close_channel(device->pdev->id, i);
 	}
 
-	for (i = 0; i < TSPP_TSIF_INSTANCES; i++) {
+	for (i = 0; i < TSPP_TSIF_INSTANCES; i++)
 		tsif_debugfs_exit(&device->tsif[i]);
-	}
 
 	mutex_destroy(&device->mutex);
 

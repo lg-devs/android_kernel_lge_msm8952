@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,6 +16,10 @@
 
 #define LMH_NAME_MAX			20
 #define LMH_POLLING_MSEC		30
+#define LMH_READ_LINE_LENGTH		10
+#ifdef CONFIG_LGE_PM
+#define LMH_ZERO_INTENSITY_DELAY_MSEC	10
+#endif
 
 enum lmh_trip_type {
 	LMH_LOW_TRIP,
@@ -31,17 +35,23 @@ enum lmh_monitor_state {
 };
 
 struct lmh_sensor_ops {
-	int (*read) (struct lmh_sensor_ops *, long *);
-	int (*reset_interrupt) (struct lmh_sensor_ops *);
-	int (*enable_hw_log) (uint32_t, uint32_t);
-	int (*disable_hw_log) (void);
-	void (*interrupt_notify) (struct lmh_sensor_ops *, long);
+	int (*read)(struct lmh_sensor_ops *, long *);
+	int (*enable_hw_log)(uint32_t, uint32_t);
+	int (*disable_hw_log)(void);
+	void (*new_value_notify)(struct lmh_sensor_ops *, long);
 };
 
 struct lmh_device_ops {
-	int (*get_available_levels) (struct lmh_device_ops *, int *);
-	int (*get_curr_level) (struct lmh_device_ops *, int *);
-	int (*set_level) (struct lmh_device_ops *, int);
+	int (*get_available_levels)(struct lmh_device_ops *, int *);
+	int (*get_curr_level)(struct lmh_device_ops *, int *);
+	int (*set_level)(struct lmh_device_ops *, int);
+};
+
+struct lmh_debug_ops {
+	int (*debug_read)(struct lmh_debug_ops *, uint32_t **);
+	int (*debug_config_read)(struct lmh_debug_ops *, uint32_t *, int);
+	int (*debug_config_lmh)(struct lmh_debug_ops *, uint32_t *, int);
+	int (*debug_get_types)(struct lmh_debug_ops *, bool, uint32_t **);
 };
 
 static int lmh_poll_interval = LMH_POLLING_MSEC;
@@ -53,6 +63,8 @@ int lmh_sensor_register(char *, struct lmh_sensor_ops *);
 void lmh_sensor_deregister(struct lmh_sensor_ops *);
 int lmh_device_register(char *, struct lmh_device_ops *);
 void lmh_device_deregister(struct lmh_device_ops *);
+int lmh_debug_register(struct lmh_debug_ops *);
+void lmh_debug_deregister(struct lmh_debug_ops *ops);
 #else
 static inline int lmh_get_all_dev_levels(char *device_name, int *level)
 {
@@ -90,6 +102,14 @@ static inline void lmh_device_deregister(struct lmh_device_ops *ops)
 {
 	return;
 }
+
+static inline int lmh_debug_register(struct lmh_debug_ops *)
+{
+	return -ENOSYS;
+}
+
+static inline void lmh_debug_deregister(struct lmh_debug_ops *ops)
+{ }
 #endif
 
 #endif /*__LMH_INTERFACE_H*/

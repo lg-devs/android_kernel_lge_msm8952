@@ -33,28 +33,35 @@ struct nand_flash_dev nand_flash_ids[] = {
 	 */
 	{"TC58NYG1S3H 2G 1.8V 8-bit",
 		{ .id = {0x98, 0xaa, 0x90, 0x15, 0x00, 0x00, 0x00, 0x00} },
-		  SZ_2K, SZ_256, SZ_128K, 0, 4, 128, 8},
+		  SZ_2K, SZ_256, SZ_128K, 0, 4, 128, NAND_ECC_INFO(8, SZ_512)},
 	{"MT29F4G08ABBDAHC 4G 3.3V 8-bit",
 		{ .id = {0x2c, 0xac, 0x90, 0x15, 0x00, 0x00, 0x00, 0x00} },
-		  SZ_2K, SZ_512, SZ_128K, 0, 4, 64, 4},
-	{"MT29F8G08ABBCAH4 8G 3.3V 8-bit",
-		{ .id = {0x2c, 0xa3, 0x90, 0x26, 0x00, 0x00, 0x00, 0x00} },
-		  SZ_4K, SZ_1K, SZ_256K, 0, 4, 224, 8},
+		  SZ_2K, SZ_512, SZ_128K, 0, 4, 64, NAND_ECC_INFO(4, SZ_512)},
 	{"MT29RZ4B2DZZHGSK 4G 3.3V 8-bit",
 		{ .id = {0x2c, 0xac, 0x90, 0x26, 0x00, 0x00, 0x00, 0x00} },
-		  SZ_4K, SZ_512, SZ_256K, 0, 4, 224, 8},
+		  SZ_4K, SZ_512, SZ_256K, 0, 4, 224, NAND_ECC_INFO(8, SZ_512)},
 	{"TC58NVG2S0F 4G 3.3V 8-bit",
 		{ .id = {0x98, 0xdc, 0x90, 0x26, 0x76, 0x15, 0x01, 0x08} },
-		  SZ_4K, SZ_512, SZ_256K, 0, 8, 224},
+		  SZ_4K, SZ_512, SZ_256K, 0, 8, 224, NAND_ECC_INFO(4, SZ_512) },
+	{"MT29F8G08ABBCAH4 8G 3.3V 8-bit",
+		{ .id = {0x2c, 0xa3, 0x90, 0x26, 0x00, 0x00, 0x00, 0x00} },
+		SZ_4K, SZ_1K, SZ_256K, 0, 4, 224, NAND_ECC_INFO(8, SZ_512)},
 	{"TC58NVG3S0F 8G 3.3V 8-bit",
 		{ .id = {0x98, 0xd3, 0x90, 0x26, 0x76, 0x15, 0x02, 0x08} },
-		  SZ_4K, SZ_1K, SZ_256K, 0, 8, 232},
+		  SZ_4K, SZ_1K, SZ_256K, 0, 8, 232, NAND_ECC_INFO(4, SZ_512) },
 	{"TC58NVG5D2 32G 3.3V 8-bit",
 		{ .id = {0x98, 0xd7, 0x94, 0x32, 0x76, 0x56, 0x09, 0x00} },
-		  SZ_8K, SZ_4K, SZ_1M, 0, 8, 640},
+		  SZ_8K, SZ_4K, SZ_1M, 0, 8, 640, NAND_ECC_INFO(40, SZ_1K) },
 	{"TC58NVG6D2 64G 3.3V 8-bit",
 		{ .id = {0x98, 0xde, 0x94, 0x82, 0x76, 0x56, 0x04, 0x20} },
-		  SZ_8K, SZ_8K, SZ_2M, 0, 8, 640},
+		  SZ_8K, SZ_8K, SZ_2M, 0, 8, 640, NAND_ECC_INFO(40, SZ_1K) },
+	{"SDTNRGAMA 64G 3.3V 8-bit",
+		{ .id = {0x45, 0xde, 0x94, 0x93, 0x76, 0x50} },
+		  SZ_16K, SZ_8K, SZ_4M, 0, 6, 1280, NAND_ECC_INFO(40, SZ_1K) },
+	{"H27UCG8T2ATR-BC 64G 3.3V 8-bit",
+		{ .id = {0xad, 0xde, 0x94, 0xda, 0x74, 0xc4} },
+		  SZ_8K, SZ_8K, SZ_2M, 0, 6, 640, NAND_ECC_INFO(40, SZ_1K),
+		  4 },
 
 	LEGACY_ID_NAND("NAND 4MiB 5V 8-bit",   0x6B, 4, SZ_8K, SP_OPTIONS),
 	LEGACY_ID_NAND("NAND 4MiB 3,3V 8-bit", 0xE3, 4, SZ_8K, SP_OPTIONS),
@@ -165,7 +172,6 @@ struct nand_flash_dev nand_flash_ids[] = {
 	EXTENDED_ID_NAND("NAND 64GiB 1,8V 16-bit", 0x2E, 65536, LP_OPTIONS16),
 	EXTENDED_ID_NAND("NAND 64GiB 3,3V 16-bit", 0x4E, 65536, LP_OPTIONS16),
 
-	{"NAND 4GiB 1,8V 8-bit", {{ 0xAC }} , 2048, 4096, 0x20000, 0 },
 	{NULL}
 };
 
@@ -182,7 +188,8 @@ struct nand_manufacturers nand_manuf_ids[] = {
 	{NAND_MFR_AMD, "AMD/Spansion"},
 	{NAND_MFR_MACRONIX, "Macronix"},
 	{NAND_MFR_EON, "Eon"},
-	{NAND_MFR_ESMT, "Elite Semiconductor"},
+	{NAND_MFR_SANDISK, "SanDisk"},
+	{NAND_MFR_INTEL, "Intel"},
 	{0x0, "Unknown"}
 };
 

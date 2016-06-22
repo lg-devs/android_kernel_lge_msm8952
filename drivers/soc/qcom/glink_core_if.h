@@ -12,6 +12,7 @@
 #ifndef _SOC_QCOM_GLINK_CORE_IF_H_
 #define _SOC_QCOM_GLINK_CORE_IF_H_
 
+#include <linux/of.h>
 #include <linux/types.h>
 #include "glink_private.h"
 
@@ -85,13 +86,27 @@ struct glink_core_rx_intent {
 };
 
 /**
+ * struct glink_core_flow_info - Flow specific Information
+ * @mtu_tx_time_us:	Time to transmit an MTU in microseconds.
+ * @power_state:	Power state associated with the traffic flow.
+ */
+struct glink_core_flow_info {
+	unsigned long mtu_tx_time_us;
+	uint32_t power_state;
+};
+
+/**
  * struct glink_core_transport_cfg - configuration of a new transport
- * @name:		name of the transport
- * @edge:		what the transport connects to
- * @versions:		array of transport versions supported
- * @versions_entries:	number of entries in @versions
- * @max_cid:		maximum number of channel identifiers supported
- * @max_iid:		maximum number of intent identifiers supported
+ * @name:		Name of the transport.
+ * @edge:		Subsystem the transport connects to.
+ * @versions:		Array of transport versions supported.
+ * @versions_entries:	Number of entries in @versions.
+ * @max_cid:		Maximum number of channel identifiers supported.
+ * @max_iid:		Maximum number of intent identifiers supported.
+ * @mtu:		MTU supported by this transport.
+ * @num_flows:		Number of traffic flows/priority buckets.
+ * @flow_info:		Information about each flow/priority.
+ * @token_count:	Number of tokens per assignment.
  */
 struct glink_core_transport_cfg {
 	const char *name;
@@ -100,6 +115,11 @@ struct glink_core_transport_cfg {
 	size_t versions_entries;
 	uint32_t max_cid;
 	uint32_t max_iid;
+
+	size_t mtu;
+	uint32_t num_flows;
+	struct glink_core_flow_info *flow_info;
+	uint32_t token_count;
 };
 
 struct glink_core_if {
@@ -148,6 +168,16 @@ int glink_core_register_transport(struct glink_transport_if *if_ptr,
 		struct glink_core_transport_cfg *cfg);
 
 void glink_core_unregister_transport(struct glink_transport_if *if_ptr);
+
+/**
+ * of_get_glink_core_qos_cfg() - Parse the qos related dt entries
+ * @phandle:	The handle to the qos related node in DT.
+ * @cfg:	The transport configuration to be filled.
+ *
+ * Return: 0 on Success, standard Linux error otherwise.
+ */
+int of_get_glink_core_qos_cfg(struct device_node *phandle,
+				struct glink_core_transport_cfg *cfg);
 
 /**
  * rx_linear_vbuf_provider() - Virtual Buffer Provider for linear buffers

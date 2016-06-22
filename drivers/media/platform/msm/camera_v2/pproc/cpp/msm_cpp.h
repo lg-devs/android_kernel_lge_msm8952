@@ -63,8 +63,7 @@
 #define MSM_CPP_CMD_ERROR_REQUEST		0x9
 #define MSM_CPP_CMD_GET_STATUS			0xA
 #define MSM_CPP_CMD_GET_FW_VER			0xB
-#define MSM_CPP_CMD_GROUP_BUFFER_DUP	0x12
-#define MSM_CPP_CMD_GROUP_BUFFER	0xF
+#define MSM_CPP_CMD_GROUP_BUFFER		0x12
 
 #define MSM_CPP_MSG_ID_CMD          0x3E646D63
 #define MSM_CPP_MSG_ID_OK           0x0A0A4B4F
@@ -206,11 +205,15 @@ struct cpp_device {
 	struct resource	*vbif_mem;
 	struct resource *vbif_io;
 	struct resource	*cpp_hw_mem;
+	struct resource	*camss_cpp;
 	void __iomem *vbif_base;
 	void __iomem *base;
 	void __iomem *cpp_hw_base;
+	void __iomem *camss_cpp_base;
 	struct clk **cpp_clk;
 	struct regulator *fs_cpp;
+	struct regulator *fs_camss;
+	struct regulator *fs_mmagic_camss;
 	struct mutex mutex;
 	enum cpp_state state;
 	enum cpp_iommu_state iommu_state;
@@ -227,8 +230,6 @@ struct cpp_device {
 	int domain_num;
 	struct iommu_domain *domain;
 	struct device *iommu_ctx;
-	struct ion_client *client;
-	struct kref refcount;
 	uint32_t num_clk;
 	uint32_t min_clk_rate;
 

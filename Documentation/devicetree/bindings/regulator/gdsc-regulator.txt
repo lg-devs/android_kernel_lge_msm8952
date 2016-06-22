@@ -24,16 +24,26 @@ Optional properties:
 			    on/off this regulator based on internal HW signals
 			    to save more power.
  - qcom,enable-root-clk: Presence denotes that the clocks in the "clocks"
-			property are requried to be enabled before gdsc is
+			property are required to be enabled before gdsc is
 			turned on and disabled before turning off gdsc. This
-			will be used in susbsystems where reset is synchronous
+			will be used in subsystems where reset is synchronous
 			and root clk is active without sw being aware of its
 			state. The clock-name which denotes the root clock
 			should be named as "core_root_clk".
+ - qcom,force-enable-root-clk: If set, denotes that the root clock should be
+			force enabled before turning on the GDSC and then be
+			immediately force disabled. Likewise for GDSC disable.
+			This is used in cases where the core root clock needs
+			to be force-enabled prior to turning on the core. The
+			clock-name which denotes the root clock should be
+			"core_root_clk".
  - qcom,clk-dis-wait-val: Input value for CLK_DIS_WAIT controls state transition
 			 delay after halting clock in the collapsible core.
  - reg-names:		Names of the bases for the above "reg" registers.
 			Ex. "base", "domain_addr".
+ - qcom,no-status-check-on-disable: Do not poll the status bit when GDSC
+			is disabled.
+ - qcom,gds-timeout:	Maximum time that might be taken by a GDSC to enable.
 
 Example:
 	gdsc_oxili_gx: qcom,gdsc@fd8c4024 {

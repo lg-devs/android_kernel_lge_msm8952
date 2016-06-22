@@ -89,6 +89,14 @@ enum msm_vfe_frame_skip_pattern {
 	MAX_SKIP,
 };
 
+/*
+ * Define an unused period. When this period is set it means that the stream is
+ * stopped(i.e the pattern is 0). We don't track the current pattern, just the
+ * period defines what the pattern is, if period is this then pattern is 0 else
+ * pattern is 1
+ */
+#define MSM_VFE_STREAM_STOP_PERIOD 15
+
 enum msm_isp_stats_type {
 	MSM_ISP_STATS_AEC,   /* legacy based AEC */
 	MSM_ISP_STATS_AF,    /* legacy based AF */
@@ -177,6 +185,7 @@ struct msm_vfe_camif_cfg {
 	uint32_t last_line;
 	uint32_t epoch_line0;
 	uint32_t epoch_line1;
+	uint32_t is_split;
 	enum msm_vfe_camif_input camif_input;
 	struct msm_vfe_camif_subsample_cfg subsample_cfg;
 };
@@ -546,11 +555,10 @@ enum msm_isp_event_mask_index {
 	ISP_EVENT_MASK_INDEX_BUF_DIVERT			= 6,
 	ISP_EVENT_MASK_INDEX_COMP_STATS_NOTIFY		= 7,
 	ISP_EVENT_MASK_INDEX_MASK_FE_READ_DONE		= 8,
-	ISP_EVENT_MASK_INDEX_HW_FATAL_ERROR		= 9,
-	ISP_EVENT_MASK_INDEX_PING_PONG_MISMATCH		= 10,
-	ISP_EVENT_MASK_INDEX_REG_UPDATE_MISSING		= 11,
+	ISP_EVENT_MASK_INDEX_BUF_DONE			= 9,
+	ISP_EVENT_MASK_INDEX_REG_UPDATE_MISSING		= 10,
+	ISP_EVENT_MASK_INDEX_PING_PONG_MISMATCH		= 11,
 	ISP_EVENT_MASK_INDEX_BUF_FATAL_ERROR		= 12,
-	ISP_EVENT_MASK_INDEX_MAX		            = 13
 };
 
 
@@ -583,14 +591,14 @@ enum msm_isp_event_mask_index {
 #define ISP_EVENT_SUBS_MASK_FE_READ_DONE \
 			(1 << ISP_EVENT_MASK_INDEX_MASK_FE_READ_DONE)
 
-#define ISP_EVENT_SUBS_MASK_HW_FATAL_ERROR \
-			(1 << ISP_EVENT_MASK_INDEX_HW_FATAL_ERROR)
-
-#define ISP_EVENT_SUBS_MASK_PING_PONG_MISMATCH \
-			(1 << ISP_EVENT_MASK_INDEX_PING_PONG_MISMATCH)
+#define ISP_EVENT_SUBS_MASK_BUF_DONE \
+			(1 << ISP_EVENT_MASK_INDEX_BUF_DONE)
 
 #define ISP_EVENT_SUBS_MASK_REG_UPDATE_MISSING \
 			(1 << ISP_EVENT_MASK_INDEX_REG_UPDATE_MISSING)
+
+#define ISP_EVENT_SUBS_MASK_PING_PONG_MISMATCH \
+			(1 << ISP_EVENT_MASK_INDEX_PING_PONG_MISMATCH)
 
 #define ISP_EVENT_SUBS_MASK_BUF_FATAL_ERROR \
 			(1 << ISP_EVENT_MASK_INDEX_BUF_FATAL_ERROR)
@@ -607,11 +615,11 @@ enum msm_isp_event_idx {
 	ISP_FE_RD_DONE        = 8,
 	ISP_IOMMU_P_FAULT     = 9,
 	ISP_ERROR             = 10,
-	ISP_HW_FATAL_ERROR    = 11,
+	ISP_HW_FATAL_ERROR      = 11,
 	ISP_PING_PONG_MISMATCH = 12,
 	ISP_REG_UPDATE_MISSING = 13,
-	ISP_BUF_FATAL_ERROR    = 14,
-	ISP_EVENT_MAX          = 15
+	ISP_BUF_FATAL_ERROR = 14,
+	ISP_EVENT_MAX         = 15
 };
 
 #define ISP_EVENT_OFFSET          8
@@ -762,10 +770,6 @@ struct msm_isp_event_data32 {
 };
 #endif
 
-struct msm_isp_set_stats_ab {
-	uint64_t stats_ab;
-};
-
 #define V4L2_PIX_FMT_QBGGR8  v4l2_fourcc('Q', 'B', 'G', '8')
 #define V4L2_PIX_FMT_QGBRG8  v4l2_fourcc('Q', 'G', 'B', '8')
 #define V4L2_PIX_FMT_QGRBG8  v4l2_fourcc('Q', 'G', 'R', '8')
@@ -865,13 +869,11 @@ struct msm_isp_set_stats_ab {
 #define VIDIOC_MSM_ISP_SET_DUAL_HW_MASTER_SLAVE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE+22, struct msm_isp_set_dual_hw_ms_cmd)
 
-#define VIDIOC_MSM_ISP_SET_STATS_BANDWIDTH \
-	_IOWR('V', BASE_VIDIOC_PRIVATE+23, struct msm_isp_set_stats_ab)
 
 #define VIDIOC_MSM_ISP_MAP_BUF_START_FE \
-	_IOWR('V', BASE_VIDIOC_PRIVATE+24, struct msm_vfe_fetch_eng_start)
+	_IOWR('V', BASE_VIDIOC_PRIVATE+21, struct msm_vfe_fetch_eng_start)
 
 #define VIDIOC_MSM_ISP_UNMAP_BUF \
-	_IOWR('V', BASE_VIDIOC_PRIVATE+25, struct msm_isp_unmap_buf_req)
+	_IOWR('V', BASE_VIDIOC_PRIVATE+22, struct msm_isp_unmap_buf_req)
 
 #endif /* __MSMB_ISP__ */

@@ -91,11 +91,6 @@ sent in the evdev event stream.
     event and query the device (using EVIOCG* ioctls) to obtain its
     current state.
 
-* SYN_TIME_SEC, SYN_TIME_NSEC:
-  - Used to report the timestamp from the hardware. The timestamp should record
-    the exact time when the hardware events happens. The timestamp is
-    CLOCK_MONOTONIC based.
-
 EV_KEY:
 ----------
 EV_KEY events take the form KEY_<name> or BTN_<name>. For example, KEY_A is used
@@ -285,6 +280,19 @@ gestures can normally be extracted from it.
 
 If INPUT_PROP_SEMI_MT is not set, the device is assumed to be a true MT
 device.
+
+INPUT_PROP_TOPBUTTONPAD:
+-----------------------
+Some laptops, most notably the Lenovo *40 series provide a trackstick
+device but do not have physical buttons associated with the trackstick
+device. Instead, the top area of the touchpad is marked to show
+visual/haptic areas for left, middle, right buttons intended to be used
+with the trackstick.
+
+If INPUT_PROP_TOPBUTTONPAD is set, userspace should emulate buttons
+accordingly. This property does not affect kernel behavior.
+The kernel does not provide button emulation for such devices but treats
+them as any other INPUT_PROP_BUTTONPAD device.
 
 Guidelines:
 ==========

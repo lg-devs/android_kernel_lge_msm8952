@@ -9,9 +9,12 @@
 #include <linux/pfn.h>
 #include <linux/suspend.h>
 #include <linux/mm.h>
-#include <asm/sections.h>
 #include <asm/ctl_reg.h>
 #include <asm/ipl.h>
+#include <asm/cio.h>
+#include <asm/pci.h>
+#include <asm/sections.h>
+#include "entry.h"
 
 /*
  * The restore of the saved pages in an hibernation image will set
@@ -211,4 +214,12 @@ void restore_processor_state(void)
 	/* Enable lowcore protection */
 	__ctl_set_bit(0,28);
 	local_mcck_enable();
+}
+
+/* Called at the end of swsusp_arch_resume */
+void s390_early_resume(void)
+{
+	lgr_info_log();
+	channel_subsystem_reinit();
+	zpci_rescan();
 }

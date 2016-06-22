@@ -23,8 +23,8 @@
 #include <linux/pm_runtime.h>
 #include <linux/of.h>
 #include <linux/of_slimbus.h>
-#include <mach/sps.h>
-#include <mach/qdsp6v2/apr.h>
+#include <linux/msm-sps.h>
+#include <linux/qdsp6v2/apr.h>
 #include "slim-msm.h"
 
 #define MSM_SLIM_NAME	"msm_slim_ctrl"
@@ -1480,7 +1480,7 @@ static int msm_slim_runtime_idle(struct device *device)
  * functions to be called from system suspend/resume. So they are not
  * inside ifdef CONFIG_PM_RUNTIME
  */
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int msm_slim_runtime_suspend(struct device *device)
 {
 	struct platform_device *pdev = to_platform_device(device);
@@ -1513,7 +1513,9 @@ static int msm_slim_runtime_resume(struct device *device)
 	}
 	return ret;
 }
+#endif
 
+#ifdef CONFIG_PM_SLEEP
 static int msm_slim_suspend(struct device *dev)
 {
 	int ret = -EBUSY;

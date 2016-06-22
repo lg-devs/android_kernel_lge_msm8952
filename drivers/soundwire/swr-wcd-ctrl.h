@@ -90,8 +90,8 @@ struct swr_mstr_ctrl {
 	int irq;
 	int num_enum_slaves;
 	int slave_status;
-	struct list_head mport_list;
 	struct swr_mstr_port *mstr_port;
+	struct list_head mport_list;
 	int state;
 	struct platform_device *pdev;
 };

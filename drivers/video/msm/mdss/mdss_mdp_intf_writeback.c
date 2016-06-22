@@ -15,7 +15,7 @@
 
 #include "mdss.h"
 #include "mdss_mdp.h"
-#include "mdss_mdp_rotator.h"
+#include "mdss_rotator_internal.h"
 #include "mdss_panel.h"
 #include "mdss_mdp_trace.h"
 #include "mdss_debug.h"
@@ -38,7 +38,6 @@ struct mdss_mdp_writeback_ctx {
 	char __iomem *base;
 	u8 ref_cnt;
 	u8 type;
-	bool is_vbif_nrt;
 	struct completion wb_comp;
 	int comp_cnt;
 
@@ -51,9 +50,10 @@ struct mdss_mdp_writeback_ctx {
 
 	u32 opmode;
 	struct mdss_mdp_format_params *dst_fmt;
+	u16 img_width;
+	u16 img_height;
 	u16 width;
 	u16 height;
-	u16 frame_rate;
 	struct mdss_rect dst_rect;
 
 	u32 dnsc_factor_w;
@@ -133,7 +133,7 @@ static int mdss_mdp_writeback_addr_setup(struct mdss_mdp_writeback_ctx *ctx,
 
 	pr_debug("wb_num=%d addr=0x%pa\n", ctx->wb_num, &data.p[0].addr);
 
-	ret = mdss_mdp_data_check(&data, &ctx->dst_planes);
+	ret = mdss_mdp_data_check(&data, &ctx->dst_planes, ctx->dst_fmt);
 	if (ret)
 		return ret;
 
@@ -152,35 +152,115 @@ static int mdss_mdp_writeback_addr_setup(struct mdss_mdp_writeback_ctx *ctx,
 	return 0;
 }
 
+static int mdss_mdp_writeback_cdm_setup(struct mdss_mdp_writeback_ctx *ctx,
+					struct mdss_mdp_cdm *cdm, u32 format)
+{
+	struct mdss_mdp_format_params *fmt;
+	struct mdp_cdm_cfg setup;
+
+	fmt = mdss_mdp_get_format_params(format);
+	if (!fmt) {
+		pr_err("%s: format %d not supported\n", __func__, format);
+		return -EINVAL;
+	}
+
+	if (fmt->is_yuv)
+		setup.csc_type = MDSS_MDP_CSC_RGB2YUV_601L;
+	else
+		setup.csc_type = MDSS_MDP_CSC_RGB2RGB;
+
+	switch (fmt->chroma_sample) {
+	case MDSS_MDP_CHROMA_RGB:
+		setup.horz_downsampling_type = MDP_CDM_CDWN_DISABLE;
+		setup.vert_downsampling_type = MDP_CDM_CDWN_DISABLE;
+		break;
+	case MDSS_MDP_CHROMA_H2V1:
+		setup.horz_downsampling_type = MDP_CDM_CDWN_COSITE;
+		setup.vert_downsampling_type = MDP_CDM_CDWN_DISABLE;
+		break;
+	case MDSS_MDP_CHROMA_420:
+		setup.horz_downsampling_type = MDP_CDM_CDWN_COSITE;
+		setup.vert_downsampling_type = MDP_CDM_CDWN_OFFSITE;
+		break;
+	case MDSS_MDP_CHROMA_H1V2:
+	default:
+		pr_err("%s: unsupported chroma sampling type\n", __func__);
+		return -EINVAL;
+	}
+
+	setup.out_format = format;
+	setup.mdp_csc_bit_depth = MDP_CDM_CSC_8BIT;
+	setup.output_width = ctx->width;
+	setup.output_height = ctx->height;
+	return mdss_mdp_cdm_setup(cdm, &setup);
+}
+
+void mdss_mdp_set_wb_cdp(struct mdss_mdp_writeback_ctx *ctx,
+	struct mdss_mdp_format_params *fmt)
+{
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+	u32 cdp_settings = 0x0;
+
+	/* Disable CDP for rotator in v1 */
+	if (ctx->type == MDSS_MDP_WRITEBACK_TYPE_ROTATOR &&
+			mdss_has_quirk(mdata, MDSS_QUIRK_ROTCDP))
+		goto exit;
+
+	cdp_settings = MDSS_MDP_CDP_ENABLE;
+
+	if (!mdss_mdp_is_linear_format(fmt))
+		cdp_settings |= MDSS_MDP_CDP_ENABLE_UBWCMETA;
+
+	/* 64-transactions for line mode otherwise we keep 32 */
+	if (ctx->type != MDSS_MDP_WRITEBACK_TYPE_ROTATOR)
+		cdp_settings |= MDSS_MDP_CDP_AHEAD_64;
+
+exit:
+	mdp_wb_write(ctx, MDSS_MDP_REG_WB_CDP_CTRL, cdp_settings);
+}
+
 static int mdss_mdp_writeback_format_setup(struct mdss_mdp_writeback_ctx *ctx,
-		u32 format)
+		u32 format, struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_format_params *fmt;
 	u32 dst_format, pattern, ystride0, ystride1, outsize, chroma_samp;
-	u32 dnsc_factor;
+	u32 dnsc_factor, write_config = 0;
 	u32 opmode = ctx->opmode;
 	bool rotation = false;
-	struct mdss_data_type *mdata;
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+	int rc;
 
 	pr_debug("wb_num=%d format=%d\n", ctx->wb_num, format);
 
 	if (ctx->rot90)
 		rotation = true;
 
-	mdss_mdp_get_plane_sizes(format, ctx->width, ctx->height,
-				 &ctx->dst_planes,
-				 ctx->opmode & MDSS_MDP_OP_BWC_EN, rotation);
-
 	fmt = mdss_mdp_get_format_params(format);
 	if (!fmt) {
 		pr_err("wb format=%d not supported\n", format);
 		return -EINVAL;
 	}
+
+	mdss_mdp_get_plane_sizes(fmt, ctx->img_width, ctx->img_height,
+				 &ctx->dst_planes,
+				 ctx->opmode & MDSS_MDP_OP_BWC_EN, rotation);
+
 	ctx->dst_fmt = fmt;
 
 	chroma_samp = fmt->chroma_sample;
 
-	if (ctx->type != MDSS_MDP_WRITEBACK_TYPE_ROTATOR && fmt->is_yuv) {
+	if (ctl->cdm) {
+
+		rc = mdss_mdp_writeback_cdm_setup(ctx, ctl->cdm, format);
+		if (rc) {
+			pr_err("%s: CDM configuration failed with error %d\n",
+				__func__, rc);
+			return rc;
+		}
+		ctl->flush_bits |= BIT(26);
+	}
+	if (ctx->type != MDSS_MDP_WRITEBACK_TYPE_ROTATOR &&
+		fmt->is_yuv && !ctl->cdm) {
 		mdss_mdp_csc_setup(MDSS_MDP_BLOCK_WB, ctx->wb_num,
 				   MDSS_MDP_CSC_RGB2YUV_601L);
 		opmode |= (1 << 8) |	/* CSC_EN */
@@ -198,11 +278,6 @@ static int mdss_mdp_writeback_format_setup(struct mdss_mdp_writeback_ctx *ctx,
 			pr_err("unsupported wb chroma samp=%d\n", chroma_samp);
 			return -EINVAL;
 		}
-	} else if (ctx->rot90) {
-		if (chroma_samp == MDSS_MDP_CHROMA_H2V1)
-			chroma_samp = MDSS_MDP_CHROMA_H1V2;
-		else if (chroma_samp == MDSS_MDP_CHROMA_H1V2)
-			chroma_samp = MDSS_MDP_CHROMA_H2V1;
 	}
 
 	dst_format = (chroma_samp << 23) |
@@ -220,8 +295,10 @@ static int mdss_mdp_writeback_format_setup(struct mdss_mdp_writeback_ctx *ctx,
 			dst_format |= BIT(14); /* DST_ALPHA_X */
 	}
 
-	mdata = mdss_mdp_get_mdata();
-	if (mdata && mdata->mdp_rev >= MDSS_MDP_HW_REV_102 &&
+	if (fmt->is_yuv && test_bit(MDSS_CAPS_YUV_CONFIG, mdata->mdss_caps_map))
+		dst_format |= BIT(15);
+
+	if (mdata->mdp_rev >= MDSS_MDP_HW_REV_102 &&
 			mdata->mdp_rev < MDSS_MDP_HW_REV_200) {
 		pattern = (fmt->element[3] << 24) |
 			  (fmt->element[2] << 16) |
@@ -245,19 +322,35 @@ static int mdss_mdp_writeback_format_setup(struct mdss_mdp_writeback_ctx *ctx,
 		   (ctx->dst_planes.ystride[3] << 16);
 	outsize = (ctx->dst_rect.h << 16) | ctx->dst_rect.w;
 
-	if (ctx->type == MDSS_MDP_WRITEBACK_TYPE_ROTATOR &&
-			mdata && mdata->has_rot_dwnscale) {
+	if (mdss_mdp_is_ubwc_format(fmt)) {
+		if (!ctl->cdm)
+			opmode |= BIT(0);
+		dst_format |= BIT(31);
+		if (mdata->highest_bank_bit)
+			write_config |= (mdata->highest_bank_bit << 8);
+		if (fmt->format == MDP_RGB_565_UBWC)
+			write_config |= 0x8;
+	}
+
+	if (ctx->type == MDSS_MDP_WRITEBACK_TYPE_ROTATOR
+			&& mdata->has_rot_dwnscale) {
 		dnsc_factor = (ctx->dnsc_factor_h) | (ctx->dnsc_factor_w << 16);
 		mdp_wb_write(ctx, MDSS_MDP_REG_WB_ROTATOR_PIPE_DOWNSCALER,
 								dnsc_factor);
 	}
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_ALPHA_X_VALUE, 0xFF);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_FORMAT, dst_format);
-	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_OP_MODE, opmode);
+	if (!ctl->cdm)
+		mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_OP_MODE, opmode);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_PACK_PATTERN, pattern);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_YSTRIDE0, ystride0);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_YSTRIDE1, ystride1);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_OUT_SIZE, outsize);
+	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_WRITE_CONFIG, write_config);
+
+	/* configure CDP */
+	if (test_bit(MDSS_QOS_CDP, mdata->mdss_qos_map))
+		mdss_mdp_set_wb_cdp(ctx, fmt);
 
 	return 0;
 }
@@ -277,15 +370,16 @@ static int mdss_mdp_writeback_prepare_wfd(struct mdss_mdp_ctl *ctl, void *arg)
 	pr_debug("wfd setup ctl=%d\n", ctl->num);
 
 	ctx->opmode = 0;
+	ctx->img_width = ctl->width;
+	ctx->img_height = ctl->height;
 	ctx->width = ctl->width;
 	ctx->height = ctl->height;
-	ctx->frame_rate = ctl->frame_rate;
 	ctx->dst_rect.x = 0;
 	ctx->dst_rect.y = 0;
 	ctx->dst_rect.w = ctx->width;
 	ctx->dst_rect.h = ctx->height;
 
-	ret = mdss_mdp_writeback_format_setup(ctx, ctl->dst_format);
+	ret = mdss_mdp_writeback_format_setup(ctx, ctl->dst_format, ctl);
 	if (ret) {
 		pr_err("format setup failed\n");
 		return ret;
@@ -300,9 +394,9 @@ static int mdss_mdp_writeback_prepare_rot(struct mdss_mdp_ctl *ctl, void *arg)
 {
 	struct mdss_mdp_writeback_ctx *ctx;
 	struct mdss_mdp_writeback_arg *wb_args;
-	struct mdss_mdp_rotator_session *rot;
+	struct mdss_rot_entry *entry;
+	struct mdp_rotation_item *item;
 	struct mdss_data_type *mdata;
-	struct mdss_mdp_format_params *fmt;
 	u32 format;
 
 	ctx = (struct mdss_mdp_writeback_ctx *) ctl->priv_data;
@@ -312,11 +406,12 @@ static int mdss_mdp_writeback_prepare_rot(struct mdss_mdp_ctl *ctl, void *arg)
 	if (!wb_args)
 		return -ENOENT;
 
-	rot = (struct mdss_mdp_rotator_session *) wb_args->priv_data;
-	if (!rot) {
+	entry = (struct mdss_rot_entry *) wb_args->priv_data;
+	if (!entry) {
 		pr_err("unable to retrieve rot session ctl=%d\n", ctl->num);
 		return -ENODEV;
 	}
+	item = &entry->item;
 	mdata = ctl->mdata;
 	if (!mdata) {
 		pr_err("no mdata attached to ctl=%d", ctl->num);
@@ -328,33 +423,26 @@ static int mdss_mdp_writeback_prepare_rot(struct mdss_mdp_ctl *ctl, void *arg)
 	if (ctl->mdata->rot_block_size == 128)
 		ctx->opmode |= BIT(4); /* block size 128 */
 
-	ctx->bwc_mode = rot->bwc_mode;
+	ctx->bwc_mode = 0;
 	ctx->opmode |= ctx->bwc_mode;
 
-	ctx->width = ctx->dst_rect.w = rot->dnsc_factor_w ?
-		rot->dst.w / rot->dnsc_factor_w : rot->dst.w;
-	ctx->height = ctx->dst_rect.h = rot->dnsc_factor_h ?
-		rot->dst.h / rot->dnsc_factor_h : rot->dst.h;
-	ctx->dst_rect.x = rot->dst.x;
-	ctx->dst_rect.y = rot->dst.y;
-	ctx->dnsc_factor_w = rot->dnsc_factor_w;
-	ctx->dnsc_factor_h = rot->dnsc_factor_h;
+	ctx->img_width = item->output.width;
+	ctx->img_height = item->output.height;
+	ctx->width = ctx->dst_rect.w = item->dst_rect.w;
+	ctx->height = ctx->dst_rect.h = item->dst_rect.h;
+	ctx->dst_rect.x = item->dst_rect.x;
+	ctx->dst_rect.y = item->dst_rect.y;
+	ctx->dnsc_factor_w = entry->dnsc_factor_w;
+	ctx->dnsc_factor_h = entry->dnsc_factor_h;
 
-	ctx->rot90 = !!(rot->flags & MDP_ROT_90);
+	ctx->rot90 = !!(item->flags & MDP_ROTATION_90);
 
-	fmt = mdss_mdp_get_format_params(rot->format);
-	if (!fmt) {
-		pr_err("invalid pipe format %d\n", rot->format);
-		return -EINVAL;
-	}
-
-	format = mdss_mdp_get_rotator_dst_format(rot->format,
-			ctx->rot90, ctx->bwc_mode);
+	format = item->output.format;
 
 	if (ctx->rot90)
 		ctx->opmode |= BIT(5); /* ROT 90 */
 
-	return mdss_mdp_writeback_format_setup(ctx, format);
+	return mdss_mdp_writeback_format_setup(ctx, format, ctl);
 }
 
 static int mdss_mdp_wb_add_vsync_handler(struct mdss_mdp_ctl *ctl,
@@ -434,6 +522,10 @@ static int mdss_mdp_writeback_stop(struct mdss_mdp_ctl *ctl,
 		ctx->ref_cnt--;
 	}
 
+	if (ctl->cdm) {
+		mdss_mdp_cdm_destroy(ctl->cdm);
+		ctl->cdm = NULL;
+	}
 	return 0;
 }
 
@@ -451,7 +543,6 @@ static void mdss_mdp_writeback_intr_done(void *arg)
 	vsync_time = ktime_get();
 
 	pr_debug("intr wb_num=%d\n", ctx->wb_num);
-	trace_mdp_wb_done(ctx->wb_num, ctx->xin_id, ctx->intf_num);
 
 	mdss_mdp_irq_disable_nosync(ctx->intr_type, ctx->intf_num);
 
@@ -488,8 +579,6 @@ static bool mdss_mdp_traffic_shaper_helper(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_perf_params perf;
 		u32 traffic_shaper;
 		pipe = mixer->stage_pipe[i];
-
-		memset(&perf, 0, sizeof(perf));
 
 		if (pipe == NULL)
 			continue;
@@ -561,6 +650,7 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 	struct mdss_mdp_writeback_ctx *ctx;
 	int rc = 0;
 	u64 rot_time;
+	u32 status, mask, isr;
 
 	ctx = (struct mdss_mdp_writeback_ctx *) ctl->priv_data;
 	if (!ctx) {
@@ -577,8 +667,6 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 		NULL, NULL);
 
 	if (rc == 0) {
-		u32 status, mask, isr;
-
 		mask = BIT(ctx->intr_type + ctx->intf_num);
 
 		isr = readl_relaxed(ctl->mdata->mdp_base +
@@ -638,19 +726,19 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 static void mdss_mdp_set_ot_limit_wb(struct mdss_mdp_writeback_ctx *ctx)
 {
 	struct mdss_mdp_set_ot_params ot_params;
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 
 	ot_params.xin_id = ctx->xin_id;
 	ot_params.num = ctx->wb_num;
 	ot_params.width = ctx->width;
 	ot_params.height = ctx->height;
-	ot_params.frame_rate = ctx->frame_rate;
 	ot_params.reg_off_vbif_lim_conf = MMSS_VBIF_WR_LIM_CONF;
 	ot_params.reg_off_mdp_clk_ctrl = ctx->clk_ctrl.reg_off;
 	ot_params.bit_off_mdp_clk_ctrl = ctx->clk_ctrl.bit_off;
 	ot_params.is_rot = (ctx->type == MDSS_MDP_WRITEBACK_TYPE_ROTATOR);
-	ot_params.is_wb = (ctx->type == MDSS_MDP_WRITEBACK_TYPE_WFD) ||
-		(ctx->type == MDSS_MDP_WRITEBACK_TYPE_LINE);
+	ot_params.is_wb = true;
 	ot_params.is_yuv = ctx->dst_fmt->is_yuv;
+	ot_params.is_vbif_nrt = mdss_mdp_is_nrt_vbif_base_defined(mdata);
 
 	mdss_mdp_set_ot_limit(&ot_params);
 
@@ -701,8 +789,9 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 	flush_bits |= BIT(16); /* WB */
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_ADDR_SW_STATUS, ctl->is_secure);
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_FLUSH, flush_bits);
+	MDSS_XLOG(ctl->intf_num, flush_bits);
 
-	INIT_COMPLETION(ctx->wb_comp);
+	reinit_completion(&ctx->wb_comp);
 	mdss_mdp_irq_enable(ctx->intr_type, ctx->intf_num);
 
 	ret = mdss_iommu_ctrl(1);
@@ -721,10 +810,6 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 	pr_debug("ctx%d type:%d xin_id:%d intf_num:%d start\n",
 		ctx->wb_num, ctx->type, ctx->xin_id, ctx->intf_num);
 
-	trace_mdp_wb_display(ctx->wb_num, ctx->xin_id, ctx->intf_num,
-		ctx->width, ctx->height, ctx->dst_rect.w, ctx->dst_rect.h,
-		ctx->dst_fmt ? ctx->dst_fmt->format : -1);
-
 	ctx->comp_cnt++;
 
 	return 0;
@@ -733,10 +818,18 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 int mdss_mdp_writeback_start(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_writeback_ctx *ctx;
+	struct mdss_mdp_writeback *wb;
 	u32 mem_sel;
+	u32 mixer_type = MDSS_MDP_MIXER_TYPE_UNUSED;
 
 	pr_debug("start ctl=%d\n", ctl->num);
 
+	if (!ctl->wb) {
+		pr_debug("wb not setup in the ctl\n");
+		return 0;
+	}
+
+	wb = ctl->wb;
 	mem_sel = (ctl->opmode & 0xF) - 1;
 	if (mem_sel < MDSS_MDP_MAX_WRITEBACK) {
 		ctx = &wb_ctx_list[mem_sel];
@@ -749,9 +842,30 @@ int mdss_mdp_writeback_start(struct mdss_mdp_ctl *ctl)
 		pr_err("invalid writeback mode %d\n", mem_sel);
 		return -EINVAL;
 	}
+
+	if (ctl->mixer_left)
+		mixer_type = ctl->mixer_left->type;
+
+	if (mdss_mdp_is_cdm_supported(ctl->mdata, ctl->intf_type,
+				mixer_type)) {
+#ifdef QCT_MM_NOC_PATCH
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+		ctl->cdm = mdss_mdp_cdm_init(ctl, MDP_CDM_CDWN_OUTPUT_WB);
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+#else
+		ctl->cdm = mdss_mdp_cdm_init(ctl, MDP_CDM_CDWN_OUTPUT_WB);
+#endif
+		if (IS_ERR_OR_NULL(ctl->cdm)) {
+			pr_err("%s failed to init cdm\n", __func__);
+			return -EBUSY;
+		}
+	} else {
+		ctl->cdm = NULL;
+		pr_debug("%s: cdm not supported\n", __func__);
+	}
 	ctl->priv_data = ctx;
-	ctx->wb_num = ctl->num;	/* wb num should match ctl num */
-	ctx->base = ctl->wb_base;
+	ctx->wb_num = wb->num;
+	ctx->base = wb->base;
 	ctx->initialized = false;
 	init_completion(&ctx->wb_comp);
 	spin_lock_init(&ctx->wb_lock);
@@ -763,8 +877,7 @@ int mdss_mdp_writeback_start(struct mdss_mdp_ctl *ctl)
 		ctl->ops.prepare_fnc = mdss_mdp_writeback_prepare_wfd;
 
 		/* WB2 Intr Enable is BIT(2) in MDSS 1.8.0 */
-		if ((ctl->mdata->mdp_rev == MDSS_MDP_HW_REV_108) ||
-			 (ctl->mdata->mdp_rev == MDSS_MDP_HW_REV_111)) {
+		if (ctl->mdata->mdp_rev == MDSS_MDP_HW_REV_108) {
 			ctx->intr_type = MDSS_MDP_IRQ_WB_ROT_COMP;
 			ctx->intf_num = 2;
 		}
@@ -774,8 +887,6 @@ int mdss_mdp_writeback_start(struct mdss_mdp_ctl *ctl)
 	ctl->ops.wait_fnc = mdss_mdp_wb_wait4comp;
 	ctl->ops.add_vsync_handler = mdss_mdp_wb_add_vsync_handler;
 	ctl->ops.remove_vsync_handler = mdss_mdp_wb_remove_vsync_handler;
-
-	ctx->is_vbif_nrt = mdss_mdp_is_vbif_nrt(ctl->mdata->mdp_rev);
 
 	return 0;
 }

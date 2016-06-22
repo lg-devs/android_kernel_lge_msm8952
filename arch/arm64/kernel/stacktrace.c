@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <linux/kasan.h>
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <linux/sched.h>
@@ -46,6 +47,8 @@ int notrace unwind_frame(struct stackframe *frame)
 	if (fp < low || fp > high - 0x18 || fp & 0xf)
 		return -EINVAL;
 
+	kasan_disable_current();
+
 	frame->sp = fp + 0x10;
 	frame->fp = *(unsigned long *)(fp);
 	/*
@@ -53,6 +56,8 @@ int notrace unwind_frame(struct stackframe *frame)
 	 * not where the return will go.
 	 */
 	frame->pc = *(unsigned long *)(fp + 8) - 4;
+
+	kasan_enable_current();
 
 	return 0;
 }
@@ -111,10 +116,9 @@ void save_stack_trace_tsk(struct task_struct *tsk, struct stack_trace *trace)
 		frame.sp = thread_saved_sp(tsk);
 		frame.pc = thread_saved_pc(tsk);
 	} else {
-		register unsigned long current_sp asm("sp");
 		data.no_sched_functions = 0;
 		frame.fp = (unsigned long)__builtin_frame_address(0);
-		frame.sp = current_sp;
+		frame.sp = current_stack_pointer;
 		frame.pc = (unsigned long)save_stack_trace_tsk;
 	}
 

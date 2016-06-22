@@ -26,7 +26,10 @@ obj-$(CONFIG_INPUT_COBALT_BTNS)		+= cobalt_btns.o
 obj-$(CONFIG_INPUT_DA9052_ONKEY)	+= da9052_onkey.o
 obj-$(CONFIG_INPUT_DA9055_ONKEY)	+= da9055_onkey.o
 obj-$(CONFIG_INPUT_DM355EVM)		+= dm355evm_keys.o
+obj-$(CONFIG_INPUT_DRV260X_HAPTICS)	+= drv260x.o
+obj-$(CONFIG_INPUT_DRV2667_HAPTICS)	+= drv2667.o
 obj-$(CONFIG_INPUT_GP2A)		+= gp2ap002a00f.o
+obj-$(CONFIG_INPUT_GPIO_BEEPER)		+= gpio-beeper.o
 obj-$(CONFIG_INPUT_GPIO_TILT_POLLED)	+= gpio_tilt_polled.o
 obj-$(CONFIG_INPUT_GPIO)		+= gpio_event.o gpio_matrix.o gpio_input.o gpio_output.o gpio_axis.o
 obj-$(CONFIG_INPUT_HBTP_INPUT)		+= hbtp_input.o hbtp_vm.o
@@ -37,11 +40,13 @@ obj-$(CONFIG_INPUT_KEYCHORD)		+= keychord.o
 obj-$(CONFIG_INPUT_KEYSPAN_REMOTE)	+= keyspan_remote.o
 obj-$(CONFIG_INPUT_KXTJ9)		+= kxtj9.o
 obj-$(CONFIG_INPUT_M68K_BEEP)		+= m68kspkr.o
+obj-$(CONFIG_INPUT_MAX77693_HAPTIC)	+= max77693-haptic.o
 obj-$(CONFIG_INPUT_MAX8925_ONKEY)	+= max8925_onkey.o
 obj-$(CONFIG_INPUT_MAX8997_HAPTIC)	+= max8997_haptic.o
 obj-$(CONFIG_INPUT_MC13783_PWRBUTTON)	+= mc13783-pwrbutton.o
 obj-$(CONFIG_INPUT_MMA8450)		+= mma8450.o
 obj-$(CONFIG_INPUT_MPU3050)		+= mpu3050.o
+obj-$(CONFIG_INPUT_PALMAS_PWRBUTTON)	+= palmas-pwrbutton.o
 obj-$(CONFIG_INPUT_PCAP)		+= pcap_keys.o
 obj-$(CONFIG_INPUT_PCF50633_PMU)	+= pcf50633-input.o
 obj-$(CONFIG_INPUT_PCF8574)		+= pcf8574_keypad.o
@@ -54,6 +59,8 @@ obj-$(CONFIG_INPUT_RB532_BUTTON)	+= rb532_button.o
 obj-$(CONFIG_INPUT_RETU_PWRBUTTON)	+= retu-pwrbutton.o
 obj-$(CONFIG_INPUT_GPIO_ROTARY_ENCODER)	+= rotary_encoder.o
 obj-$(CONFIG_INPUT_SGI_BTNS)		+= sgi_btns.o
+obj-$(CONFIG_INPUT_SIRFSOC_ONKEY)	+= sirfsoc-onkey.o
+obj-$(CONFIG_INPUT_SOC_BUTTON_ARRAY)	+= soc_button_array.o
 obj-$(CONFIG_INPUT_SPARCSPKR)		+= sparcspkr.o
 obj-$(CONFIG_INPUT_TWL4030_PWRBUTTON)	+= twl4030-pwrbutton.o
 obj-$(CONFIG_INPUT_TWL4030_VIBRA)	+= twl4030-vibra.o
@@ -63,29 +70,4 @@ obj-$(CONFIG_INPUT_WISTRON_BTNS)	+= wistron_btns.o
 obj-$(CONFIG_INPUT_WM831X_ON)		+= wm831x-on.o
 obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
 obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
-obj-$(CONFIG_BMP18X)			+= bmp18x-core.o
-obj-$(CONFIG_BMP18X_I2C)		+= bmp18x-i2c.o
-obj-$(CONFIG_SENSORS_MMC3416X)		+= mmc3416x.o
-obj-$(CONFIG_SENSORS_MMA8X5X)	  	+= mma8x5x.o
-obj-$(CONFIG_SENSORS_STK3X1X)		+= stk3x1x.o
-obj-$(CONFIG_SENSORS_CAPELLA_CM36283)	+= cm36283.o
-obj-$(CONFIG_SENSORS_MPU6050)		+= mpu6050.o
-obj-$(CONFIG_SENSORS_AKM8963)		+= akm8963.o
-obj-$(CONFIG_SENSORS_AKM09911)		+= akm09911.o
-obj-$(CONFIG_SENSORS_LIS3DH)		+= lis3dh_acc.o
-obj-$(CONFIG_SENSORS_AP3426)		+= ap3426.o
-obj-$(CONFIG_SENSORS_BMA2X2)	+= bstclass.o
-
-obj-$(CONFIG_SENSORS_BMA2X2)	+= bma2x2.o
-obj-$(CONFIG_SENSORS_LTR553)	+= ltr553.o
-
-ifeq ($(CONFIG_SENSORS_BMA2X2_ENABLE_INT1),y)
-	EXTRA_CFLAGS += -DBMA2X2_ENABLE_INT1
-endif
-
-ifeq ($(CONFIG_BOSCH_BMA2X2_ENABLE_INT2),y)
-	EXTRA_CFLAGS += -DBMA2X2_ENABLE_INT2
-endif
-
-obj-$(CONFIG_SENSORS_MC3430)	+= mc3xxx.o
-obj-$(CONFIG_SENSORS_ISL29044A)	+= isl29044a.o
+obj-$(CONFIG_INPUT_IDEAPAD_SLIDEBAR)	+= ideapad_slidebar.o

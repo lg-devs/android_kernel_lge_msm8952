@@ -18,6 +18,7 @@
 #include <media/v4l2-subdev.h>
 #include <media/msmb_camera.h>
 #include "msm_camera_i2c.h"
+#include "msm_camera_spi.h"
 #include "msm_camera_dt_util.h"
 #include "msm_camera_io_util.h"
 
@@ -45,9 +46,9 @@ struct msm_actuator_func_tbl {
 		struct msm_actuator_set_info_t *);
 	int32_t (*actuator_init_focus)(struct msm_actuator_ctrl_t *,
 		uint16_t, struct reg_settings_t *);
-	int32_t (*actuator_set_default_focus) (struct msm_actuator_ctrl_t *,
+	int32_t (*actuator_set_default_focus)(struct msm_actuator_ctrl_t *,
 			struct msm_actuator_move_params_t *);
-	int32_t (*actuator_move_focus) (struct msm_actuator_ctrl_t *,
+	int32_t (*actuator_move_focus)(struct msm_actuator_ctrl_t *,
 			struct msm_actuator_move_params_t *);
 	void (*actuator_parse_i2c_params)(struct msm_actuator_ctrl_t *,
 			int16_t, uint32_t, uint16_t);
@@ -77,9 +78,11 @@ struct msm_actuator_ctrl_t {
 	struct platform_driver *pdriver;
 	struct platform_device *pdev;
 	struct msm_camera_i2c_client i2c_client;
+#ifdef CONFIG_LG_OIS
+	struct msm_camera_i2c_client i2c_eeprom_client;
+	struct msm_eeprom_board_info *eboard_info;
+#endif
 	enum msm_camera_device_type_t act_device_type;
-	uint16_t deinit_setting_size;
-	struct reg_settings_t *deinit_settings;
 	struct msm_sd_subdev msm_sd;
 	enum af_camera_name cam_name;
 	struct mutex *actuator_mutex;

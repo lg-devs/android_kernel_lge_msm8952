@@ -30,12 +30,9 @@
 #include <linux/poll.h>
 #include <linux/ioctl.h>
 #include <linux/wait.h>
-#include <linux/mm.h>
 #include <linux/uaccess.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
-#include <linux/timer.h>
-#include <linux/jiffies.h>
 #include <linux/compat.h>
 #include "dmxdev.h"
 
@@ -628,6 +625,7 @@ static int dvb_dvr_feed_cmd(struct dmxdev *dmxdev, struct dvr_command *dvr_cmd)
 	size_t tsp_size;
 	u8 *data_start;
 	struct dvb_ringbuffer *src = &dmxdev->dvr_input_buffer;
+
 	todo = dvr_cmd->cmd.data_feed_count;
 
 	if (dmxdev->demux->get_tsp_size)
@@ -813,7 +811,6 @@ static int dvr_input_thread_entry(void *arg)
 	return 0;
 }
 
-
 static int dvb_dvr_open(struct inode *inode, struct file *file)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -821,9 +818,7 @@ static int dvb_dvr_open(struct inode *inode, struct file *file)
 	struct dmx_frontend *front;
 	void *mem;
 
-	pr_debug("function : %s(%X)\n",
-			__func__,
-			(file->f_flags & O_ACCMODE));
+	pr_debug("function : %s(%X)\n", __func__, (file->f_flags & O_ACCMODE));
 
 	if (mutex_lock_interruptible(&dmxdev->mutex))
 		return -ERESTARTSYS;
@@ -994,6 +989,7 @@ static int dvb_dvr_release(struct inode *inode, struct file *file)
 
 		if (dmxdev->dvr_input_buffer.data) {
 			void *mem = dmxdev->dvr_input_buffer.data;
+
 			mb();
 			spin_lock_irq(&dmxdev->dvr_in_lock);
 			dmxdev->dvr_input_buffer.data = NULL;
@@ -1015,6 +1011,7 @@ static int dvb_dvr_release(struct inode *inode, struct file *file)
 
 		if (dmxdev->dvr_cmd_buffer.data) {
 			void *mem = dmxdev->dvr_cmd_buffer.data;
+
 			mb();
 			spin_lock_irq(&dmxdev->dvr_in_lock);
 			dmxdev->dvr_cmd_buffer.data = NULL;
@@ -1311,6 +1308,7 @@ static int dvb_dmxdev_flush_data(struct dmxdev_filter *filter, size_t length)
 
 	if (filter->type == DMXDEV_TYPE_PES) {
 		struct dmxdev_feed *feed;
+
 		feed = list_first_entry(&filter->feed.ts,
 			struct dmxdev_feed, next);
 
@@ -1347,6 +1345,7 @@ static ssize_t dvb_dvr_read(struct file *file, char __user *buf, size_t count,
 	ssize_t res;
 	struct dvb_device *dvbdev = file->private_data;
 	struct dmxdev *dmxdev = dvbdev->priv;
+	unsigned long flags;
 
 	if (dmxdev->exit)
 		return -ENODEV;
@@ -1361,9 +1360,9 @@ static ssize_t dvb_dvr_read(struct file *file, char __user *buf, size_t count,
 
 	if (res > 0) {
 		dvb_dmxdev_notify_data_read(dmxdev->dvr_feed, res);
-		spin_lock_irq(&dmxdev->lock);
+		spin_lock_irqsave(&dmxdev->lock, flags);
 		dvb_dmxdev_update_events(&dmxdev->dvr_output_events, res);
-		spin_unlock_irq(&dmxdev->lock);
+		spin_unlock_irqrestore(&dmxdev->lock, flags);
 
 		/*
 		 * in PULL mode, we might be stalling on
@@ -1780,6 +1779,7 @@ static int dvb_dmxdev_set_buffer_size(struct dmxdev_filter *dmxdevfilter,
 	spin_unlock_irq(&dmxdevfilter->dev->lock);
 
 	vfree(oldmem);
+
 	return 0;
 }
 
@@ -2516,6 +2516,7 @@ static int dvb_dmxdev_get_event(struct dmxdev_filter *dmxdevfilter,
 					struct dmx_filter_event *event)
 {
 	int res;
+
 	spin_lock_irq(&dmxdevfilter->dev->lock);
 
 	/* Check first for filter overflow */
@@ -3741,7 +3742,6 @@ static int dvb_dmxdev_filter_free(struct dmxdev *dmxdev,
 	mutex_lock(&dmxdevfilter->mutex);
 
 	dvb_dmxdev_filter_stop(dmxdevfilter);
-
 	dvb_dmxdev_filter_reset(dmxdevfilter);
 
 	list_for_each_entry_safe(ts_buffer, tmp,
@@ -4487,7 +4487,7 @@ static long dmx_set_ts_insertion32_wrapper(struct file *file, unsigned int cmd,
 #define DMX_SET_TS_INSERTION32 _IOW('o', 70, struct dmx_set_ts_insertion32)
 
 /*
- * compat ioctl is called whenever compatability is required, i.e when a 32bit
+ * compat ioctl is called whenever compatibility is required, i.e when a 32bit
  * process calls an ioctl for a 64bit kernel.
  */
 static long dvb_demux_compat_ioctl(struct file *file, unsigned int cmd,
@@ -4603,6 +4603,7 @@ static int dvb_demux_release(struct inode *inode, struct file *file)
 	struct dmxdev_filter *dmxdevfilter = file->private_data;
 	struct dmxdev *dmxdev = dmxdevfilter->dev;
 	int ret;
+
 	ret = dvb_dmxdev_filter_free(dmxdev, dmxdevfilter);
 
 	mutex_lock(&dmxdev->mutex);
@@ -4779,7 +4780,7 @@ static int dvb_dmxdev_dbgfs_print(struct seq_file *s, void *p)
 	int active_count = 0;
 	struct dmx_buffer_status buffer_status;
 	struct dmx_scrambling_bits scrambling_bits;
-	const char *pes_feeds[] = {"DEC", "PES", "DVR", "REC"};
+	static const char * const pes_feeds[] = {"DEC", "PES", "DVR", "REC"};
 	int ret;
 
 	if (!dmxdev)
@@ -4793,7 +4794,7 @@ static int dvb_dmxdev_dbgfs_print(struct seq_file *s, void *p)
 			seq_printf(s, "filter_%02d - ", i);
 
 			if (filter->type == DMXDEV_TYPE_SEC) {
-				seq_printf(s, "type: SEC, ");
+				seq_puts(s, "type: SEC, ");
 				seq_printf(s, "PID %04d ",
 						filter->params.sec.pid);
 				scrambling_bits.pid = filter->params.sec.pid;
@@ -4832,7 +4833,7 @@ static int dvb_dmxdev_dbgfs_print(struct seq_file *s, void *p)
 	}
 
 	if (!active_count)
-		seq_printf(s, "No active filters\n");
+		seq_puts(s, "No active filters\n");
 
 	return 0;
 }
@@ -4853,7 +4854,6 @@ static const struct file_operations dbgfs_filters_fops = {
 int dvb_dmxdev_init(struct dmxdev *dmxdev, struct dvb_adapter *dvb_adapter)
 {
 	int i;
-
 	struct dmx_caps caps;
 
 	if (dmxdev->demux->open(dmxdev->demux) < 0)

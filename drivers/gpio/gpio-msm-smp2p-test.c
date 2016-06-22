@@ -63,7 +63,7 @@ static void cb_data_reset(struct gpio_info *info)
 	for (n = 0; n < SMP2P_BITS_PER_ENTRY; ++n)
 		clear_bit(n,  info->triggered_irqs);
 
-	INIT_COMPLETION(info->cb_completion);
+	reinit_completion(&info->cb_completion);
 }
 
 static int smp2p_gpio_test_probe(struct platform_device *pdev)
@@ -649,7 +649,7 @@ static void smp2p_ut_remote_inout_core(struct seq_file *s, int remote_pid,
 			if (wait_for_completion_timeout(
 					&cb_in->cb_completion, HZ / 2) == 0)
 				break;
-			INIT_COMPLETION(cb_in->cb_completion);
+			reinit_completion(&cb_in->cb_completion);
 		} while (cb_in->cb_count < 32);
 		UT_ASSERT_INT(cb_in->cb_count, >, 0);
 		response = smp2p_gpio_get_value(cb_in);
@@ -676,7 +676,7 @@ static void smp2p_ut_remote_inout_core(struct seq_file *s, int remote_pid,
 				(int)wait_for_completion_timeout(
 					&cb_in->cb_completion, HZ / 2),
 			   >, 0);
-			INIT_COMPLETION(cb_in->cb_completion);
+			reinit_completion(&cb_in->cb_completion);
 		} while (cb_in->cb_count < 24);
 		response = smp2p_gpio_get_value(cb_in);
 		SMP2P_SET_RMT_CMD_TYPE(request, 0);

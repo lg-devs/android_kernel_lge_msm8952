@@ -24,6 +24,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/dma-mapping.h>
 #include <soc/qcom/scm.h>
+#include <soc/qcom/secure_buffer.h>
 
 #include "peripheral-loader.h"
 #include "pil-q6v5.h"
@@ -90,6 +91,9 @@ module_param(modem_dbg_cfg, uint, S_IRUGO | S_IWUSR);
 
 static void modem_log_rmb_regs(void __iomem *base)
 {
+	if (system_state == SYSTEM_RESTART || system_state == SYSTEM_POWER_OFF)
+		return;
+
 	pr_err("RMB_MBA_IMAGE: %08x\n", readl_relaxed(base + RMB_MBA_IMAGE));
 	pr_err("RMB_PBL_STATUS: %08x\n", readl_relaxed(base + RMB_PBL_STATUS));
 	pr_err("RMB_MBA_COMMAND: %08x\n",
@@ -165,9 +169,17 @@ static int pil_mss_enable_clks(struct q6v5_data *drv)
 	ret = clk_prepare_enable(drv->gpll0_mss_clk);
 	if (ret)
 		goto err_gpll0_mss_clk;
-
+	ret = clk_prepare_enable(drv->snoc_axi_clk);
+	if (ret)
+		goto err_snoc_axi_clk;
+	ret = clk_prepare_enable(drv->mnoc_axi_clk);
+	if (ret)
+		goto err_mnoc_axi_clk;
 	return 0;
-
+err_mnoc_axi_clk:
+	clk_disable_unprepare(drv->snoc_axi_clk);
+err_snoc_axi_clk:
+	clk_disable_unprepare(drv->gpll0_mss_clk);
 err_gpll0_mss_clk:
 	clk_disable_unprepare(drv->rom_clk);
 err_rom_clk:
@@ -180,6 +192,8 @@ err_ahb_clk:
 
 static void pil_mss_disable_clks(struct q6v5_data *drv)
 {
+	clk_disable_unprepare(drv->mnoc_axi_clk);
+	clk_disable_unprepare(drv->snoc_axi_clk);
 	clk_disable_unprepare(drv->gpll0_mss_clk);
 	clk_disable_unprepare(drv->rom_clk);
 	clk_disable_unprepare(drv->axi_clk);
@@ -240,12 +254,16 @@ static int pil_msa_wait_for_mba_ready(struct q6v5_data *drv)
 	ret = readl_poll_timeout(drv->rmb_base + RMB_MBA_STATUS, status,
 		status != 0, POLL_INTERVAL_US, pbl_mba_boot_timeout_ms * 1000);
 	if (ret) {
-		dev_err(dev, "MBA boot timed out\n");
+        dev_err(dev, "MBA boot timed out\n");
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		return ret;
 	}
 	if (status != STATUS_XPU_UNLOCKED &&
 	    status != STATUS_XPU_UNLOCKED_SCRIBBLED) {
 		dev_err(dev, "MBA returned unexpected status %d\n", status);
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		return -EINVAL;
 	}
 
@@ -309,20 +327,24 @@ int __pil_mss_deinit_image(struct pil_desc *pil, bool err_path)
 	if (q6_drv->ahb_clk_vote)
 		clk_disable_unprepare(q6_drv->ahb_clk);
 
-	/* In case of any failure where reclaim MBA memory
+	if (system_state == SYSTEM_RESTART ||
+		system_state == SYSTEM_POWER_OFF) {
+		pr_err("Leaking MBA memory to prevent access during lockdown\n");
+		return ret;
+	}
+
+	/* In case of any failure where reclaiming MBA and DP memory
 	 * could not happen, free the memory here */
-	if (drv->q6->mba_virt) {
-		dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_size,
-				drv->q6->mba_virt, drv->q6->mba_phys,
+	if (drv->q6->mba_dp_virt) {
+		if (pil->subsys_vmid > 0)
+			pil_assign_mem_to_linux(pil, drv->q6->mba_dp_phys,
+						drv->q6->mba_dp_size);
+		dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_dp_size,
+				drv->q6->mba_dp_virt, drv->q6->mba_dp_phys,
 				&drv->attrs_dma);
-		drv->q6->mba_virt = NULL;
+		drv->q6->mba_dp_virt = NULL;
 	}
-	if (drv->q6->dp_virt) {
-		dma_free_attrs(&drv->mba_mem_dev, drv->q6->dp_size,
-				drv->q6->dp_virt, drv->q6->dp_phys,
-				&drv->attrs_dma);
-		drv->q6->dp_virt = NULL;
-	}
+
 	return ret;
 }
 
@@ -379,8 +401,8 @@ static int pil_mss_reset(struct pil_desc *pil)
 	phys_addr_t start_addr = pil_get_entry_addr(pil);
 	int ret;
 
-	if (drv->mba_phys)
-		start_addr = drv->mba_phys;
+	if (drv->mba_dp_phys)
+		start_addr = drv->mba_dp_phys;
 
 	/*
 	 * Bring subsystem out of reset and enable required
@@ -416,8 +438,8 @@ static int pil_mss_reset(struct pil_desc *pil)
 	}
 
 	/* Program DP Address */
-	if (drv->dp_virt) {
-		writel_relaxed(drv->dp_phys, drv->rmb_base +
+	if (drv->dp_size) {
+		writel_relaxed(start_addr + SZ_1M, drv->rmb_base +
 			       RMB_PMI_CODE_START);
 		writel_relaxed(drv->dp_size, drv->rmb_base +
 			       RMB_PMI_CODE_LENGTH);
@@ -466,55 +488,39 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 	char fw_name[10] = "mba.mbn";
 	char *dp_name = "msadp";
 	char *fw_name_p;
-	void *mba_virt;
-	dma_addr_t mba_phys, mba_phys_end;
+	void *mba_dp_virt;
+	dma_addr_t mba_dp_phys, mba_dp_phys_end;
 	int ret, count;
 	const u8 *data;
 
 	fw_name_p = drv->non_elf_image ? fw_name_legacy : fw_name;
-	/* Load and authenticate mba image */
 	ret = request_firmware(&fw, fw_name_p, pil->dev);
 	if (ret) {
 		dev_err(pil->dev, "Failed to locate %s\n",
 						fw_name_p);
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		return ret;
 	}
 
-	drv->mba_size = SZ_1M;
-	md->mba_mem_dev.coherent_dma_mask =
-		DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
-	init_dma_attrs(&md->attrs_dma);
-	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &md->attrs_dma);
-	mba_virt = dma_alloc_attrs(&md->mba_mem_dev, drv->mba_size,
-			&mba_phys, GFP_KERNEL, &md->attrs_dma);
-	if (!mba_virt) {
-		dev_err(pil->dev, "MBA metadata buffer allocation failed\n");
-		ret = -ENOMEM;
-		goto err_dma_alloc;
-	}
-
-	drv->mba_phys = mba_phys;
-	drv->mba_virt = mba_virt;
-	mba_phys_end = mba_phys + drv->mba_size;
-
-	dev_info(pil->dev, "MBA: loading from %pa to %pa\n", &mba_phys,
-								&mba_phys_end);
-	/* Load the MBA image into memory */
 	data = fw ? fw->data : NULL;
 	if (!data) {
 		dev_err(pil->dev, "MBA data is NULL\n");
 		ret = -ENOMEM;
-		goto err_mba_data;
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
+		goto err_invalid_fw;
 	}
-	count = fw->size;
-	memcpy(mba_virt, data, count);
-	wmb();
 
-	/* Load modem debug policy */
+	drv->mba_dp_size = SZ_1M;
+	md->mba_mem_dev.coherent_dma_mask =
+		DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
+	init_dma_attrs(&md->attrs_dma);
+	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &md->attrs_dma);
+
 	ret = request_firmware(&dp_fw, dp_name, pil->dev);
 	if (ret) {
-		drv->dp_virt = NULL;
-		dev_warn(pil->dev, "MBA: Debug policy not present - %s\n",
+		dev_warn(pil->dev, "Debug policy not present - %s. Continue.\n",
 						dp_name);
 	} else {
 		if (!dp_fw || !dp_fw->data) {
@@ -522,51 +528,75 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 			ret = -ENOMEM;
 			goto err_invalid_fw;
 		}
-		mba_virt = dma_alloc_attrs(&md->mba_mem_dev, dp_fw->size,
-			&mba_phys, GFP_KERNEL, &md->attrs_dma);
-		if (!mba_virt) {
-			dev_err(pil->dev, "MBA: DP metadata buffer allocation failed\n");
-			ret = -ENOMEM;
-			goto err_invalid_fw;
-		}
 		drv->dp_size = dp_fw->size;
-		drv->dp_phys = mba_phys;
-		drv->dp_virt = mba_virt;
-		mba_phys_end = mba_phys + drv->dp_size;
-		dev_info(pil->dev, "MBA: DP loading from %pa to %pa\n",
-						 &mba_phys, &mba_phys_end);
+		drv->mba_dp_size += drv->dp_size;
+	}
 
-		memcpy(mba_virt, dp_fw->data, dp_fw->size);
+	mba_dp_virt = dma_alloc_attrs(&md->mba_mem_dev, drv->mba_dp_size,
+			&mba_dp_phys, GFP_KERNEL, &md->attrs_dma);
+	if (!mba_dp_virt) {
+		dev_err(pil->dev, "MBA metadata buffer allocation failed\n");
+		ret = -ENOMEM;
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
+        goto err_invalid_fw;
+	}
+
+	drv->mba_dp_phys = mba_dp_phys;
+	drv->mba_dp_virt = mba_dp_virt;
+	mba_dp_phys_end = mba_dp_phys + drv->mba_dp_size;
+
+	dev_info(pil->dev, "Loading MBA and DP (if present) from %pa to %pa\n",
+					&mba_dp_phys, &mba_dp_phys_end);
+
+	/* Load the MBA image into memory */
+	count = fw->size;
+	memcpy(mba_dp_virt, data, count);
+	/* Ensure memcpy of the MBA memory is done before loading the DP */
+	wmb();
+
+	/* Load the DP image into memory */
+	if (drv->mba_dp_size > SZ_1M) {
+		memcpy(mba_dp_virt + SZ_1M, dp_fw->data, dp_fw->size);
 		/* Ensure memcpy is done before powering up modem */
 		wmb();
+	}
+
+	if (pil->subsys_vmid > 0) {
+		ret = pil_assign_mem_to_subsys(pil, drv->mba_dp_phys,
+							drv->mba_dp_size);
+		if (ret) {
+			pr_err("scm_call to unprotect MBA and DP mem failed\n");
+			goto err_mba_data;
+		}
 	}
 
 	ret = pil_mss_reset(pil);
 	if (ret) {
 		dev_err(pil->dev, "MBA boot failed.\n");
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		goto err_mss_reset;
 	}
 
-	if (drv->dp_virt)
+	if (dp_fw)
 		release_firmware(dp_fw);
 	release_firmware(fw);
 
 	return 0;
 
 err_mss_reset:
-	if (drv->dp_virt)
-		dma_free_attrs(&md->mba_mem_dev,  dp_fw->size, drv->dp_virt,
-				drv->dp_phys, &md->attrs_dma);
+	if (pil->subsys_vmid > 0)
+		pil_assign_mem_to_linux(pil, drv->mba_dp_phys,
+							drv->mba_dp_size);
+err_mba_data:
+	dma_free_attrs(&md->mba_mem_dev, drv->mba_dp_size, drv->mba_dp_virt,
+				drv->mba_dp_phys, &md->attrs_dma);
 err_invalid_fw:
 	if (dp_fw)
 		release_firmware(dp_fw);
-err_mba_data:
-	dma_free_attrs(&md->mba_mem_dev, drv->mba_size, drv->mba_virt,
-				drv->mba_phys, &md->attrs_dma);
-	drv->mba_virt = NULL;
-	drv->dp_virt = NULL;
-err_dma_alloc:
 	release_firmware(fw);
+	drv->mba_dp_virt = NULL;
 	return ret;
 }
 
@@ -589,11 +619,24 @@ static int pil_msa_auth_modem_mdt(struct pil_desc *pil, const u8 *metadata,
 	if (!mdata_virt) {
 		dev_err(pil->dev, "MBA metadata buffer allocation failed\n");
 		ret = -ENOMEM;
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		goto fail;
 	}
 	memcpy(mdata_virt, metadata, size);
 	/* wmb() ensures copy completes prior to starting authentication. */
 	wmb();
+
+	if (pil->subsys_vmid > 0) {
+		ret = pil_assign_mem_to_subsys(pil, mdata_phys,
+							ALIGN(size, SZ_4K));
+		if (ret) {
+			pr_err("scm_call to unprotect modem metadata mem failed\n");
+			dma_free_attrs(&drv->mba_mem_dev, size, mdata_virt,
+							mdata_phys, &attrs);
+			goto fail;
+		}
+	}
 
 	/* Initialize length counter to 0 */
 	writel_relaxed(0, drv->rmb_base + RMB_PMI_CODE_LENGTH);
@@ -606,11 +649,18 @@ static int pil_msa_auth_modem_mdt(struct pil_desc *pil, const u8 *metadata,
 		POLL_INTERVAL_US, modem_auth_timeout_ms * 1000);
 	if (ret) {
 		dev_err(pil->dev, "MBA authentication of headers timed out\n");
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 	} else if (status < 0) {
 		dev_err(pil->dev, "MBA returned error %d for headers\n",
 				status);
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		ret = -EINVAL;
 	}
+
+	if (pil->subsys_vmid > 0)
+		pil_assign_mem_to_linux(pil, mdata_phys, ALIGN(size, SZ_4K));
 
 	dma_free_attrs(&drv->mba_mem_dev, size, mdata_virt, mdata_phys, &attrs);
 
@@ -621,16 +671,14 @@ fail:
 	modem_log_rmb_regs(drv->rmb_base);
 	if (drv->q6) {
 		pil_mss_shutdown(pil);
-		dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_size,
-				drv->q6->mba_virt, drv->q6->mba_phys,
+		if (pil->subsys_vmid > 0)
+			pil_assign_mem_to_linux(pil, drv->q6->mba_dp_phys,
+						drv->q6->mba_dp_size);
+		dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_dp_size,
+				drv->q6->mba_dp_virt, drv->q6->mba_dp_phys,
 				&drv->attrs_dma);
-		drv->q6->mba_virt = NULL;
-		if (drv->q6->dp_virt) {
-			dma_free_attrs(&drv->mba_mem_dev, drv->q6->dp_size,
-				drv->q6->dp_virt, drv->q6->dp_phys,
-				&drv->attrs_dma);
-			drv->q6->dp_virt = NULL;
-		}
+		drv->q6->mba_dp_virt = NULL;
+
 	}
 	return ret;
 }
@@ -639,11 +687,12 @@ static int pil_msa_mss_reset_mba_load_auth_mdt(struct pil_desc *pil,
 				  const u8 *metadata, size_t size)
 {
 	int ret;
-
+	dev_info(pil->dev, "pil : mss reset and load mba\n");
 	ret = pil_mss_reset_load_mba(pil);
 	if (ret)
 		return ret;
 
+	dev_info(pil->dev, "pil : msa auth modem.mdt.\n");
 	return pil_msa_auth_modem_mdt(pil, metadata, size);
 }
 
@@ -686,26 +735,27 @@ static int pil_msa_mba_auth(struct pil_desc *pil)
 			50, modem_auth_timeout_ms * 1000);
 	if (ret) {
 		dev_err(pil->dev, "MBA authentication of image timed out\n");
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 	} else if (status < 0) {
 		dev_err(pil->dev, "MBA returned error %d for image\n", status);
+        modem_log_rmb_regs(drv->rmb_base);
+        subsystem_restart("modem");
 		ret = -EINVAL;
 	}
 
 	if (drv->q6) {
-		if (drv->q6->mba_virt) {
-			/* Reclaim MBA memory. */
-			dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_size,
-					drv->q6->mba_virt, drv->q6->mba_phys,
-					&drv->attrs_dma);
-			drv->q6->mba_virt = NULL;
-		}
+		if (drv->q6->mba_dp_virt) {
+			/* Reclaim MBA and DP (if allocated) memory. */
+			if (pil->subsys_vmid > 0)
+				pil_assign_mem_to_linux(pil,
+					drv->q6->mba_dp_phys,
+					drv->q6->mba_dp_size);
+			dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_dp_size,
+					drv->q6->mba_dp_virt,
+					drv->q6->mba_dp_phys, &drv->attrs_dma);
 
-		if (drv->q6->dp_virt) {
-			/* Reclaim Modem DP memory. */
-			dma_free_attrs(&drv->mba_mem_dev, drv->q6->dp_size,
-					drv->q6->dp_virt, drv->q6->dp_phys,
-					&drv->attrs_dma);
-			drv->q6->dp_virt = NULL;
+			drv->q6->mba_dp_virt = NULL;
 		}
 	}
 	if (ret)

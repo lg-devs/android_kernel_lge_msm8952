@@ -554,7 +554,7 @@ int tick_resume_broadcast_oneshot(struct clock_event_device *bc)
 void tick_check_oneshot_broadcast_this_cpu(void)
 {
 	if (cpumask_test_cpu(smp_processor_id(), tick_broadcast_oneshot_mask)) {
-		struct tick_device *td = &__get_cpu_var(tick_cpu_device);
+		struct tick_device *td = this_cpu_ptr(&tick_cpu_device);
 
 		/*
 		 * We might be in the middle of switching over from
@@ -669,14 +669,19 @@ static void broadcast_shutdown_local(struct clock_event_device *bc,
 	clockevents_set_mode(dev, CLOCK_EVT_MODE_SHUTDOWN);
 }
 
-static void broadcast_move_bc(int deadcpu)
+void hotplug_cpu__broadcast_tick_pull(int deadcpu)
 {
-	struct clock_event_device *bc = tick_broadcast_device.evtdev;
+	struct clock_event_device *bc;
+	unsigned long flags;
 
-	if (!bc || !broadcast_needs_cpu(bc, deadcpu))
-		return;
-	/* This moves the broadcast assignment to this cpu */
-	clockevents_program_event(bc, bc->next_event, 1);
+	raw_spin_lock_irqsave(&tick_broadcast_lock, flags);
+	bc = tick_broadcast_device.evtdev;
+
+	if (bc && broadcast_needs_cpu(bc, deadcpu)) {
+		/* This moves the broadcast assignment to this CPU: */
+		clockevents_program_event(bc, bc->next_event, 1);
+	}
+	raw_spin_unlock_irqrestore(&tick_broadcast_lock, flags);
 }
 
 /*
@@ -912,8 +917,6 @@ void tick_shutdown_broadcast_oneshot(unsigned int *cpup)
 	cpumask_clear_cpu(cpu, tick_broadcast_oneshot_mask);
 	cpumask_clear_cpu(cpu, tick_broadcast_pending_mask);
 	cpumask_clear_cpu(cpu, tick_broadcast_force_mask);
-
-	broadcast_move_bc(cpu);
 
 	raw_spin_unlock_irqrestore(&tick_broadcast_lock, flags);
 }

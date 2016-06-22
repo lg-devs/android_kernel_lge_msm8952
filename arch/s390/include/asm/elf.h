@@ -102,6 +102,7 @@
 #define HWCAP_S390_ETF3EH	256
 #define HWCAP_S390_HIGH_GPRS	512
 #define HWCAP_S390_TE		1024
+#define HWCAP_S390_VXRS		2048
 
 /*
  * These are used to set parameters in the core dumps.
@@ -160,10 +161,11 @@ extern unsigned int vdso_enabled;
 /* This is the location that an ET_DYN program is loaded if exec'ed.  Typical
    use of this is to invoke "./ld.so someprog" to test out a new version of
    the loader.  We need to make sure that it is out of the way of the program
-   that it will "exec", and that there is sufficient room for the brk.  */
-
-extern unsigned long randomize_et_dyn(unsigned long base);
-#define ELF_ET_DYN_BASE		(randomize_et_dyn(STACK_TOP / 3 * 2))
+   that it will "exec", and that there is sufficient room for the brk. 64-bit
+   tasks are aligned to 4GB. */
+#define ELF_ET_DYN_BASE (is_32bit_task() ? \
+				(STACK_TOP / 3 * 2) : \
+				(STACK_TOP / 3 * 2) & ~((1UL << 32) - 1))
 
 /* This yields a mask that user programs can use to figure out what
    instruction set this CPU supports. */
@@ -208,7 +210,9 @@ do {								\
 } while (0)
 #endif /* CONFIG_COMPAT */
 
-#define STACK_RND_MASK	0x7ffUL
+extern unsigned long mmap_rnd_mask;
+
+#define STACK_RND_MASK	(mmap_rnd_mask)
 
 #define ARCH_DLINFO							    \
 do {									    \
@@ -225,6 +229,6 @@ int arch_setup_additional_pages(struct linux_binprm *, int);
 extern unsigned long arch_randomize_brk(struct mm_struct *mm);
 #define arch_randomize_brk arch_randomize_brk
 
-void *fill_cpu_elf_notes(void *ptr, struct save_area *sa);
+void *fill_cpu_elf_notes(void *ptr, struct save_area *sa, __vector128 *vxrs);
 
 #endif

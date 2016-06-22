@@ -15,6 +15,7 @@
 
 #include <linux/devfreq.h>
 #include <linux/cpu.h>
+#include <linux/cpufreq.h>
 #include <linux/cpumask.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
@@ -667,7 +668,6 @@ static int __init devfreq_cpufreq_init(void)
 				pr_err("Parsing %s failed!\n", of_child->name);
 			else
 				pr_debug("Parsed %s.\n", of_child->name);
-			of_node_put(of_child);
 		}
 		of_node_put(of_par);
 	} else {

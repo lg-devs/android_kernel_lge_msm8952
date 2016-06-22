@@ -201,22 +201,37 @@ DECLARE_EVENT_CLASS(mmc_pm_template,
 	)
 );
 
-DEFINE_EVENT(mmc_pm_template, mmc_suspend_host,
+DEFINE_EVENT(mmc_pm_template, mmc_runtime_suspend,
 	     TP_PROTO(const char *dev_name, int err, s64 usecs),
 	     TP_ARGS(dev_name, err, usecs));
 
-DEFINE_EVENT(mmc_pm_template, mmc_resume_host,
+DEFINE_EVENT(mmc_pm_template, mmc_runtime_resume,
 	     TP_PROTO(const char *dev_name, int err, s64 usecs),
 	     TP_ARGS(dev_name, err, usecs));
 
-DEFINE_EVENT(mmc_pm_template, mmc_host_runtime_suspend,
+DEFINE_EVENT(mmc_pm_template, mmc_suspend,
 	     TP_PROTO(const char *dev_name, int err, s64 usecs),
 	     TP_ARGS(dev_name, err, usecs));
 
-DEFINE_EVENT(mmc_pm_template, mmc_host_runtime_resume,
+DEFINE_EVENT(mmc_pm_template, mmc_resume,
 	     TP_PROTO(const char *dev_name, int err, s64 usecs),
 	     TP_ARGS(dev_name, err, usecs));
 
+DEFINE_EVENT(mmc_pm_template, sdhci_msm_suspend,
+	     TP_PROTO(const char *dev_name, int err, s64 usecs),
+	     TP_ARGS(dev_name, err, usecs));
+
+DEFINE_EVENT(mmc_pm_template, sdhci_msm_resume,
+	     TP_PROTO(const char *dev_name, int err, s64 usecs),
+	     TP_ARGS(dev_name, err, usecs));
+
+DEFINE_EVENT(mmc_pm_template, sdhci_msm_runtime_suspend,
+	     TP_PROTO(const char *dev_name, int err, s64 usecs),
+	     TP_ARGS(dev_name, err, usecs));
+
+DEFINE_EVENT(mmc_pm_template, sdhci_msm_runtime_resume,
+	     TP_PROTO(const char *dev_name, int err, s64 usecs),
+	     TP_ARGS(dev_name, err, usecs));
 #endif /* if !defined(_TRACE_MMC_H) || defined(TRACE_HEADER_MULTI_READ) */
 
 /* This part must be outside protection */

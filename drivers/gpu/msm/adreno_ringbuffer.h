@@ -29,17 +29,6 @@ struct kgsl_device;
 struct kgsl_device_private;
 
 /**
- * union adreno_ttbr0 - Union describing the ttbr0 parameters used when
- * switching pagetable in stream
- * @ttbr0_lo: Lower 32 bits of ttbr0
- * @ttbr0_hi: Higher 32 bits of ttbr0
- */
-union adreno_ttbr0 {
-	unsigned int ttbr0_lo;
-	unsigned int ttbr0_hi;
-};
-
-/**
  * struct adreno_submit_time - utility structure to store the wall clock / GPU
  * ticks at command submit time
  * @ticks: GPU ticks at submit time (from the 19.2Mhz timer)
@@ -63,15 +52,16 @@ struct adreno_submit_time {
  * switching of pagetable this value equals current_rb_ptname.
  * @switch_pt_enable: Flag used during pagetable switch to check if pt
  * switch can be skipped
- * @adreno_ttbr0: Parameters used during pagetable switch, it contains the
- * pagetable values that need to be programmmed into the TTBR0 registers
+ * @ttbr0: value to program into TTBR0 during pagetable switch.
+ * @contextidr: value to program into CONTEXTIDR during pagetable switch.
  */
 struct adreno_ringbuffer_pagetable_info {
 	int current_global_ptname;
 	int current_rb_ptname;
 	int incoming_ptname;
 	int switch_pt_enable;
-	union adreno_ttbr0 ttbr0;
+	uint64_t ttbr0;
+	unsigned int contextidr;
 };
 
 /**
@@ -147,6 +137,8 @@ struct adreno_ringbuffer {
 #define KGSL_MEMSTORE_RB_OFFSET(rb, field)	\
 	KGSL_MEMSTORE_OFFSET((rb->id + KGSL_MEMSTORE_MAX), field)
 
+int cp_secure_mode(struct adreno_device *adreno_dev, uint *cmds, int set);
+
 int adreno_ringbuffer_issueibcmds(struct kgsl_device_private *dev_priv,
 				struct kgsl_context *context,
 				struct kgsl_cmdbatch *cmdbatch,
@@ -158,9 +150,8 @@ int adreno_ringbuffer_submitcmd(struct adreno_device *adreno_dev,
 
 int adreno_ringbuffer_init(struct kgsl_device *device);
 
-int adreno_ringbuffer_warm_start(struct adreno_device *adreno_dev);
-
-int adreno_ringbuffer_cold_start(struct adreno_device *adreno_dev);
+int adreno_ringbuffer_start(struct adreno_device *adreno_dev,
+		unsigned int start_type);
 
 void adreno_ringbuffer_stop(struct adreno_device *adreno_dev);
 

@@ -1,0 +1,25 @@
+&i2c_3 {
+    qcom,clk-freq-out = <400000>;
+        
+    sharp_lr388k5@18 {
+       compatible = "unified_driver_ver3,lr388k5";
+       status = "ok";
+       reg = <0x18>;
+       interrupt-parent = <&msm_gpio>;
+	   //interrupts = <65 0x2001>; // ONESHOT RISING 
+	   interrupts = <65 0x2001>; // ONESHOT RISING
+       //interrupts = <0 65 0x2001>; //ONESHOT TRIGGER_RISING
+
+       //vdd_ana-supply = <&pm8916_l16>;
+       //vcc_i2c-supply = <0>;
+
+       pinctrl-names = "pmx_ts_active","pmx_ts_suspend";       /*Touch GPIO pin name setting*/
+       pinctrl-0 = <&ts_int_active &ts_reset_active>;          /*Touch GPIO pin active setting*/
+       pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;        /*Touch GPIO pin suspend setting*/
+
+	   reset-gpio = <&msm_gpio 64 0x0>;
+	   irq-gpio = <&msm_gpio 65 0x2001>;
+
+       irqflags = <0x2001>;
+    };
+};

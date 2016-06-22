@@ -288,8 +288,6 @@ static void irq_affinity_release(struct kref *ref)
 
 	event = container_of(notify, struct event_timer_info, notify);
 	pr_debug("event = %p\n", event);
-
-	return;
 }
 
 static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
@@ -396,6 +394,7 @@ static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
 	/* Setup event on the old cpu*/
 	if (next_event) {
 		struct timerqueue_node *next;
+
 		next = timerqueue_getnext(&per_cpu(timer_head, old_cpu));
 		if (next) {
 			event = container_of(next,

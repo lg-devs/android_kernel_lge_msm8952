@@ -20,5 +20,4 @@
 #define clk_a53_bc_clk				0xcf28e63a
 #define clk_a53ssmux_cci			0x15560bd5
 #define clk_cci_clk                             0x96854074
-
 #endif

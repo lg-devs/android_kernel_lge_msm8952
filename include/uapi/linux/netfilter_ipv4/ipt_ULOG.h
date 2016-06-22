@@ -3,7 +3,7 @@
  * (C) 2000-2002 by Harald Welte <laforge@gnumonks.org>
  * 
  * Distributed under the terms of GNU GPL */
-
+/*add for CONFIG_NETFILTER_XT_MATCH_QUOTA2_LOG=y*/
 #ifndef _IPT_ULOG_H
 #define _IPT_ULOG_H
 

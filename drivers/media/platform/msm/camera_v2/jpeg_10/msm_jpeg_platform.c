@@ -17,16 +17,113 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/clk/msm-clk.h>
-#include <linux/msm_iommu_domains.h>
 #include <linux/msm-bus.h>
 #include <linux/msm-bus-board.h>
-#include <linux/msm_ion.h>
 #include <linux/iommu.h>
+#include <asm/dma-iommu.h>
+#include <linux/dma-direction.h>
+#include <linux/dma-attrs.h>
+#include <linux/dma-buf.h>
 
+#include "msm_camera_io_util.h"
 #include "msm_jpeg_platform.h"
 #include "msm_jpeg_sync.h"
 #include "msm_jpeg_common.h"
 #include "msm_jpeg_hw.h"
+
+#define JPEG_DT_PROP_CNT 2
+
+static int msm_jpeg_get_regulator_info(struct msm_jpeg_device *jpeg_dev,
+	struct platform_device *pdev)
+{
+	uint32_t count;
+	int i, rc;
+
+	struct device_node *of_node;
+	of_node = pdev->dev.of_node;
+
+	if (of_get_property(of_node, "qcom,vdd-names", NULL)) {
+
+		count = of_property_count_strings(of_node, "qcom,vdd-names");
+
+		JPEG_DBG("count = %d\n", count);
+		if ((count == 0) || (count == -EINVAL)) {
+			pr_err("no regulators found in device tree, count=%d",
+				count);
+			return -EINVAL;
+		}
+
+		if (count > JPEG_REGULATOR_MAX) {
+			pr_err("invalid count=%d, max is %d\n", count,
+				JPEG_REGULATOR_MAX);
+			return -EINVAL;
+		}
+
+		for (i = 0; i < count; i++) {
+			rc = of_property_read_string_index(of_node,
+				"qcom,vdd-names", i,
+				&(jpeg_dev->regulator_names[i]));
+			JPEG_DBG("regulator-names[%d] = %s\n",
+			i, jpeg_dev->regulator_names[i]);
+			if (rc < 0) {
+				pr_err("%s failed %d\n", __func__, __LINE__);
+				return rc;
+			}
+		}
+	} else {
+		jpeg_dev->regulator_names[0] = "vdd";
+		count = 1;
+	}
+	jpeg_dev->num_regulator = count;
+	return 0;
+}
+
+static int msm_jpeg_regulator_enable(struct device *dev, const char **reg_names,
+	struct regulator **reg_ptr, int num_reg, int enable)
+{
+	int i;
+	int rc = 0;
+	if (enable) {
+		for (i = 0; i < num_reg; i++) {
+			JPEG_DBG("%s enable %s\n", __func__, reg_names[i]);
+			reg_ptr[i] = regulator_get(dev, reg_names[i]);
+			if (IS_ERR(reg_ptr[i])) {
+				pr_err("%s get failed\n", reg_names[i]);
+				rc = PTR_ERR(reg_ptr[i]);
+				reg_ptr[i] = NULL;
+				goto cam_reg_get_err;
+			}
+
+			rc = regulator_enable(reg_ptr[i]);
+			if (rc < 0) {
+				pr_err("%s enable failed\n", reg_names[i]);
+				goto cam_reg_enable_err;
+			}
+		}
+	} else {
+		for (i = num_reg - 1; i >= 0; i--) {
+			if (reg_ptr[i] != NULL) {
+				JPEG_DBG("%s disable %s\n", __func__,
+					reg_names[i]);
+				regulator_disable(reg_ptr[i]);
+				regulator_put(reg_ptr[i]);
+			}
+		}
+	}
+	return rc;
+
+cam_reg_enable_err:
+	regulator_put(reg_ptr[i]);
+cam_reg_get_err:
+	for (i--; i >= 0; i--) {
+		if (reg_ptr[i] != NULL) {
+			regulator_disable(reg_ptr[i]);
+			regulator_put(reg_ptr[i]);
+		}
+	}
+	return rc;
+}
+
 
 static int msm_jpeg_get_clk_info(struct msm_jpeg_device *jpeg_dev,
 	struct platform_device *pdev)
@@ -120,7 +217,7 @@ uint32_t msm_jpeg_platform_v2p(struct msm_jpeg_device *pgmn_dev, int fd,
 	int rc;
 
 	rc = cam_smmu_get_phy_addr(pgmn_dev->iommu_hdl, fd, CAM_SMMU_MAP_RW,
-			&paddr, (size_t *)&size);
+			&paddr, &size);
 	JPEG_DBG("%s:%d] addr 0x%x size %ld", __func__, __LINE__,
 		(uint32_t)paddr, size);
 
@@ -146,58 +243,69 @@ err_get_phy:
 static void set_vbif_params(struct msm_jpeg_device *pgmn_dev,
 	 void *jpeg_vbif_base)
 {
-	writel_relaxed(0x1,
+	msm_camera_io_w(0x1,
 		jpeg_vbif_base + JPEG_VBIF_CLKON);
 
 	if (pgmn_dev->hw_version != JPEG_8994) {
-		writel_relaxed(0x10101010,
+		msm_camera_io_w(0x10101010,
 			jpeg_vbif_base + JPEG_VBIF_IN_RD_LIM_CONF0);
-		writel_relaxed(0x10101010,
+		msm_camera_io_w(0x10101010,
 			jpeg_vbif_base + JPEG_VBIF_IN_RD_LIM_CONF1);
-		writel_relaxed(0x10101010,
+		msm_camera_io_w(0x10101010,
 			jpeg_vbif_base + JPEG_VBIF_IN_RD_LIM_CONF2);
-		writel_relaxed(0x10101010,
+		msm_camera_io_w(0x10101010,
 			jpeg_vbif_base + JPEG_VBIF_IN_WR_LIM_CONF0);
-		writel_relaxed(0x10101010,
+		msm_camera_io_w(0x10101010,
 			jpeg_vbif_base + JPEG_VBIF_IN_WR_LIM_CONF1);
-		writel_relaxed(0x10101010,
+		msm_camera_io_w(0x10101010,
 			jpeg_vbif_base + JPEG_VBIF_IN_WR_LIM_CONF2);
-		writel_relaxed(0x00001010,
+		msm_camera_io_w(0x00001010,
 			jpeg_vbif_base + JPEG_VBIF_OUT_RD_LIM_CONF0);
-		writel_relaxed(0x00000110,
+		msm_camera_io_w(0x00000110,
 			jpeg_vbif_base + JPEG_VBIF_OUT_WR_LIM_CONF0);
-		writel_relaxed(0x00000707,
+		msm_camera_io_w(0x00000707,
 			jpeg_vbif_base + JPEG_VBIF_DDR_OUT_MAX_BURST);
-		writel_relaxed(0x00000FFF,
+		msm_camera_io_w(0x00000FFF,
 			jpeg_vbif_base + JPEG_VBIF_OUT_AXI_AOOO_EN);
-		writel_relaxed(0x0FFF0FFF,
+		msm_camera_io_w(0x0FFF0FFF,
 			jpeg_vbif_base + JPEG_VBIF_OUT_AXI_AOOO);
-		writel_relaxed(0x2222,
+		msm_camera_io_w(0x2222,
 			jpeg_vbif_base + JPEG_VBIF_OUT_AXI_AMEMTYPE_CONF1);
 	}
 
-	writel_relaxed(0x7,
+	msm_camera_io_w(0x7,
 		jpeg_vbif_base + JPEG_VBIF_OCMEM_OUT_MAX_BURST);
-	writel_relaxed(0x00000030,
+	msm_camera_io_w(0x00000030,
 		jpeg_vbif_base + JPEG_VBIF_ARB_CTL);
 
 	/*FE and WE QOS configuration need to be set when
 	QOS RR arbitration is enabled*/
 	if (pgmn_dev->hw_version != JPEG_8974_V1)
-		writel_relaxed(0x00000003,
+		msm_camera_io_w(0x00000003,
 				jpeg_vbif_base + JPEG_VBIF_ROUND_ROBIN_QOS_ARB);
 	else
-		writel_relaxed(0x00000001,
+		msm_camera_io_w(0x00000001,
 				jpeg_vbif_base + JPEG_VBIF_ROUND_ROBIN_QOS_ARB);
 
-	writel_relaxed(0x22222222,
+	msm_camera_io_w(0x22222222,
 		jpeg_vbif_base + JPEG_VBIF_OUT_AXI_AMEMTYPE_CONF0);
 
 }
 
+/*
+ * msm_jpeg_set_init_dt_parms() - get device tree config and write to registers.
+ * @pgmn_dev: Pointer to jpeg device.
+ * @dt_prop_name: Device tree property name.
+ * @base: Base address.
+ *
+ * This function reads register offsets and values from dtsi based on
+ * device tree property name and writes to jpeg registers.
+ *
+ * Return: 0 on success and negative error on failure.
+ */
 static int32_t msm_jpeg_set_init_dt_parms(struct msm_jpeg_device *pgmn_dev,
-				const char *dt_prop_name,
-				void *base)
+	const char *dt_prop_name,
+	void *base)
 {
 	struct device_node *of_node;
 	int32_t i = 0 , rc = 0;
@@ -209,7 +317,7 @@ static int32_t msm_jpeg_set_init_dt_parms(struct msm_jpeg_device *pgmn_dev,
 
 	if (!of_get_property(of_node, dt_prop_name,
 				&dt_count)) {
-		JPEG_PR_ERR("%s: Error property does not exist\n",
+		JPEG_DBG("%s: Error property does not exist\n",
 				__func__);
 		return -ENOENT;
 	}
@@ -220,7 +328,7 @@ static int32_t msm_jpeg_set_init_dt_parms(struct msm_jpeg_device *pgmn_dev,
 	}
 	dt_count /= 4;
 	if (dt_count != 0) {
-		dt_reg_settings = kzalloc(sizeof(uint32_t) * dt_count,
+		dt_reg_settings = kcalloc(dt_count, sizeof(uint32_t),
 			GFP_KERNEL);
 		if (!dt_reg_settings) {
 			JPEG_PR_ERR("%s:%d No memory\n",
@@ -242,7 +350,7 @@ static int32_t msm_jpeg_set_init_dt_parms(struct msm_jpeg_device *pgmn_dev,
 					__func__, __LINE__,
 					base + dt_reg_settings[i],
 					dt_reg_settings[i + 1]);
-			writel_relaxed(dt_reg_settings[i + 1],
+			msm_camera_io_w(dt_reg_settings[i + 1],
 					base + dt_reg_settings[i]);
 		}
 		kfree(dt_reg_settings);
@@ -285,7 +393,6 @@ static struct msm_bus_scale_pdata msm_jpeg_bus_client_pdata = {
 	.name = "msm_jpeg",
 };
 
-#ifdef CONFIG_MSM_IOMMU
 static int msm_jpeg_attach_iommu(struct msm_jpeg_device *pgmn_dev)
 {
 	int rc;
@@ -306,16 +413,6 @@ static int msm_jpeg_detach_iommu(struct msm_jpeg_device *pgmn_dev)
 	cam_smmu_ops(pgmn_dev->iommu_hdl, CAM_SMMU_DETACH);
 	return 0;
 }
-#else
-static int msm_jpeg_attach_iommu(struct msm_jpeg_device *pgmn_dev)
-{
-	return 0;
-}
-static int msm_jpeg_detach_iommu(struct msm_jpeg_device *pgmn_dev)
-{
-	return 0;
-}
-#endif
 
 
 
@@ -323,7 +420,7 @@ int msm_jpeg_platform_init(struct platform_device *pdev,
 	struct resource **mem,
 	void **base,
 	int *irq,
-	irqreturn_t (*handler) (int, void *),
+	irqreturn_t (*handler)(int, void *),
 	void *context)
 {
 	int rc = -1;
@@ -378,12 +475,20 @@ int msm_jpeg_platform_init(struct platform_device *pdev,
 		goto fail_remap;
 	}
 
-	pgmn_dev->jpeg_fs = regulator_get(&pgmn_dev->pdev->dev, "vdd");
-	rc = regulator_enable(pgmn_dev->jpeg_fs);
-	if (rc) {
+	rc = msm_jpeg_get_regulator_info(pgmn_dev, pgmn_dev->pdev);
+	if (rc < 0) {
 		JPEG_PR_ERR("%s:%d]jpeg regulator get failed\n",
 				__func__, __LINE__);
 		goto fail_fs;
+	}
+
+	rc = msm_jpeg_regulator_enable(&pgmn_dev->pdev->dev,
+		pgmn_dev->regulator_names, pgmn_dev->jpeg_fs,
+		pgmn_dev->num_regulator, 1);
+	if (rc < 0) {
+		JPEG_PR_ERR("%s:%d] jpeg regulator enable failed rc = %d\n",
+				 __func__, __LINE__, rc);
+	goto fail_fs;
 	}
 
 	if (msm_jpeg_get_clk_info(pgmn_dev, pgmn_dev->pdev) < 0) {
@@ -399,7 +504,7 @@ int msm_jpeg_platform_init(struct platform_device *pdev,
 		goto fail_clk;
 	}
 
-	pgmn_dev->hw_version = readl_relaxed(jpeg_base +
+	pgmn_dev->hw_version = msm_camera_io_r(jpeg_base +
 		JPEG_HW_VERSION);
 	JPEG_DBG_HIGH("%s:%d] jpeg HW version 0x%x", __func__, __LINE__,
 		pgmn_dev->hw_version);
@@ -417,23 +522,14 @@ int msm_jpeg_platform_init(struct platform_device *pdev,
 	if (rc < 0)
 		goto fail_iommu;
 
-	rc = msm_jpeg_set_init_dt_parms(pgmn_dev, "vbif-reg-settings",
-					pgmn_dev->jpeg_vbif);
+	rc = msm_jpeg_set_init_dt_parms(pgmn_dev, "qcom,vbif-reg-settings",
+		pgmn_dev->jpeg_vbif);
 	if (rc == -ENOENT) {
-		JPEG_DBG("%s: No vbif-reg-settings property\n", __func__);
+		JPEG_DBG("%s: No qcom,vbif-reg-settings property\n", __func__);
 		set_vbif_params(pgmn_dev, pgmn_dev->jpeg_vbif);
 	} else if (rc < 0) {
 		JPEG_PR_ERR("%s: vbif params set fail\n", __func__);
-		goto fail_vbif;
-	}
-
-	rc = msm_jpeg_set_init_dt_parms(pgmn_dev, "qos-reg-settings",
-					jpeg_base);
-	if (rc == -ENOENT) {
-		JPEG_DBG("%s: No qos-reg-settings property\n", __func__);
-	} else if (rc < 0) {
-		JPEG_PR_ERR("%s: qos params set fail\n", __func__);
-		goto fail_qos;
+		goto fail_set_vbif;
 	}
 
 	rc = request_irq(jpeg_irq, handler, IRQF_TRIGGER_RISING,
@@ -448,26 +544,24 @@ int msm_jpeg_platform_init(struct platform_device *pdev,
 	*base = jpeg_base;
 	*irq  = jpeg_irq;
 
-	pgmn_dev->jpeg_client = msm_ion_client_create(dev_name(&pdev->dev));
-	JPEG_DBG("%s:%d] success\n", __func__, __LINE__);
-
 	pgmn_dev->state = MSM_JPEG_INIT;
 	return rc;
 
 fail_request_irq:
+fail_set_vbif:
 	msm_jpeg_detach_iommu(pgmn_dev);
 
 fail_iommu:
 	iounmap(pgmn_dev->jpeg_vbif);
 
-fail_qos:
 fail_vbif:
 	msm_cam_clk_enable(&pgmn_dev->pdev->dev, pgmn_dev->jpeg_clk_info,
 	pgmn_dev->jpeg_clk, pgmn_dev->num_clk, 0);
 
 fail_clk:
-	regulator_disable(pgmn_dev->jpeg_fs);
-	regulator_put(pgmn_dev->jpeg_fs);
+	msm_jpeg_regulator_enable(&pgmn_dev->pdev->dev,
+	pgmn_dev->regulator_names, pgmn_dev->jpeg_fs,
+	pgmn_dev->num_regulator, 0);
 
 fail_fs:
 	iounmap(jpeg_base);
@@ -504,21 +598,49 @@ int msm_jpeg_platform_release(struct resource *mem, void *base, int irq,
 	pgmn_dev->jpeg_clk, pgmn_dev->num_clk, 0);
 	JPEG_DBG("%s:%d] clock disbale done", __func__, __LINE__);
 
-	if (pgmn_dev->jpeg_fs) {
-		result = regulator_disable(pgmn_dev->jpeg_fs);
-		if (!result)
-			regulator_put(pgmn_dev->jpeg_fs);
-		else
-			JPEG_PR_ERR("%s:%d] regulator disable failed %d",
-				__func__, __LINE__, result);
-		pgmn_dev->jpeg_fs = NULL;
-	}
+	msm_jpeg_regulator_enable(&pgmn_dev->pdev->dev,
+	pgmn_dev->regulator_names, pgmn_dev->jpeg_fs,
+	pgmn_dev->num_regulator, 0);
+	JPEG_DBG("%s:%d] regulator disable done", __func__, __LINE__);
+
 	iounmap(pgmn_dev->jpeg_vbif);
 	iounmap(base);
 	release_mem_region(mem->start, resource_size(mem));
-	ion_client_destroy(pgmn_dev->jpeg_client);
 	pgmn_dev->state = MSM_JPEG_IDLE;
 	JPEG_DBG("%s:%d] success\n", __func__, __LINE__);
 	return result;
+}
+
+/*
+ * msm_jpeg_platform_set_dt_config() - set jpeg device tree configuration.
+ * @pgmn_dev: Pointer to jpeg device.
+ *
+ * This function holds an array of device tree property names and calls
+ * msm_jpeg_set_init_dt_parms() for each property.
+ *
+ * Return: 0 on success and negative error on failure.
+ */
+int msm_jpeg_platform_set_dt_config(struct msm_jpeg_device *pgmn_dev)
+{
+	int rc = 0;
+	uint8_t dt_prop_cnt = JPEG_DT_PROP_CNT;
+	char *dt_prop_name[JPEG_DT_PROP_CNT] = {"qcom,qos-reg-settings",
+		"qcom,prefetch-reg-settings"};
+
+	while (dt_prop_cnt) {
+		dt_prop_cnt--;
+		rc = msm_jpeg_set_init_dt_parms(pgmn_dev,
+			dt_prop_name[dt_prop_cnt],
+			pgmn_dev->base);
+		if (rc == -ENOENT) {
+			JPEG_DBG("%s: No %s property\n", __func__,
+				dt_prop_name[dt_prop_cnt]);
+		} else if (rc < 0) {
+			JPEG_PR_ERR("%s: %s params set fail\n", __func__,
+				dt_prop_name[dt_prop_cnt]);
+			return rc;
+		}
+	}
+	return rc;
 }
 

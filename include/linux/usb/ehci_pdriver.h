@@ -19,6 +19,9 @@
 #ifndef __USB_CORE_EHCI_PDRIVER_H
 #define __USB_CORE_EHCI_PDRIVER_H
 
+struct platform_device;
+struct usb_hcd;
+
 /**
  * struct usb_ehci_pdata - platform_data for generic ehci driver
  *
@@ -42,6 +45,7 @@ struct usb_ehci_pdata {
 	unsigned	big_endian_desc:1;
 	unsigned	big_endian_mmio:1;
 	unsigned	no_io_watchdog:1;
+	unsigned        pool_64_bit_align:1;
 
 	/* Turn on all power and clocks */
 	int (*power_on)(struct platform_device *pdev);
@@ -50,6 +54,7 @@ struct usb_ehci_pdata {
 	/* Turn on only VBUS suspend power and hotplug detection,
 	 * turn off everything else */
 	void (*power_suspend)(struct platform_device *pdev);
+	int (*pre_setup)(struct usb_hcd *hcd);
 };
 
 #endif /* __USB_CORE_EHCI_PDRIVER_H */

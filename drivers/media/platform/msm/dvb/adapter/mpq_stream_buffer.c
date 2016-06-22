@@ -390,9 +390,9 @@ int mpq_streambuffer_data_write_deposit(
 		wake_up_all(&sbuff->raw_data.queue);
 	} else {
 		/* Linear buffer group */
-		struct mpq_streambuffer_buffer_desc *desc;
-		desc = (struct mpq_streambuffer_buffer_desc *)
-				&sbuff->raw_data.data[sbuff->raw_data.pwrite];
+		struct mpq_streambuffer_buffer_desc *desc =
+			(struct mpq_streambuffer_buffer_desc *)
+			&sbuff->raw_data.data[sbuff->raw_data.pwrite];
 
 		if ((sbuff->pending_buffers_count == sbuff->buffers_num) ||
 			 ((desc->size - desc->write_ptr) < len)) {
@@ -697,6 +697,7 @@ ssize_t mpq_streambuffer_data_avail(
 
 	if (MPQ_STREAMBUFFER_BUFFER_MODE_RING == sbuff->mode) {
 		ssize_t avail = dvb_ringbuffer_avail(&sbuff->raw_data);
+
 		spin_unlock(&sbuff->raw_data.lock);
 		return avail;
 	}

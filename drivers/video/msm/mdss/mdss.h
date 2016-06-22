@@ -21,16 +21,21 @@
 #include <linux/workqueue.h>
 #include <linux/irqreturn.h>
 #include <linux/mdss_io_util.h>
-#include <linux/msm_iommu_domains.h>
+
+#include <linux/msm-bus.h>
+#include <linux/file.h>
+#include <linux/dma-direction.h>
 
 #include "mdss_panel.h"
 
 #define MAX_DRV_SUP_MMB_BLKS	44
 #define MAX_DRV_SUP_PIPES 10
+#define MAX_CLIENT_NAME_LEN 20
 
 #define MDSS_PINCTRL_STATE_DEFAULT "mdss_default"
 #define MDSS_PINCTRL_STATE_SLEEP  "mdss_sleep"
 
+#if defined(CONFIG_LGE_MIPI_H1_INCELL_QHD_CMD_PANEL)
 enum mdss_mdp_clk_type {
 	MDSS_CLK_AHB,
 	MDSS_CLK_AXI,
@@ -38,24 +43,33 @@ enum mdss_mdp_clk_type {
 	MDSS_CLK_MDP_CORE,
 	MDSS_CLK_MDP_LUT,
 	MDSS_CLK_MDP_VSYNC,
-	MDSS_CLK_MDP_TBU,
-	MDSS_CLK_MDP_TBU_RT,
 	MDSS_MAX_CLK
 };
+#else
+enum mdss_mdp_clk_type {
+	MDSS_CLK_AHB,
+	MDSS_CLK_AXI,
+	MDSS_CLK_MDP_CORE,
+	MDSS_CLK_MDP_LUT,
+	MDSS_CLK_MDP_VSYNC,
+	MDSS_MAX_CLK
+};
+#endif
 
 enum mdss_iommu_domain_type {
-	MDSS_IOMMU_DOMAIN_SECURE,
 	MDSS_IOMMU_DOMAIN_UNSECURE,
+	MDSS_IOMMU_DOMAIN_ROT_UNSECURE,
+	MDSS_IOMMU_DOMAIN_SECURE,
+	MDSS_IOMMU_DOMAIN_ROT_SECURE,
 	MDSS_IOMMU_MAX_DOMAIN
 };
 
-struct mdss_iommu_map_type {
-	char *client_name;
-	char *ctx_name;
-	struct device *ctx;
-	struct msm_iova_partition partitions[1];
-	int npartitions;
-	int domain_idx;
+enum mdss_bus_vote_type {
+	VOTE_INDEX_DISABLE,
+	VOTE_INDEX_19_MHZ,
+	VOTE_INDEX_40_MHZ,
+	VOTE_INDEX_80_MHZ,
+	VOTE_INDEX_MAX,
 };
 
 struct mdss_hw_settings {
@@ -71,11 +85,6 @@ struct mdss_max_bw_settings {
 struct mdss_debug_inf {
 	void *debug_data;
 	void (*debug_enable_clock)(int on);
-};
-
-struct mdss_fudge_factor {
-	u32 numer;
-	u32 denom;
 };
 
 struct mdss_perf_tune {
@@ -96,6 +105,14 @@ struct mdss_intr {
 	spinlock_t lock;
 };
 
+struct simplified_prefill_factors {
+	u32 fmt_mt_nv12_factor;
+	u32 fmt_mt_factor;
+	u32 fmt_linear_factor;
+	u32 scale_factor;
+	u32 xtra_ff_factor;
+};
+
 struct mdss_prefill_data {
 	u32 ot_bytes;
 	u32 y_buf_bytes;
@@ -104,6 +121,7 @@ struct mdss_prefill_data {
 	u32 post_scaler_pixels;
 	u32 pp_pixels;
 	u32 fbc_lines;
+	struct simplified_prefill_factors prefill_factors;
 };
 
 struct mdss_mdp_ppb {
@@ -129,21 +147,101 @@ enum mdss_bus_clients {
 	MDSS_MDP_RT,
 	MDSS_DSI_RT,
 	MDSS_MDP_NRT,
-	MDSS_IOMMU_RT,
 	MDSS_MAX_BUS_CLIENTS
+};
+
+struct mdss_pp_block_off {
+	u32 sspp_igc_lut_off;
+	u32 vig_pcc_off;
+	u32 rgb_pcc_off;
+	u32 dma_pcc_off;
+	u32 lm_pgc_off;
+	u32 dspp_gamut_off;
+	u32 dspp_pcc_off;
+	u32 dspp_pgc_off;
 };
 
 enum mdss_hw_quirk {
 	MDSS_QUIRK_BWCPANIC,
+	MDSS_QUIRK_ROTCDP,
 	MDSS_QUIRK_DOWNSCALE_HANG,
-	MDSS_QUIRK_SVS_PLUS_VOTING,
+	MDSS_QUIRK_DSC_RIGHT_ONLY_PU,
+	MDSS_QUIRK_DSC_2SLICE_PU_THRPUT,
 	MDSS_QUIRK_MAX,
+};
+
+enum mdss_hw_capabilities {
+	MDSS_CAPS_YUV_CONFIG,
+	MDSS_CAPS_SCM_RESTORE_NOT_REQUIRED,
+	MDSS_CAPS_3D_MUX_UNDERRUN_RECOVERY_SUPPORTED,
+	MDSS_CAPS_MAX,
+};
+
+enum mdss_qos_settings {
+	MDSS_QOS_PER_PIPE_IB,
+	MDSS_QOS_OVERHEAD_FACTOR,
+	MDSS_QOS_CDP,
+	MDSS_QOS_OTLIM,
+	MDSS_QOS_PER_PIPE_LUT,
+	MDSS_QOS_SIMPLIFIED_PREFILL,
+	MDSS_QOS_VBLANK_PANIC_CTRL,
+	MDSS_QOS_MAX,
+};
+
+struct reg_bus_client {
+	char name[MAX_CLIENT_NAME_LEN];
+	short usecase_ndx;
+	u32 id;
+	struct list_head list;
+};
+
+struct mdss_smmu_client {
+	struct device *dev;
+	struct dma_iommu_mapping *mmu_mapping;
+	struct dss_module_power mp;
+	struct reg_bus_client *reg_bus_clt;
+	bool domain_attached;
+	bool handoff_pending;
+};
+
+struct mdss_data_type;
+
+struct mdss_smmu_ops {
+	int (*smmu_attach)(struct mdss_data_type *mdata);
+	int (*smmu_detach)(struct mdss_data_type *mdata);
+	int (*smmu_get_domain_id)(u32 type);
+	struct dma_buf_attachment  * (*smmu_dma_buf_attach)(
+			struct dma_buf *dma_buf, struct device *devce,
+			int domain);
+	int (*smmu_map_dma_buf)(struct dma_buf *dma_buf,
+			struct sg_table *table, int domain,
+			dma_addr_t *iova, unsigned long *size, int dir);
+	void (*smmu_unmap_dma_buf)(struct sg_table *table, int domain,
+			int dir, struct dma_buf *dma_buf);
+	int (*smmu_dma_alloc_coherent)(struct device *dev, size_t size,
+			dma_addr_t *phys, dma_addr_t *iova, void *cpu_addr,
+			gfp_t gfp, int domain);
+	void (*smmu_dma_free_coherent)(struct device *dev, size_t size,
+			void *cpu_addr, dma_addr_t phys, dma_addr_t iova,
+			int domain);
+	int (*smmu_map)(int domain, phys_addr_t iova, phys_addr_t phys, int
+			gfp_order, int prot);
+	void (*smmu_unmap)(int domain, unsigned long iova, int gfp_order);
+	char * (*smmu_dsi_alloc_buf)(struct device *dev, int size,
+			dma_addr_t *dmap, gfp_t gfp);
+	int (*smmu_dsi_map_buffer)(phys_addr_t phys, unsigned int domain,
+			unsigned long size, dma_addr_t *dma_addr,
+			void *cpu_addr, int dir);
+	void (*smmu_dsi_unmap_buffer)(dma_addr_t dma_addr, int domain,
+			unsigned long size, int dir);
+	void (*smmu_deinit)(struct mdss_data_type *mdata);
 };
 
 struct mdss_data_type {
 	u32 mdp_rev;
 	struct clk *mdp_clk[MDSS_MAX_CLK];
 	struct regulator *fs;
+	struct regulator *venus;
 	struct regulator *vdd_cx;
 	bool batfet_required;
 	struct regulator *batfet;
@@ -157,13 +255,8 @@ struct mdss_data_type {
 	struct dss_io_data vbif_nrt_io;
 	char __iomem *mdp_base;
 
-	/* Used to store if vote to enable svs plus has been sent or not */
-	u32 svs_plus_vote;
-	/* Min rate from where SVS plus vote is needed */
-	u32 svs_plus_min;
-	/* Max rate till where SVS plus vote is needed */
-	u32 svs_plus_max;
-
+	struct mdss_smmu_client mdss_smmu[MDSS_IOMMU_MAX_DOMAIN];
+	struct mdss_smmu_ops smmu_ops;
 	struct mutex reg_lock;
 
 	/* bitmap to track pipes that have BWC enabled */
@@ -172,11 +265,22 @@ struct mdss_data_type {
 	DECLARE_BITMAP(mdss_quirk_map, MDSS_QUIRK_MAX);
 	/* bitmap to track total mmbs in use */
 	DECLARE_BITMAP(mmb_alloc_map, MAX_DRV_SUP_MMB_BLKS);
+	/* bitmap to track qos applicable settings */
+	DECLARE_BITMAP(mdss_qos_map, MDSS_QOS_MAX);
+	/* bitmap to track hw capabilities/features */
+	DECLARE_BITMAP(mdss_caps_map, MDSS_CAPS_MAX);
 
 	u32 has_bwc;
+	/* values used when HW has a common panic/robust LUT */
 	u32 default_panic_lut0;
 	u32 default_panic_lut1;
 	u32 default_robust_lut;
+
+	/* values used when HW has panic/robust LUTs per pipe */
+	u32 default_panic_lut_per_pipe_linear;
+	u32 default_panic_lut_per_pipe_tile;
+	u32 default_robust_lut_per_pipe_linear;
+	u32 default_robust_lut_per_pipe_tile;
 
 	u32 has_decimation;
 	bool has_fixed_qos_arbiter_enabled;
@@ -188,11 +292,10 @@ struct mdss_data_type {
 	u8 has_non_scalar_rgb;
 	bool has_src_split;
 	bool idle_pc_enabled;
-	bool needs_iommu_bw_vote;
 	bool has_pingpong_split;
 	bool has_pixel_ram;
 	bool needs_hist_vote;
-	bool has_10_bit_pa;
+	bool has_ubwc;
 
 	u32 default_ot_rd_limit;
 	u32 default_ot_wr_limit;
@@ -206,7 +309,6 @@ struct mdss_data_type {
 	u8 vsync_ena;
 
 	struct notifier_block gdsc_cb;
-	struct notifier_block tlb_timeout_cb;
 
 	u32 res_init;
 
@@ -214,14 +316,28 @@ struct mdss_data_type {
 	u32 smp_mb_cnt;
 	u32 smp_mb_size;
 	u32 smp_mb_per_pipe;
+	u32 pixel_ram_size;
 
 	u32 rot_block_size;
+
+	/* data bus (AXI) */
+	u32 bus_hdl;
+	u32 bus_ref_cnt;
+	struct mutex bus_lock;
+
+	/* register bus (AHB) */
+	u32 reg_bus_hdl;
+	u32 reg_bus_usecase_ndx;
+	struct list_head reg_bus_clist;
+	struct mutex reg_bus_lock;
+	struct reg_bus_client *reg_bus_clt;
+	struct reg_bus_client *pp_reg_bus_clt;
 
 	u32 axi_port_cnt;
 	u32 nrt_axi_port_cnt;
 	u32 bus_channels;
 	u32 curr_bw_uc_idx;
-	u32 bus_hdl;
+	u32 ao_bw_uc_idx; /* active only idx */
 	struct msm_bus_scale_pdata *bus_scale_table;
 	u32 max_bw_low;
 	u32 max_bw_high;
@@ -229,24 +345,24 @@ struct mdss_data_type {
 	u32 *vbif_rt_qos;
 	u32 *vbif_nrt_qos;
 	u32 npriority_lvl;
-	u32 bus_bw_cnt;
-	struct mutex bus_bw_lock;
 
-	u32 reg_bus_hdl;
-
-	struct mdss_fudge_factor ab_factor;
-	struct mdss_fudge_factor ib_factor;
-	struct mdss_fudge_factor ib_factor_overlap;
-	struct mdss_fudge_factor ib_factor_cmd;
-	struct mdss_fudge_factor clk_factor;
+	struct mult_factor ab_factor;
+	struct mult_factor ib_factor;
+	struct mult_factor ib_factor_overlap;
+	struct mult_factor clk_factor;
+	struct mult_factor per_pipe_ib_factor;
+	bool apply_post_scale_bytes;
+	bool hflip_buffer_reused;
 
 	u32 disable_prefill;
 	u32 *clock_levels;
 	u32 nclk_lvl;
 
+	u32 enable_gate;
 	u32 enable_bw_release;
 	u32 enable_rotator_bw_release;
 	u32 serialize_wait4pp;
+	u32 lines_before_active;
 
 	struct mdss_hw_settings *hw_settings;
 
@@ -272,9 +388,14 @@ struct mdss_data_type {
 	u32 max_mixer_width;
 	u32 max_pipe_width;
 
+	struct mdss_mdp_writeback *wb;
+	u32 nwb;
+	u32 *wb_offsets;
+	u32 nwb_offsets;
+	struct mutex wb_lock;
+
 	struct mdss_mdp_ctl *ctl_off;
 	u32 nctl;
-	u32 nwb;
 	u32 ndspp;
 
 	struct mdss_mdp_dp_intf *dp_off;
@@ -287,6 +408,7 @@ struct mdss_data_type {
 	u32 nad_cfgs;
 	u32 nmax_concurrent_ad_hw;
 	struct workqueue_struct *ad_calc_wq;
+	u32 ad_debugen;
 
 	struct mdss_intr hist_intr;
 
@@ -296,6 +418,10 @@ struct mdss_data_type {
 
 	struct debug_bus *dbg_bus;
 	u32 dbg_bus_size;
+	struct vbif_debug_bus *vbif_dbg_bus;
+	u32 vbif_dbg_bus_size;
+	struct vbif_debug_bus *nrt_vbif_dbg_bus;
+	u32 nrt_vbif_dbg_bus_size;
 	struct mdss_debug_inf debug_inf;
 	bool mixer_switched;
 	struct mdss_panel_cfg pan_cfg;
@@ -305,8 +431,6 @@ struct mdss_data_type {
 
 	int handoff_pending;
 	bool idle_pc;
-	bool allow_cx_vddmin;
-	bool vdd_cx_en;
 	struct mdss_perf_tune perf_tune;
 	bool traffic_shaper_en;
 	int iommu_ref_cnt;
@@ -317,6 +441,14 @@ struct mdss_data_type {
 
 	u64 ab[MDSS_MAX_BUS_CLIENTS];
 	u64 ib[MDSS_MAX_BUS_CLIENTS];
+	struct mdss_pp_block_off pp_block_off;
+
+	struct mdss_mdp_cdm *cdm_off;
+	u32 ncdm;
+	struct mutex cdm_lock;
+
+	struct mdss_mdp_dsc *dsc_off;
+	u32 ndsc;
 
 	struct mdss_max_bw_settings *max_bw_settings;
 	u32 bw_mode_bitmap;
@@ -329,9 +461,16 @@ struct mdss_data_type {
 	u32 bcolor0;
 	u32 bcolor1;
 	u32 bcolor2;
-	struct mdss_mdp_dsc *dsc_off;
-	u32 ndsc;
-
+#ifdef CONFIG_LGE_VSYNC_SKIP
+	char enable_skip_vsync;
+	ulong skip_value;
+	ulong weight;
+	ulong bucket;
+	ulong skip_count;
+	int skip_ratio;
+	bool skip_first;
+	unsigned int interval_min_fps;
+#endif
 };
 extern struct mdss_data_type *mdss_res;
 
@@ -353,6 +492,9 @@ struct irq_info *mdss_intr_line(void);
 void mdss_bus_bandwidth_ctrl(int enable);
 int mdss_iommu_ctrl(int enable);
 int mdss_bus_scale_set_quota(int client, u64 ab_quota, u64 ib_quota);
+int mdss_update_reg_bus_vote(struct reg_bus_client *, u32 usecase_ndx);
+struct reg_bus_client *mdss_reg_bus_vote_client_create(char *client_name);
+void mdss_reg_bus_vote_client_destroy(struct reg_bus_client *);
 
 struct mdss_util_intf {
 	bool mdp_probe_done;
@@ -373,25 +515,10 @@ struct mdss_util_intf {
 };
 
 struct mdss_util_intf *mdss_get_util_intf(void);
-
-static inline struct ion_client *mdss_get_ionclient(void)
-{
-	if (!mdss_res)
-		return NULL;
-	return mdss_res->iclient;
-}
-
-static inline int mdss_get_iommu_domain(u32 type)
-{
-	if (type >= MDSS_IOMMU_MAX_DOMAIN)
-		return -EINVAL;
-
-	if (!mdss_res)
-		return -ENODEV;
-
-	return mdss_res->iommu_map[type].domain_idx;
-}
-
+#define QCT_IRQ_NOC_PATCH
+#ifdef QCT_IRQ_NOC_PATCH
+bool mdss_get_irq_enable_state(struct mdss_hw *hw);
+#endif
 static inline int mdss_get_sd_client_cnt(void)
 {
 	if (!mdss_res)

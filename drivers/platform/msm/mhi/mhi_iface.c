@@ -19,6 +19,7 @@
 #include <linux/delay.h>
 #include <linux/debugfs.h>
 #include <linux/pm_runtime.h>
+#include <linux/interrupt.h>
 
 #define CREATE_TRACE_POINTS
 #include "mhi_trace.h"
@@ -39,7 +40,7 @@ void *mhi_ipc_log;
 static DEFINE_PCI_DEVICE_TABLE(mhi_pcie_device_id) = {
 	{ MHI_PCIE_VENDOR_ID, MHI_PCIE_DEVICE_ID_9x35,
 		PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
-	{ MHI_PCIE_VENDOR_ID, MHI_PCIE_DEVICE_ID_9640,
+	{ MHI_PCIE_VENDOR_ID, MHI_PCIE_DEVICE_ID_ZIRC,
 		PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
 	{ 0, },
 };
@@ -111,7 +112,7 @@ int mhi_ctxt_init(struct mhi_pcie_dev_info *mhi_pcie_dev)
 	}
 
 	device_disable_async_suspend(&pcie_device->dev);
-	ret_val = pci_enable_msi_block(pcie_device, msi_number);
+	ret_val = pci_enable_msi_range(pcie_device, 0, msi_number);
 	if (0 != ret_val) {
 		mhi_log(MHI_MSG_ERROR,
 			"Failed to enable MSIs for pcie dev ret_val %d.\n",
@@ -317,7 +318,7 @@ DECLARE_PCI_FIXUP_HEADER(MHI_PCIE_VENDOR_ID,
 		mhi_msm_fixup);
 
 DECLARE_PCI_FIXUP_HEADER(MHI_PCIE_VENDOR_ID,
-		MHI_PCIE_DEVICE_ID_9640,
+		MHI_PCIE_DEVICE_ID_ZIRC,
 		mhi_msm_fixup);
 
 

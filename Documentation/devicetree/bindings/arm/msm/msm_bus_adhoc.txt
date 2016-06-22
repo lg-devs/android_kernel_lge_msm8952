@@ -135,7 +135,7 @@ coresight-child-list	List of phandles pointing to the children of this
 			component.
 coresight-child-ports	List of input port numbers of the children.
 
-The following sub-nodes are optional parameters:
+The following sub-nodes are optional paramters:
 
 qcom,node-qos-clks:	Optional node listing all the clocks and regulators required for programming of
 			QoS registers. Usually these are associated with fabric nodes.

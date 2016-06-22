@@ -91,6 +91,9 @@
 #define SYNA_F11_MAX		4096
 #define SYNA_F12_MAX		65536
 
+#define SYNA_S332U_PACKAGE_ID		332
+#define SYNA_S332U_PACKAGE_ID_REV		85
+
 static int synaptics_rmi4_f12_set_enables(struct synaptics_rmi4_data *rmi4_data,
 		unsigned short ctrl28);
 
@@ -496,6 +499,7 @@ static irqreturn_t synaptics_filter_interrupt(
 {
 	if (atomic_read(&rmi4_data->st_enabled)) {
 		if (atomic_cmpxchg(&rmi4_data->st_pending_irqs, 0, 1) == 0) {
+			reinit_completion(&rmi4_data->st_irq_processed);
 			synaptics_secure_touch_notify(rmi4_data);
 			wait_for_completion_interruptible(
 				&rmi4_data->st_irq_processed);
@@ -603,9 +607,8 @@ static ssize_t synaptics_secure_touch_enable_store(struct device *dev,
 			err = -EIO;
 			break;
 		}
-
-		INIT_COMPLETION(rmi4_data->st_powerdown);
-		INIT_COMPLETION(rmi4_data->st_irq_processed);
+		reinit_completion(&rmi4_data->st_powerdown);
+		reinit_completion(&rmi4_data->st_irq_processed);
 		atomic_set(&rmi4_data->st_enabled, 1);
 		atomic_set(&rmi4_data->st_pending_irqs,  0);
 		break;
@@ -1037,21 +1040,25 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 
 		/* Start checking from the highest bit */
 		temp = extra_data->data15_size - 1; /* Highest byte */
-		finger = (fingers_to_process - 1) % 8; /* Highest bit */
-		do {
-			if (extra_data->data15_data[temp] & (1 << finger))
-				break;
+		if ((temp >= 0) && (fingers_to_process > 0) &&
+		    (temp < ((F12_FINGERS_TO_SUPPORT + 7) / 8))) {
+			finger = (fingers_to_process - 1) % 8; /* Highest bit */
+			do {
+				if (extra_data->data15_data[temp]
+					& (1 << finger))
+					break;
 
-			if (finger) {
-				finger--;
-			} else {
-				temp--; /* Move to the next lower byte */
-				finger = 7;
-			}
+				if (finger) {
+					finger--;
+				} else {
+					/* Move to the next lower byte */
+					temp--;
+					finger = 7;
+				}
 
-			fingers_to_process--;
-		} while (fingers_to_process);
-
+				fingers_to_process--;
+			} while (fingers_to_process && (temp >= 0));
+		}
 		dev_dbg(rmi4_data->pdev->dev.parent,
 			"%s: Number of fingers to process = %d\n",
 			__func__, fingers_to_process);
@@ -3700,9 +3707,10 @@ err_create_debugfs_file:
 	debugfs_remove_recursive(rmi4_data->dir);
 err_create_debugfs_dir:
 	cancel_delayed_work_sync(&exp_data.work);
-	flush_workqueue(exp_data.workqueue);
-	destroy_workqueue(exp_data.workqueue);
-
+	if (exp_data.workqueue != NULL) {
+		flush_workqueue(exp_data.workqueue);
+		destroy_workqueue(exp_data.workqueue);
+	}
 	synaptics_rmi4_irq_enable(rmi4_data, false);
 	free_irq(rmi4_data->irq, rmi4_data);
 
@@ -4183,8 +4191,15 @@ static int synaptics_rmi4_resume(struct device *dev)
 	int retval;
 	struct synaptics_rmi4_exp_fhandler *exp_fhandler;
 	struct synaptics_rmi4_data *rmi4_data = dev_get_drvdata(dev);
+	struct synaptics_rmi4_device_info *rmi;
 	const struct synaptics_dsx_board_data *bdata =
 			rmi4_data->hw_if->board_data;
+
+	rmi = &(rmi4_data->rmi4_mod_info);
+	if (rmi->package_id == SYNA_S332U_PACKAGE_ID &&
+			rmi->package_id_rev == SYNA_S332U_PACKAGE_ID_REV) {
+		synaptics_rmi4_reset_device(rmi4_data);
+	}
 
 	if (rmi4_data->staying_awake)
 		return 0;

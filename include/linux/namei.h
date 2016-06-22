@@ -16,7 +16,7 @@ struct nameidata {
 	struct path	root;
 	struct inode	*inode; /* path.dentry.d_inode */
 	unsigned int	flags;
-	unsigned	seq;
+	unsigned	seq, m_seq;
 	int		last_type;
 	unsigned	depth;
 	char *saved_names[MAX_NESTED_LINKS + 1];
@@ -55,6 +55,7 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 #define LOOKUP_JUMPED		0x1000
 #define LOOKUP_ROOT		0x2000
 #define LOOKUP_EMPTY		0x4000
+#define LOOKUP_CASE_INSENSITIVE 0x8000
 
 extern int user_path_at(int, const char __user *, unsigned, struct path *);
 extern int user_path_at_empty(int, const char __user *, unsigned, struct path *, int *empty);
@@ -70,9 +71,10 @@ extern struct dentry *kern_path_create(int, const char *, struct path *, unsigne
 extern struct dentry *user_path_create(int, const char __user *, struct path *, unsigned int);
 extern void done_path_create(struct path *, struct dentry *);
 extern struct dentry *kern_path_locked(const char *, struct path *);
-extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
-			   const char *, unsigned int, struct path *);
-
+extern int kern_path_mountpoint(int, const char *, struct path *, unsigned int);
+#ifdef CONFIG_SDCARD_FS
+extern int vfs_path_lookup(struct dentry *, struct vfsmount *, const char *, unsigned int, struct path *);
+#endif
 extern struct dentry *lookup_one_len(const char *, struct dentry *, int);
 
 extern int follow_down_one(struct path *);

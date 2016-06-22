@@ -159,7 +159,7 @@
 	};
 
 	rpm_etm0 {
-		compatible = "qcom,coresight-remote-etm";
+		compatible = "qcom,coresight-rpm-etm";
 
 		coresight-id = <7>;
 		coresight-name = "coresight-rpm-etm0";
@@ -167,12 +167,10 @@
 		coresight-outports = <0>;
 		coresight-child-list = <&funnel_in0>;
 		coresight-child-ports = <0>;
-
-		qcom,inst-id = <4>;
 	};
 
 	modem_etm0 {
-		compatible = "qcom,coresight-remote-etm";
+		compatible = "qcom,coresight-modem-etm";
 
 		coresight-id = <8>;
 		coresight-name = "coresight-modem-etm0";
@@ -180,8 +178,6 @@
 		coresight-outports = <0>;
 		coresight-child-list = <&funnel_in0>;
 		coresight-child-ports = <2>;
-
-		qcom,inst-id = <2>;
 	};
 
 	csr: csr@801000 {

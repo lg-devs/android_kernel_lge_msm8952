@@ -17,7 +17,6 @@
 
 #include <linux/io.h>
 #include <linux/of.h>
-#include <linux/async.h>
 #include <linux/blkdev.h>
 #include <crypto/ice.h>
 
@@ -105,7 +104,7 @@ inline int sdhci_msm_ice_init(struct sdhci_host *host)
 	return 0;
 }
 
-void sdhci_msm_ice_cfg_reset(struct sdhci_host *host, u32 slot)
+inline void sdhci_msm_ice_cfg_reset(struct sdhci_host *host, u32 slot)
 {
 }
 

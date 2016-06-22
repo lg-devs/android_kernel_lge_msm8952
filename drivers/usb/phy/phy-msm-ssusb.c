@@ -211,46 +211,6 @@ retry:
 	return readl_relaxed(base + SS_CR_PROTOCOL_DATA_OUT_REG);
 }
 
-/* SSPHY Initialization */
-static int msm_ssphy_init(struct usb_phy *uphy)
-{
-	struct msm_ssphy *phy = container_of(uphy, struct msm_ssphy, phy);
-	u32 val;
-
-	/* Ensure clock is on before accessing QSCRATCH registers */
-	clk_prepare_enable(phy->core_clk);
-
-	/* read initial value */
-	val = readl_relaxed(phy->base + SS_PHY_CTRL_REG);
-
-	/* Use clk reset, if available; otherwise use SS_PHY_RESET bit */
-	if (phy->com_reset_clk) {
-		clk_reset(phy->com_reset_clk, CLK_RESET_ASSERT);
-		clk_reset(phy->reset_clk, CLK_RESET_ASSERT);
-		udelay(10); /* 10us required before de-asserting */
-		clk_reset(phy->com_reset_clk, CLK_RESET_DEASSERT);
-		clk_reset(phy->reset_clk, CLK_RESET_DEASSERT);
-	} else {
-		writel_relaxed(val | SS_PHY_RESET, phy->base + SS_PHY_CTRL_REG);
-		udelay(10); /* 10us required before de-asserting */
-		writel_relaxed(val, phy->base + SS_PHY_CTRL_REG);
-	}
-
-	/* Use ref_clk from pads and set its parameters */
-	val |= REF_USE_PAD;
-	writel_relaxed(val, phy->base + SS_PHY_CTRL_REG);
-	msleep(30);
-
-	/* Ref clock must be stable now, enable ref clock for HS mode */
-	val |= LANE0_PWR_PRESENT | REF_SS_PHY_EN;
-	writel_relaxed(val, phy->base + SS_PHY_CTRL_REG);
-	usleep_range(2000, 2200);
-
-	clk_disable_unprepare(phy->core_clk);
-
-	return 0;
-}
-
 static int msm_ssphy_set_params(struct usb_phy *uphy)
 {
 	struct msm_ssphy *phy = container_of(uphy, struct msm_ssphy, phy);
@@ -315,15 +275,48 @@ static int msm_ssphy_set_params(struct usb_phy *uphy)
 	return 0;
 }
 
-static int msm_ssphy_post_init(struct usb_phy *uphy)
+/* SSPHY Initialization */
+static int msm_ssphy_init(struct usb_phy *uphy)
 {
 	struct msm_ssphy *phy = container_of(uphy, struct msm_ssphy, phy);
 	u32 val;
 
+	/* Ensure clock is on before accessing QSCRATCH registers */
+	clk_prepare_enable(phy->core_clk);
+
 	/* read initial value */
 	val = readl_relaxed(phy->base + SS_PHY_CTRL_REG);
-	val &= ~LANE0_PWR_PRESENT;
+
+	/* Use clk reset, if available; otherwise use SS_PHY_RESET bit */
+	if (phy->com_reset_clk) {
+		clk_reset(phy->com_reset_clk, CLK_RESET_ASSERT);
+		clk_reset(phy->reset_clk, CLK_RESET_ASSERT);
+		udelay(10); /* 10us required before de-asserting */
+		clk_reset(phy->com_reset_clk, CLK_RESET_DEASSERT);
+		clk_reset(phy->reset_clk, CLK_RESET_DEASSERT);
+	} else {
+		writel_relaxed(val | SS_PHY_RESET, phy->base + SS_PHY_CTRL_REG);
+		udelay(10); /* 10us required before de-asserting */
+		writel_relaxed(val, phy->base + SS_PHY_CTRL_REG);
+	}
+
+	/* Use ref_clk from pads and set its parameters */
+	val |= REF_USE_PAD;
 	writel_relaxed(val, phy->base + SS_PHY_CTRL_REG);
+	msleep(30);
+
+	/* Ref clock must be stable now, enable ref clock for HS mode */
+	val |= LANE0_PWR_PRESENT | REF_SS_PHY_EN;
+	writel_relaxed(val, phy->base + SS_PHY_CTRL_REG);
+	usleep_range(2000, 2200);
+
+	/*
+	 * Reinitialize SSPHY parameters as SS_PHY RESET will reset
+	 * the internal registers to default values.
+	 */
+	msm_ssphy_set_params(uphy);
+
+	clk_disable_unprepare(phy->core_clk);
 
 	return 0;
 }
@@ -408,12 +401,6 @@ static int msm_ssphy_set_suspend(struct usb_phy *uphy, int suspend)
 			msm_usb_write_readback(base, SS_PHY_CTRL_REG,
 						SS_PHY_RESET, 0);
 		}
-
-		/*
-		 * Reinitialize SSPHY parameters as SS_PHY RESET will reset
-		 * the internal registers to default values.
-		 */
-		msm_ssphy_set_params(uphy);
 	}
 
 done:
@@ -549,8 +536,6 @@ static int msm_ssphy_probe(struct platform_device *pdev)
 
 	phy->phy.init			= msm_ssphy_init;
 	phy->phy.set_suspend		= msm_ssphy_set_suspend;
-	phy->phy.set_params		= msm_ssphy_set_params;
-	phy->phy.post_init		= msm_ssphy_post_init;
 	phy->phy.notify_connect		= msm_ssphy_notify_connect;
 	phy->phy.notify_disconnect	= msm_ssphy_notify_disconnect;
 	phy->phy.type			= USB_PHY_TYPE_USB3;

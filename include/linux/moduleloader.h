@@ -45,7 +45,8 @@ static inline int apply_relocate(Elf_Shdr *sechdrs,
 				 unsigned int relsec,
 				 struct module *me)
 {
-	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name);
+	printk(KERN_ERR "module %s: REL relocation unsupported\n",
+	       module_name(me));
 	return -ENOEXEC;
 }
 #endif
@@ -67,7 +68,8 @@ static inline int apply_relocate_add(Elf_Shdr *sechdrs,
 				     unsigned int relsec,
 				     struct module *me)
 {
-	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name);
+	printk(KERN_ERR "module %s: REL relocation unsupported\n",
+	       module_name(me));
 	return -ENOEXEC;
 }
 #endif
@@ -79,9 +81,6 @@ int module_finalize(const Elf_Ehdr *hdr,
 
 /* Any cleanup needed when module leaves. */
 void module_arch_cleanup(struct module *mod);
-
-/* Any cleanup before freeing mod->module_init */
-void module_arch_freeing_init(struct module *mod);
 
 #ifdef CONFIG_KASAN
 #include <linux/kasan.h>

@@ -127,14 +127,32 @@ ENTRY(__cpu_suspend_enter)
 ENDPROC(__cpu_suspend_enter)
 	.ltorg
 
+/*
+ * x0 must contain the sctlr value retrieved from restored context
+ */
+ENTRY(cpu_resume_mmu)
+	ldr	x3, =cpu_resume_after_mmu
+	msr	sctlr_el1, x0		// restore sctlr_el1
+	isb
+	br	x3			// global jump to virtual address
+ENDPROC(cpu_resume_mmu)
+cpu_resume_after_mmu:
+	mov	x0, #0			// return zero on success
+	ldp	x19, x20, [sp, #16]
+	ldp	x21, x22, [sp, #32]
+	ldp	x23, x24, [sp, #48]
+	ldp	x25, x26, [sp, #64]
+	ldp	x27, x28, [sp, #80]
+	ldp	x29, lr, [sp], #96
+	ret
+ENDPROC(cpu_resume_after_mmu)
+
 ENTRY(cpu_resume)
 	bl	el2_setup		// if in EL2 drop to EL1 cleanly
 #ifdef CONFIG_SMP
 	mrs	x1, mpidr_el1
-	adrp	x4, mpidr_hash_ptr
-	add	x4, x4, #:lo12:mpidr_hash_ptr
-	ldr	x5, [x4]
-	add	x8, x4, x5		// x8 = struct mpidr_hash phys address
+	adrp	x8, mpidr_hash
+	add x8, x8, #:lo12:mpidr_hash // x8 = struct mpidr_hash phys address
         /* retrieve mpidr_hash members to compute the hash */
 	ldr	x2, [x8, #MPIDR_HASH_MASK]
 	ldp	w3, w4, [x8, #MPIDR_HASH_SHIFTS]
@@ -161,27 +179,3 @@ ENTRY(cpu_resume)
 	bl	cpu_do_resume		// PC relative jump, MMU off
 	b	cpu_resume_mmu		// Resume MMU, never returns
 ENDPROC(cpu_resume)
-
-	.data
-	.align 3
-mpidr_hash_ptr:
-	/*
-	 * offset of mpidr_hash symbol from current location
-	 * used to obtain run-time mpidr_hash address with MMU off
-         */
-	.quad	mpidr_hash - .
-/*
- * physical address of identity mapped page tables
- */
-	.type	sleep_idmap_phys, #object
-ENTRY(sleep_idmap_phys)
-	.quad	0
-/*
- * struct sleep_save_sp {
- *	phys_addr_t *save_ptr_stash;
- *	phys_addr_t save_ptr_stash_phys;
- * };
- */
-	.type	sleep_save_sp, #object
-ENTRY(sleep_save_sp)
-	.space	SLEEP_SAVE_SP_SZ	// struct sleep_save_sp

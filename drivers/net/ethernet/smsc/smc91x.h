@@ -18,8 +18,7 @@
  . GNU General Public License for more details.
  .
  . You should have received a copy of the GNU General Public License
- . along with this program; if not, write to the Free Software
- . Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ . along with this program; if not, see <http://www.gnu.org/licenses/>.
  .
  . Information contained in this file was obtained from the LAN91C111
  . manual from SMC.  To get a copy, if you really want one, you can find
@@ -209,20 +208,6 @@ SMC_outw(u16 val, void __iomem *ioaddr, int reg)
 #define RPC_LSA_DEFAULT		RPC_LED_TX_RX
 #define RPC_LSB_DEFAULT		RPC_LED_100_10
 
-#elif defined(CONFIG_ARCH_MSM)
-
-#define SMC_CAN_USE_8BIT	0
-#define SMC_CAN_USE_16BIT	1
-#define SMC_CAN_USE_32BIT	0
-#define SMC_NOWAIT		1
-
-#define SMC_inw(a, r)		readw((a) + (r))
-#define SMC_outw(v, a, r)	writew(v, (a) + (r))
-#define SMC_insw(a, r, p, l)	readsw((a) + (r), p, l)
-#define SMC_outsw(a, r, p, l)	writesw((a) + (r), p, l)
-
-#define SMC_IRQ_FLAGS		IRQF_TRIGGER_HIGH
-
 #elif defined(CONFIG_MN10300)
 
 /*
@@ -271,7 +256,7 @@ static inline void mcf_outsw(void *a, unsigned char *p, int l)
 #define SMC_insw(a, r, p, l)	mcf_insw(a + r, p, l)
 #define SMC_outsw(a, r, p, l)	mcf_outsw(a + r, p, l)
 
-#define SMC_IRQ_FLAGS		(IRQF_DISABLED)
+#define SMC_IRQ_FLAGS		0
 
 #else
 
@@ -312,6 +297,9 @@ struct smc_local {
 	 */
 	struct sk_buff *pending_tx_skb;
 	struct tasklet_struct tx_task;
+
+	struct gpio_desc *power_gpio;
+	struct gpio_desc *reset_gpio;
 
 	/* version/revision of the SMC91x chip */
 	int	version;
@@ -907,8 +895,8 @@ static const char * chip_ids[ 16 ] =  {
 	({								\
 		int __b = SMC_CURRENT_BANK(lp);			\
 		if (unlikely((__b & ~0xf0) != (0x3300 | bank))) {	\
-			printk( "%s: bank reg screwed (0x%04x)\n",	\
-				CARDNAME, __b );			\
+			pr_err("%s: bank reg screwed (0x%04x)\n",	\
+			       CARDNAME, __b);				\
 			BUG();						\
 		}							\
 		reg<<SMC_IO_SHIFT;					\
@@ -1124,8 +1112,7 @@ static const char * chip_ids[ 16 ] =  {
 			void __iomem *__ioaddr = ioaddr;		\
 			if (__len >= 2 && (unsigned long)__ptr & 2) {	\
 				__len -= 2;				\
-				SMC_outw(*(u16 *)__ptr, ioaddr,		\
-					DATA_REG(lp));		\
+				SMC_outsw(ioaddr, DATA_REG(lp), __ptr, 1); \
 				__ptr += 2;				\
 			}						\
 			if (SMC_CAN_USE_DATACS && lp->datacs)		\
@@ -1133,8 +1120,7 @@ static const char * chip_ids[ 16 ] =  {
 			SMC_outsl(__ioaddr, DATA_REG(lp), __ptr, __len>>2); \
 			if (__len & 2) {				\
 				__ptr += (__len & ~3);			\
-				SMC_outw(*((u16 *)__ptr), ioaddr,	\
-					 DATA_REG(lp));		\
+				SMC_outsw(ioaddr, DATA_REG(lp), __ptr, 1); \
 			}						\
 		} else if (SMC_16BIT(lp))				\
 			SMC_outsw(ioaddr, DATA_REG(lp), p, (l) >> 1);	\

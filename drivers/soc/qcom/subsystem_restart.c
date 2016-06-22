@@ -22,7 +22,6 @@
 #include <linux/io.h>
 #include <linux/kthread.h>
 #include <linux/time.h>
-#include <linux/wakelock.h>
 #include <linux/suspend.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
@@ -41,6 +40,10 @@
 
 #include <asm/current.h>
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <soc/qcom/lge/lge_handle_panic.h>
+#endif
+
 #define DISABLE_SSR 0x9889deed
 /* If set to 0x9889deed, call to subsystem_restart_dev() returns immediately */
 static uint disable_restart_work;
@@ -49,8 +52,9 @@ module_param(disable_restart_work, uint, S_IRUGO | S_IWUSR);
 static int enable_debug;
 module_param(enable_debug, int, S_IRUGO | S_IWUSR);
 
-#define SHUTDOWN_ACK_MAX_LOOPS	50
-#define SHUTDOWN_ACK_DELAY	100
+/* The maximum shutdown timeout is the product of MAX_LOOPS and DELAY_MS. */
+#define SHUTDOWN_ACK_MAX_LOOPS	100
+#define SHUTDOWN_ACK_DELAY_MS	100
 
 /**
  * enum p_subsys_state - state of a subsystem (private)
@@ -224,8 +228,8 @@ static ssize_t restart_level_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct subsys_device *subsys = to_subsys(dev);
-	int i;
 	const char *p;
+	int i, orig_count = count;
 
 	p = memchr(buf, '\n', count);
 	if (p)
@@ -234,9 +238,34 @@ static ssize_t restart_level_store(struct device *dev,
 	for (i = 0; i < ARRAY_SIZE(restart_levels); i++)
 		if (!strncasecmp(buf, restart_levels[i], count)) {
 			subsys->restart_level = i;
-			return count;
+			return orig_count;
 		}
 	return -EPERM;
+}
+
+static ssize_t firmware_name_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", to_subsys(dev)->desc->fw_name);
+}
+
+static ssize_t firmware_name_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct subsys_device *subsys = to_subsys(dev);
+	struct subsys_tracking *track = subsys_get_track(subsys);
+	const char *p;
+	int orig_count = count;
+
+	p = memchr(buf, '\n', count);
+	if (p)
+		count = p - buf;
+
+	pr_info("Changing subsys fw_name to %s\n", buf);
+	mutex_lock(&track->lock);
+	strlcpy(subsys->desc->fw_name, buf, count + 1);
+	mutex_unlock(&track->lock);
+	return orig_count;
 }
 
 static ssize_t system_debug_show(struct device *dev,
@@ -257,6 +286,7 @@ static ssize_t system_debug_store(struct device *dev,
 {
 	struct subsys_device *subsys = to_subsys(dev);
 	const char *p;
+	int orig_count = count;
 
 	p = memchr(buf, '\n', count);
 	if (p)
@@ -268,33 +298,7 @@ static ssize_t system_debug_store(struct device *dev,
 		subsys->desc->system_debug = false;
 	else
 		return -EPERM;
-	return count;
-}
-
-static ssize_t
-firmware_name_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%s\n", to_subsys(dev)->desc->fw_name);
-}
-
-static ssize_t firmware_name_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct subsys_device *subsys = to_subsys(dev);
-	struct subsys_tracking *track = subsys_get_track(subsys);
-	const char *p;
-
-	p = memchr(buf, '\n', count);
-	if (p)
-		count = p - buf;
-	if (!count)
-		return -EPERM;
-
-	pr_info("Changing subsys fw_name to %s\n", buf);
-	mutex_lock(&track->lock);
-	strlcpy(subsys->desc->fw_name, buf, count + 1);
-	mutex_unlock(&track->lock);
-	return count;
+	return orig_count;
 }
 
 int subsys_get_restart_level(struct subsys_device *dev)
@@ -337,8 +341,8 @@ static struct device_attribute subsys_attrs[] = {
 	__ATTR_RO(state),
 	__ATTR_RO(crash_count),
 	__ATTR(restart_level, 0644, restart_level_show, restart_level_store),
-	__ATTR(system_debug, 0644, system_debug_show, system_debug_store),
 	__ATTR(firmware_name, 0644, firmware_name_show, firmware_name_store),
+	__ATTR(system_debug, 0644, system_debug_show, system_debug_store),
 	__ATTR_NULL,
 };
 
@@ -443,11 +447,21 @@ static void do_epoch_check(struct subsys_device *dev)
 	}
 
 	if (time_first && n >= max_restarts_check) {
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		if ((curr_time->tv_sec - time_first->tv_sec) <
+				max_history_time_check) {
+			lge_set_subsys_crash_reason(dev->desc->name, LGE_ERR_SUB_CLO);
+			panic("Subsystems have crashed %d times in less than "
+				"%ld seconds!", max_restarts_check,
+				max_history_time_check);
+		}
+#else
 		if ((curr_time->tv_sec - time_first->tv_sec) <
 				max_history_time_check)
 			panic("Subsystems have crashed %d times in less than "
 				"%ld seconds!", max_restarts_check,
 				max_history_time_check);
+#endif
 	}
 
 out:
@@ -558,16 +572,17 @@ int wait_for_shutdown_ack(struct subsys_desc *desc)
 {
 	int count;
 
-	if (!desc->shutdown_ack_gpio)
+	if (desc && !desc->shutdown_ack_gpio)
 		return 0;
 
 	for (count = SHUTDOWN_ACK_MAX_LOOPS; count > 0; count--) {
 		if (gpio_get_value(desc->shutdown_ack_gpio))
 			return count;
-		msleep(SHUTDOWN_ACK_DELAY);
+		msleep(SHUTDOWN_ACK_DELAY_MS);
 	}
 
 	pr_err("[%s]: Timed out waiting for shutdown ack\n", desc->name);
+
 	return -ETIMEDOUT;
 }
 EXPORT_SYMBOL(wait_for_shutdown_ack);
@@ -594,9 +609,17 @@ static void subsystem_shutdown(struct subsys_device *dev, void *data)
 	const char *name = dev->desc->name;
 
 	pr_info("[%p]: Shutting down %s\n", current, name);
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	if (dev->desc->shutdown(dev->desc, true) < 0) {
+		lge_set_subsys_crash_reason(name, LGE_ERR_SUB_SD);
+		panic("subsys-restart: [%p]: Failed to shutdown %s!",
+			current, name);
+	}
+#else
 	if (dev->desc->shutdown(dev->desc, true) < 0)
 		panic("subsys-restart: [%p]: Failed to shutdown %s!",
 			current, name);
+#endif
 	dev->crash_count++;
 	subsys_set_state(dev, SUBSYS_OFFLINE);
 	disable_all_irqs(dev);
@@ -629,6 +652,9 @@ static void subsystem_powerup(struct subsys_device *dev, void *data)
 	if (dev->desc->powerup(dev->desc) < 0) {
 		notify_each_subsys_device(&dev, 1, SUBSYS_POWERUP_FAILURE,
 								NULL);
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		lge_set_subsys_crash_reason(name, LGE_ERR_SUB_PWR);
+#endif
 		panic("[%p]: Powerup error: %s!", current, name);
 	}
 	enable_all_irqs(dev);
@@ -637,6 +663,9 @@ static void subsystem_powerup(struct subsys_device *dev, void *data)
 	if (ret) {
 		notify_each_subsys_device(&dev, 1, SUBSYS_POWERUP_FAILURE,
 								NULL);
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		lge_set_subsys_crash_reason(name, LGE_ERR_SUB_TOW);
+#endif
 		panic("[%p]: Timed out waiting for error ready: %s!",
 			current, name);
 	}
@@ -944,6 +973,9 @@ static void __subsystem_restart_dev(struct subsys_device *dev)
 			__pm_stay_awake(&dev->ssr_wlock);
 			queue_work(ssr_wq, &dev->work);
 		} else {
+#ifdef CONFIG_LGE_HANDLE_PANIC
+			lge_set_subsys_crash_reason(name, LGE_ERR_SUB_CDS);
+#endif
 			panic("Subsystem %s crashed during SSR!", name);
 		}
 	} else
@@ -963,6 +995,11 @@ static void device_restart_work_hdlr(struct work_struct *work)
 	 * sync() and fclose() on attempting the dump.
 	 */
 	msleep(100);
+
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	lge_set_subsys_crash_reason(dev->desc->name, LGE_ERR_SUB_RST);
+#endif
+
 	panic("subsys-restart: Resetting the SoC - %s crashed.",
 							dev->desc->name);
 }
@@ -1010,6 +1047,9 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		schedule_work(&dev->device_restart_work);
 		return 0;
 	default:
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		lge_set_subsys_crash_reason(name, LGE_ERR_SUB_UNK);
+#endif
 		panic("subsys-restart: Unknown restart level!\n");
 		break;
 	}
@@ -1033,6 +1073,34 @@ int subsystem_restart(const char *name)
 	return ret;
 }
 EXPORT_SYMBOL(subsystem_restart);
+
+int subsys_modem_restart(void)
+{
+	int ret;
+	int rsl;
+	struct subsys_tracking *track;
+	struct subsys_device *dev = find_subsys("modem");
+	
+	if(!dev)
+		return -ENODEV;
+	
+	track = subsys_get_track(dev);
+	
+	if (dev->track.state != SUBSYS_ONLINE || track->p_state != SUBSYS_NORMAL)
+		return -ENODEV;
+	
+	rsl = dev->restart_level;
+	dev->restart_level = RESET_SUBSYS_COUPLED;
+	subsys_set_crash_status(dev, true);
+	ret = subsystem_restart_dev(dev);
+	dev->restart_level = rsl;
+#ifdef CONFIG_MACH_LGE
+	//modem_reboot_cnt--;
+#endif
+	put_device(&dev->dev);
+	return ret;
+}
+EXPORT_SYMBOL(subsys_modem_restart);
 
 int subsystem_crashed(const char *name)
 {
@@ -1630,18 +1698,31 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 					&subsys->desc->sysmon_pid))
 			pr_debug("Reading sysmon-id for %s failed\n",
 								desc->name);
+
+		subsys->desc->edge = of_get_property(ofnode, "qcom,edge",
+									NULL);
+		if (!subsys->desc->edge)
+			pr_debug("Reading qcom,edge for %s failed\n",
+								desc->name);
 	}
 
 	ret = sysmon_notifier_register(desc);
 	if (ret < 0)
 		goto err_sysmon_notifier;
 
+	if (subsys->desc->edge) {
+		ret = sysmon_glink_register(desc);
+		if (ret < 0)
+			goto err_sysmon_glink_register;
+	}
 	mutex_lock(&subsys_list_lock);
 	INIT_LIST_HEAD(&subsys->list);
 	list_add_tail(&subsys->list, &subsys_list);
 	mutex_unlock(&subsys_list_lock);
 
 	return subsys;
+err_sysmon_glink_register:
+	sysmon_notifier_unregister(subsys->desc);
 err_sysmon_notifier:
 	if (ofnode)
 		subsys_free_irqs(subsys);
@@ -1686,6 +1767,8 @@ void subsys_unregister(struct subsys_device *subsys)
 		subsys_debugfs_remove(subsys);
 		subsys_char_device_remove(subsys);
 		sysmon_notifier_unregister(subsys->desc);
+		if (subsys->desc->edge)
+			sysmon_glink_unregister(subsys->desc);
 		put_device(&subsys->dev);
 	}
 }

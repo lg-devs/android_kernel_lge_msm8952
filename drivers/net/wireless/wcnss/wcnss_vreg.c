@@ -17,14 +17,11 @@
 #include <linux/delay.h>
 #include <linux/regulator/consumer.h>
 #include <linux/regulator/rpm-smd-regulator.h>
-#include <linux/mfd/pm8xxx/pm8921.h>
-#include <linux/mfd/pm8xxx/gpio.h>
 #include <linux/wcnss_wlan.h>
 #include <linux/semaphore.h>
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/clk.h>
-#include <linux/leds.h>
 
 
 static void __iomem *msm_wcnss_base;
@@ -33,7 +30,6 @@ static DEFINE_MUTEX(list_lock);
 static DEFINE_SEMAPHORE(wcnss_power_on_lock);
 static int auto_detect;
 static int is_power_on;
-DEFINE_LED_TRIGGER(wlan_indication_led);
 
 #define RIVA_PMU_OFFSET         0x28
 
@@ -404,7 +400,7 @@ fail:
 
 /* Helper routine to turn off all WCNSS & IRIS vregs */
 static void wcnss_vregs_off(struct vregs_info regulators[], uint size,
-		struct vregs_level *voltage_level)
+			    struct vregs_level *voltage_level)
 {
 	int i, rc = 0;
 	struct wcnss_wlan_config *cfg;
@@ -412,7 +408,7 @@ static void wcnss_vregs_off(struct vregs_info regulators[], uint size,
 	cfg = wcnss_get_wlan_config();
 
 	if (!cfg) {
-		pr_err("Faild to get WLAN configuration\n");
+		pr_err("Failed to get WLAN configuration\n");
 		return;
 	}
 
@@ -432,7 +428,6 @@ static void wcnss_vregs_off(struct vregs_info regulators[], uint size,
 
 		/* Set voltage to lowest level */
 		if (regulators[i].state & VREG_SET_VOLTAGE_MASK) {
-
 			if (cfg->is_pronto_vadc) {
 				if (cfg->vbatt < WCNSS_VBATT_THRESHOLD &&
 				    !memcmp(regulators[i].name,
@@ -478,7 +473,7 @@ static int wcnss_vregs_on(struct device *dev,
 	cfg = wcnss_get_wlan_config();
 
 	if (!cfg) {
-		pr_err("Faild to get WLAN configuration\n");
+		pr_err("Failed to get WLAN configuration\n");
 		return -EINVAL;
 	}
 
@@ -497,8 +492,7 @@ static int wcnss_vregs_on(struct device *dev,
 
 		/* Set voltage to nominal. Exclude swtiches e.g. LVS */
 		if ((voltage_level[i].nominal_min ||
-			voltage_level[i].max_voltage) && (reg_cnt > 0)) {
-
+		     voltage_level[i].max_voltage) && (reg_cnt > 0)) {
 			if (cfg->is_pronto_vadc) {
 				if (cfg->vbatt < WCNSS_VBATT_THRESHOLD &&
 				    !memcmp(regulators[i].name,
@@ -558,7 +552,8 @@ static void wcnss_iris_vregs_off(enum wcnss_hw_type hw_type,
 	switch (hw_type) {
 	case WCNSS_PRONTO_HW:
 		wcnss_vregs_off(iris_vregs_pronto,
-			ARRAY_SIZE(iris_vregs_pronto), cfg->iris_vlevel);
+				ARRAY_SIZE(iris_vregs_pronto),
+				cfg->iris_vlevel);
 		break;
 	default:
 		pr_err("%s invalid hardware %d\n", __func__, hw_type);
@@ -575,8 +570,8 @@ static int wcnss_iris_vregs_on(struct device *dev,
 	switch (hw_type) {
 	case WCNSS_PRONTO_HW:
 		ret = wcnss_vregs_on(dev, iris_vregs_pronto,
-				ARRAY_SIZE(iris_vregs_pronto),
-				cfg->iris_vlevel);
+				     ARRAY_SIZE(iris_vregs_pronto),
+				     cfg->iris_vlevel);
 		break;
 	default:
 		pr_err("%s invalid hardware %d\n", __func__, hw_type);
@@ -590,7 +585,7 @@ static void wcnss_core_vregs_off(enum wcnss_hw_type hw_type,
 	switch (hw_type) {
 	case WCNSS_PRONTO_HW:
 		wcnss_vregs_off(pronto_vregs,
-			ARRAY_SIZE(pronto_vregs), cfg->pronto_vlevel);
+				ARRAY_SIZE(pronto_vregs), cfg->pronto_vlevel);
 		break;
 	default:
 		pr_err("%s invalid hardware %d\n", __func__, hw_type);
@@ -607,7 +602,8 @@ static int wcnss_core_vregs_on(struct device *dev,
 	switch (hw_type) {
 	case WCNSS_PRONTO_HW:
 		ret = wcnss_vregs_on(dev, pronto_vregs,
-				ARRAY_SIZE(pronto_vregs), cfg->pronto_vlevel);
+				     ARRAY_SIZE(pronto_vregs),
+				     cfg->pronto_vlevel);
 		break;
 	default:
 		pr_err("%s invalid hardware %d\n", __func__, hw_type);
@@ -694,9 +690,6 @@ int wcnss_req_power_on_lock(char *driver_name)
 	list_add(&node->list, &power_on_lock_list);
 	mutex_unlock(&list_lock);
 
-	if (wlan_indication_led)
-		led_trigger_event(wlan_indication_led, LED_FULL);
-
 	return 0;
 
 err:
@@ -723,15 +716,6 @@ int wcnss_free_power_on_lock(char *driver_name)
 		up(&wcnss_power_on_lock);
 	mutex_unlock(&list_lock);
 
-	if (wlan_indication_led)
-		led_trigger_event(wlan_indication_led, LED_OFF);
-
 	return ret;
 }
 EXPORT_SYMBOL(wcnss_free_power_on_lock);
-
-void wcnss_en_wlan_led_trigger(void)
-{
-	led_trigger_register_simple("wlan-indication-led",
-		&wlan_indication_led);
-}

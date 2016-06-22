@@ -95,8 +95,13 @@
 #define SLIMBUS_QMI_SVC_V1 1
 #define SLIMBUS_QMI_INS_ID 0
 
+#ifdef CONFIG_MACH_LGE
+/* QMI response timeout of 5s (LGE W/A) */
+#define SLIM_QMI_RESP_TOUT 5000
+#else
 /* QMI response timeout of 500ms */
-#define SLIM_QMI_RESP_TOUT 500
+#define SLIM_QMI_RESP_TOUT 1000
+#endif
 
 #define PGD_THIS_EE(r, v) ((v) ? PGD_THIS_EE_V2(r) : PGD_THIS_EE_V1(r))
 #define PGD_PORT(r, p, v) ((v) ? PGD_PORT_V2(r, p) : PGD_PORT_V1(r, p))
@@ -370,7 +375,7 @@ enum {
 
 /* warnings and errors show up on console always */
 #define SLIM_WARN(dev, x...) do { \
-	pr_warn_ratelimited(x); \
+	pr_warn(x); \
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= WARN_LEV) \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 } while (0)
@@ -380,7 +385,7 @@ enum {
  * in IPC logging. Further errors continue to log on the console
  */
 #define SLIM_ERR(dev, x...) do { \
-	pr_err_ratelimited(x); \
+	pr_err(x); \
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= ERR_LEV) { \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 		dev->default_ipc_log_mask = dev->ipc_log_mask; \

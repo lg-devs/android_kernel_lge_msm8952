@@ -19,6 +19,7 @@
 #include <linux/rmnet_data.h>
 #include <linux/msm_rmnet.h>
 #include <linux/etherdevice.h>
+#include <linux/netdevice.h>
 #include <linux/if_arp.h>
 #include <linux/spinlock.h>
 #include <net/pkt_sched.h>
@@ -37,6 +38,9 @@ RMNET_LOG_MODULE(RMNET_DATA_LOGMASK_VND);
 #define RMNET_MAP_FLOW_NUM_TC_HANDLE 3
 #define RMNET_VND_UF_ACTION_ADD 0
 #define RMNET_VND_UF_ACTION_DEL 1
+#define RMNET_DATA_NAPI_WEIGHT 1
+#define RMNET_DATA_NAPI_WORK 0
+
 enum {
 	RMNET_VND_UPDATE_FLOW_OK,
 	RMNET_VND_UPDATE_FLOW_NO_ACTION,
@@ -58,7 +62,7 @@ struct rmnet_map_flow_mapping_s {
 struct rmnet_vnd_private_s {
 	uint32_t qos_version;
 	struct rmnet_logical_ep_conf_s local_ep;
-
+	struct napi_struct napi;
 	rwlock_t flow_map_lock;
 	struct list_head flow_head;
 	struct rmnet_map_flow_mapping_s root_flow;
@@ -305,8 +309,7 @@ static int _rmnet_vnd_do_flow_control(struct net_device *dev,
 {
 	struct rmnet_vnd_fc_work *fcwork;
 
-	fcwork = (struct rmnet_vnd_fc_work *)
-			kmalloc(sizeof(struct rmnet_vnd_fc_work), GFP_ATOMIC);
+	fcwork = kmalloc(sizeof(*fcwork), GFP_ATOMIC);
 	if (!fcwork)
 		return RMNET_VND_FC_KMALLOC_ERR;
 	memset(fcwork, 0, sizeof(struct rmnet_vnd_fc_work));
@@ -504,6 +507,19 @@ static void rmnet_vnd_setup(struct net_device *dev)
 	INIT_LIST_HEAD(&dev_conf->flow_head);
 }
 
+/**
+ * rmnet_data_napi_poll() - NAPI poll function
+ * @napi:      NAPI struct
+ *
+ * Called by net_rx_action() when NAPI is scheduled. Since we have already
+ * queued packets to network stack, we just flush and return here.
+ */
+static int rmnet_data_napi_poll(struct napi_struct *napi, int budget)
+{
+	napi_complete(napi);
+	return RMNET_DATA_NAPI_WORK;
+}
+
 /* ***************** Exposed API ******************************************** */
 
 /**
@@ -558,6 +574,7 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 	struct net_device *dev;
 	char dev_prefix[IFNAMSIZ];
 	int p, rc = 0;
+	struct napi_struct *n;
 
 	if (id < 0 || id >= RMNET_DATA_MAX_VND) {
 		*new_device = 0;
@@ -582,6 +599,7 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 
 	dev = alloc_netdev(sizeof(struct rmnet_vnd_private_s),
 			   dev_prefix,
+			   NET_NAME_ENUM,
 			   rmnet_vnd_setup);
 	if (!dev) {
 		LOGE("Failed to to allocate netdev for id %d", id);
@@ -590,8 +608,10 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 	}
 
 	if (!prefix) {
+		/* Configuring DL checksum offload on rmnet_data interfaces */
+		dev->hw_features = NETIF_F_RXCSUM;
 		/* Configuring UL checksum offload on rmnet_data interfaces */
-		dev->hw_features = NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 			NETIF_F_IPV6_UDP_CSUM;
 		/* Configuring GRO on rmnet_data interfaces */
 		dev->hw_features |= NETIF_F_GRO;
@@ -607,6 +627,10 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 		rmnet_devices[id] = dev;
 		*new_device = dev;
 	}
+
+	n = rmnet_vnd_get_napi(dev);
+	netif_napi_add(dev, n, rmnet_data_napi_poll, RMNET_DATA_NAPI_WEIGHT);
+	napi_enable(n);
 
 	LOGM("Registered device %s", dev->name);
 	return rc;
@@ -651,6 +675,10 @@ int rmnet_vnd_free_dev(int id)
 	rtnl_unlock();
 
 	if (dev) {
+		struct napi_struct *n = rmnet_vnd_get_napi(dev);
+
+		napi_disable(n);
+		netif_napi_del(n);
 		unregister_netdev(dev);
 		free_netdev(dev);
 		return 0;
@@ -899,8 +927,7 @@ int rmnet_vnd_add_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 	}
 	write_unlock_irqrestore(&dev_conf->flow_map_lock, flags);
 
-	itm = (struct rmnet_map_flow_mapping_s *)
-		kmalloc(sizeof(struct rmnet_map_flow_mapping_s), GFP_KERNEL);
+	itm = kmalloc(sizeof(*itm), GFP_KERNEL);
 
 	if (!itm) {
 		LOGM("%s", "Failure allocating flow mapping");
@@ -1091,4 +1118,16 @@ struct net_device *rmnet_vnd_get_by_id(int id)
 		return 0;
 	}
 	return rmnet_devices[id];
+}
+
+/**
+ * rmnet_vnd_get_napi() - Get NAPI struct from the device
+ * @dev: Virtual network device
+ *
+ * Return:
+ *      - napi struct corresponding to the netdevice
+ */
+struct napi_struct *rmnet_vnd_get_napi(struct net_device *dev)
+{
+	return &(((struct rmnet_vnd_private_s *)netdev_priv(dev))->napi);
 }

@@ -17,10 +17,12 @@
 #include <linux/atomic.h>
 #include "diagchar.h"
 #include "diagfwd.h"
+#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
 #include "diagfwd_bridge.h"
 #include "diagfwd_hsic.h"
 #include "diagfwd_smux.h"
 #include "diagfwd_mhi.h"
+#endif
 #include "diagmem.h"
 #include "diag_dci.h"
 #include "diag_usb.h"
@@ -67,6 +69,8 @@ static ssize_t diag_dbgfs_read_status(struct file *file, char __user *ubuf,
 		"RSP Buffer is Busy: %d\n"
 		"HDLC Disabled: %d\n"
 		"Time Sync Enabled: %d\n"
+		"MD session mode: %d\n"
+		"MD session mask: %d\n"
 		"Uses Time API: %d\n",
 		chk_config_get_id(),
 		chk_polling_response(),
@@ -79,6 +83,8 @@ static ssize_t diag_dbgfs_read_status(struct file *file, char __user *ubuf,
 		driver->rsp_buf_busy,
 		driver->hdlc_disabled,
 		driver->time_sync_enabled,
+		driver->md_session_mode,
+		driver->md_session_mask,
 		driver->uses_time_api);
 
 	for (i = 0; i < NUM_PERIPHERALS; i++) {
@@ -785,9 +791,9 @@ static ssize_t diag_dbgfs_read_mhiinfo(struct file *file, char __user *ubuf,
 			mhi_info->name,
 			DIAG_BRIDGE_GET_NAME(mhi_info->dev_id),
 			DIAG_MEMPOOL_GET_NAME(mhi_info->mempool),
-			mhi_info->read_ch.opened,
+			atomic_read(&mhi_info->read_ch.opened),
 			mhi_info->read_ch.hdl,
-			mhi_info->write_ch.opened,
+			atomic_read(&mhi_info->write_ch.opened),
 			mhi_info->write_ch.hdl,
 			work_pending(&mhi_info->read_work),
 			work_pending(&mhi_info->read_done_work),

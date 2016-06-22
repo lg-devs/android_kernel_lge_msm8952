@@ -85,61 +85,56 @@ DEFINE_EVENT(mdp_sspp_template, mdp_sspp_change,
 	TP_ARGS(pipe)
 );
 
-TRACE_EVENT(mdp_wb_display,
-	TP_PROTO(u32 wb_num, u32 xin_id, u32 intf_num,
-		u32 width, u32 height, u16 dst_w, u16 dst_h, u32 fmt),
-	TP_ARGS(wb_num, xin_id, intf_num, width, height,
-		dst_w, dst_h, fmt),
+TRACE_EVENT(mdp_perf_set_qos_luts,
+	TP_PROTO(u32 pnum, u32 fmt, u32 intf, u32 rot, u32 fl,
+		u32 lut, bool linear),
+	TP_ARGS(pnum, fmt, intf, rot, fl, lut, linear),
 	TP_STRUCT__entry(
-			__field(u32, wb_num)
-			__field(u32, xin_id)
-			__field(u32, intf_num)
-			__field(u32, width)
-			__field(u32, height)
-			__field(u32, dst_rect_w)
-			__field(u32, dst_rect_h)
+			__field(u32, pnum)
 			__field(u32, fmt)
+			__field(u32, intf)
+			__field(u32, rot)
+			__field(u32, fl)
+			__field(u32, lut)
+			__field(bool, linear)
 	),
-
 	TP_fast_assign(
-			__entry->wb_num = wb_num;
-			__entry->xin_id = xin_id;
-			__entry->intf_num = intf_num;
-			__entry->width = width;
-			__entry->height = height;
-			__entry->dst_rect_w = dst_w;
-			__entry->dst_rect_h = dst_h;
+			__entry->pnum = pnum;
 			__entry->fmt = fmt;
+			__entry->intf = intf;
+			__entry->rot = rot;
+			__entry->fl = fl;
+			__entry->lut = lut;
+			__entry->linear = linear;
 	),
-
-	TP_printk("wb=%d xin=%d intf=%d wxh=%dx%d dst=[%d,%d] fmt=%d",
-			__entry->wb_num,
-			__entry->xin_id,
-			__entry->intf_num,
-			__entry->width,
-			__entry->height,
-			__entry->dst_rect_w,
-			__entry->dst_rect_h,
-			__entry->fmt)
+	TP_printk("pnum=%d fmt=%d intf=%d rot=%d fl:%d lut=0x%x lin:%d",
+			__entry->pnum, __entry->fmt,
+			__entry->intf, __entry->rot, __entry->fl,
+			__entry->lut, __entry->linear)
 );
 
-TRACE_EVENT(mdp_wb_done,
-	TP_PROTO(u32 wb_num, u32 xin_id, u32 intf_num),
-	TP_ARGS(wb_num, xin_id, intf_num),
+TRACE_EVENT(mdp_perf_set_panic_luts,
+	TP_PROTO(u32 pnum, u32 fmt, u32 mode, u32 panic_lut,
+		u32 robust_lut),
+	TP_ARGS(pnum, fmt, mode, panic_lut, robust_lut),
 	TP_STRUCT__entry(
-			__field(u32, wb_num)
-			__field(u32, xin_id)
-			__field(u32, intf_num)
+			__field(u32, pnum)
+			__field(u32, fmt)
+			__field(u32, mode)
+			__field(u32, panic_lut)
+			__field(u32, robust_lut)
 	),
 	TP_fast_assign(
-			__entry->wb_num = wb_num;
-			__entry->xin_id = xin_id;
-			__entry->intf_num = intf_num;
+			__entry->pnum = pnum;
+			__entry->fmt = fmt;
+			__entry->mode = mode;
+			__entry->panic_lut = panic_lut;
+			__entry->robust_lut = robust_lut;
 	),
-	TP_printk("wb=%d xin=%d intf=%d",
-			__entry->wb_num,
-			__entry->xin_id,
-			__entry->intf_num)
+	TP_printk("pnum=%d fmt=%d mode=%d luts[0x%x, 0x%x]",
+			__entry->pnum, __entry->fmt,
+			__entry->mode, __entry->panic_lut,
+			__entry->robust_lut)
 );
 
 TRACE_EVENT(mdp_perf_set_wm_levels,
@@ -396,6 +391,20 @@ TRACE_EVENT(mdp_trace_counter,
 	),
 	TP_printk("%d|%s|%d", __entry->pid,
 			__get_str(counter_name), __entry->value)
+);
+
+TRACE_EVENT(rotator_bw_ao_as_context,
+	TP_PROTO(u32 state),
+	TP_ARGS(state),
+	TP_STRUCT__entry(
+			__field(u32, state)
+	),
+	TP_fast_assign(
+			__entry->state = state;
+	),
+	TP_printk("Rotator bw context %s",
+			__entry->state ? "Active Only" : "Active+Sleep")
+
 );
 
 #endif /* if !defined(TRACE_MDSS_MDP_H) || defined(TRACE_HEADER_MULTI_READ) */

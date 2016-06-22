@@ -1,5 +1,5 @@
 /*
- * drivers/gpu/ion/ion_priv.h
+ * drivers/staging/android/ion/ion_priv.h
  *
  * Copyright (C) 2011 Google, Inc.
  * Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
@@ -30,6 +30,7 @@
 #include <linux/sched.h>
 #include <linux/shrinker.h>
 #include <linux/types.h>
+#include <linux/device.h>
 
 #include "ion.h"
 
@@ -118,21 +119,21 @@ void ion_buffer_destroy(struct ion_buffer *buffer);
  * system, not put in a page pool or otherwise cached.
  */
 struct ion_heap_ops {
-	int (*allocate) (struct ion_heap *heap,
-			 struct ion_buffer *buffer, unsigned long len,
-			 unsigned long align, unsigned long flags);
-	void (*free) (struct ion_buffer *buffer);
-	int (*phys) (struct ion_heap *heap, struct ion_buffer *buffer,
-		     ion_phys_addr_t *addr, size_t *len);
-	struct sg_table *(*map_dma) (struct ion_heap *heap,
-					struct ion_buffer *buffer);
-	void (*unmap_dma) (struct ion_heap *heap, struct ion_buffer *buffer);
-	void * (*map_kernel) (struct ion_heap *heap, struct ion_buffer *buffer);
-	void (*unmap_kernel) (struct ion_heap *heap, struct ion_buffer *buffer);
-	int (*map_user) (struct ion_heap *mapper, struct ion_buffer *buffer,
-			 struct vm_area_struct *vma);
-	void (*unmap_user) (struct ion_heap *mapper, struct ion_buffer *buffer);
+	int (*allocate)(struct ion_heap *heap,
+			struct ion_buffer *buffer, unsigned long len,
+			unsigned long align, unsigned long flags);
+	void (*free)(struct ion_buffer *buffer);
+	int (*phys)(struct ion_heap *heap, struct ion_buffer *buffer,
+		    ion_phys_addr_t *addr, size_t *len);
+	struct sg_table * (*map_dma)(struct ion_heap *heap,
+				     struct ion_buffer *buffer);
+	void (*unmap_dma)(struct ion_heap *heap, struct ion_buffer *buffer);
+	void * (*map_kernel)(struct ion_heap *heap, struct ion_buffer *buffer);
+	void (*unmap_kernel)(struct ion_heap *heap, struct ion_buffer *buffer);
+	int (*map_user)(struct ion_heap *mapper, struct ion_buffer *buffer,
+			struct vm_area_struct *vma);
 	int (*shrink)(struct ion_heap *heap, gfp_t gfp_mask, int nr_to_scan);
+	void (*unmap_user) (struct ion_heap *mapper, struct ion_buffer *buffer);
 	int (*print_debug)(struct ion_heap *heap, struct seq_file *s,
 			   const struct list_head *mem_map);
 };
@@ -152,7 +153,6 @@ struct ion_heap_ops {
  * returned to the system allocator.
  */
 #define ION_PRIV_FLAG_SHRINKER_FREE (1 << 0)
-
 
 /**
  * struct ion_heap - represents a heap in the system
@@ -257,13 +257,24 @@ void ion_heap_unmap_kernel(struct ion_heap *, struct ion_buffer *);
 int ion_heap_map_user(struct ion_heap *, struct ion_buffer *,
 			struct vm_area_struct *);
 int ion_heap_buffer_zero(struct ion_buffer *buffer);
+int ion_heap_pages_zero(struct page *page, size_t size, pgprot_t pgprot);
 
 int msm_ion_heap_high_order_page_zero(struct page *page, int order);
 struct ion_heap *get_ion_heap(int heap_id);
-int msm_ion_heap_buffer_zero(struct ion_buffer *buffer);
+int msm_ion_heap_sg_table_zero(struct sg_table *, size_t size);
 int msm_ion_heap_pages_zero(struct page **pages, int num_pages);
 int msm_ion_heap_alloc_pages_mem(struct pages_mem *pages_mem);
 void msm_ion_heap_free_pages_mem(struct pages_mem *pages_mem);
+
+/**
+ * ion_heap_init_shrinker
+ * @heap:		the heap
+ *
+ * If a heap sets the ION_HEAP_FLAG_DEFER_FREE flag or defines the shrink op
+ * this function will be called to setup a shrinker to shrink the freelists
+ * and call the heap's shrink op.
+ */
+void ion_heap_init_shrinker(struct ion_heap *heap);
 
 /**
  * ion_heap_init_shrinker
@@ -376,7 +387,7 @@ void ion_carveout_free(struct ion_heap *heap, ion_phys_addr_t addr,
  * functions for creating and destroying a heap pool -- allows you
  * to keep a pool of pre allocated memory to use from your heap.  Keeping
  * a pool of memory that is ready for dma, ie any cached mapping have been
- * invalidated from the cache, provides a significant peformance benefit on
+ * invalidated from the cache, provides a significant performance benefit on
  * many systems */
 
 /**
@@ -393,7 +404,7 @@ void ion_carveout_free(struct ion_heap *heap, ion_phys_addr_t addr,
  *
  * Allows you to keep a pool of pre allocated pages to use from your heap.
  * Keeping a pool of pages that is ready for dma, ie any cached mapping have
- * been invalidated from the cache, provides a significant peformance benefit
+ * been invalidated from the cache, provides a significant performance benefit
  * on many systems
  */
 struct ion_page_pool {

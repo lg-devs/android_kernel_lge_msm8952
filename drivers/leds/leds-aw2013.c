@@ -302,6 +302,7 @@ static void aw2013_set_brightness(struct led_classdev *cdev,
 			     enum led_brightness brightness)
 {
 	struct aw2013_led *led = container_of(cdev, struct aw2013_led, cdev);
+
 	led->cdev.brightness = brightness;
 
 	schedule_work(&led->brightness_work);
@@ -558,10 +559,9 @@ static int aw2013_led_probe(struct i2c_client *client,
 
 	led_array = devm_kzalloc(&client->dev,
 			(sizeof(struct aw2013_led) * num_leds), GFP_KERNEL);
-	if (!led_array) {
-		dev_err(&client->dev, "Unable to allocate memory\n");
+	if (!led_array)
 		return -ENOMEM;
-	}
+
 	led_array->client = client;
 	led_array->num_leds = num_leds;
 

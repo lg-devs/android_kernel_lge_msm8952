@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,8 +20,10 @@
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/msm-bus.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include "vmem.h"
@@ -63,28 +65,29 @@
 
 /* Register masks */
 /* OCIMEM_PSCGC_M0_M7_CTL */
-DECLARE_TYPE(BANK0_STATE, 3, 0)
-DECLARE_TYPE(BANK1_STATE, 7, 4)
-DECLARE_TYPE(BANK2_STATE, 11, 8)
-DECLARE_TYPE(BANK3_STATE, 15, 12)
+DECLARE_TYPE(BANK0_STATE, 3, 0);
+DECLARE_TYPE(BANK1_STATE, 7, 4);
+DECLARE_TYPE(BANK2_STATE, 11, 8);
+DECLARE_TYPE(BANK3_STATE, 15, 12);
 /* OCIMEM_PSCGC_TIMERS */
-DECLARE_TYPE(TIMERS_WAKEUP, 3, 0)
-DECLARE_TYPE(TIMERS_SLEEP, 11, 8)
+DECLARE_TYPE(TIMERS_WAKEUP, 3, 0);
+DECLARE_TYPE(TIMERS_SLEEP, 11, 8);
 /* OCIMEM_HW_VERSION */
-DECLARE_TYPE(VERSION_STEP, 15, 0)
-DECLARE_TYPE(VERSION_MINOR, 27, 16)
-DECLARE_TYPE(VERSION_MAJOR, 31, 28)
+DECLARE_TYPE(VERSION_STEP, 15, 0);
+DECLARE_TYPE(VERSION_MINOR, 27, 16);
+DECLARE_TYPE(VERSION_MAJOR, 31, 28);
 /* OCIMEM_HW_PROFILE */
-DECLARE_TYPE(PROFILE_BANKS, 16, 12)
+DECLARE_TYPE(PROFILE_BANKS, 16, 12);
 /* OCIMEM_AXI_ERR_SYNDROME */
 DECLARE_TYPE(ERR_SYN_ATID, 14, 8);
 DECLARE_TYPE(ERR_SYN_AMID, 23, 16);
 DECLARE_TYPE(ERR_SYN_APID, 28, 24);
 DECLARE_TYPE(ERR_SYN_ABID, 31, 29);
+/* OCIMEM_INTC_MASK */
+DECLARE_TYPE(AXI_ERR_INT, 0, 0);
 
 /* Internal stuff */
 #define MAX_BANKS 4
-#define BYTES_PER_BANK SZ_256K
 
 enum bank_state {
 	BANK_STATE_NORM_PASSTHRU = 0b000,
@@ -99,12 +102,21 @@ enum bank_state {
 struct vmem {
 	int irq;
 	int num_banks;
+	int bank_size;
 	struct {
 		struct resource *resource;
 		void __iomem *base;
 	} reg, mem;
-	struct clk *maxi;
-	struct clk *ahb;
+	struct regulator *vdd;
+	struct {
+		const char *name;
+		struct clk *clk;
+	} *clocks;
+	int num_clocks;
+	struct {
+		struct msm_bus_scale_pdata *pdata;
+		uint32_t priv;
+	} bus;
 	atomic_t alloc_count;
 	struct dentry *debugfs_root;
 };
@@ -155,34 +167,61 @@ static inline void __wait_sleep(struct vmem *v)
 	return __wait_timer(v, false);
 }
 
-static inline int __enable_clocks(struct vmem *v)
+static inline int __power_on(struct vmem *v)
 {
-	int rc = 0;
+	int rc = 0, c = 0;
 
-	rc = clk_prepare_enable(v->maxi);
+	rc = msm_bus_scale_client_update_request(v->bus.priv, 1);
 	if (rc) {
-		pr_err("Failed to enable vmem axi clock: %d\n", rc);
+		pr_err("Failed to vote for buses (%d)\n", rc);
 		goto exit;
 	}
+	pr_debug("Voted for buses\n");
 
-	rc = clk_prepare_enable(v->ahb);
+	rc = regulator_enable(v->vdd);
 	if (rc) {
-		pr_err("Failed to enable vmem ahb clock: %d\n", rc);
-		goto disable_ahb;
+		pr_err("Failed to power on gdsc (%d)", rc);
+		goto unvote_bus;
+	}
+	pr_debug("Enabled regulator vdd\n");
+
+	for (c = 0; c < v->num_clocks; ++c) {
+		rc = clk_prepare_enable(v->clocks[c].clk);
+		if (rc) {
+			pr_err("Failed to enable %s clock (%d)\n",
+					v->clocks[c].name, rc);
+			goto disable_clocks;
+		}
+
+		pr_debug("Enabled clock %s\n", v->clocks[c].name);
 	}
 
 	return 0;
-
-disable_ahb:
-	clk_disable_unprepare(v->maxi);
+disable_clocks:
+	for (--c; c >= 0; c--)
+		clk_disable_unprepare(v->clocks[c].clk);
+	regulator_disable(v->vdd);
+unvote_bus:
+	msm_bus_scale_client_update_request(v->bus.priv, 0);
 exit:
 	return rc;
 }
 
-static inline int __disable_clocks(struct vmem *v)
+static inline int __power_off(struct vmem *v)
 {
-	clk_disable_unprepare(v->ahb);
-	clk_disable_unprepare(v->maxi);
+	int c = 0;
+
+	for (c = 0; c < v->num_clocks; ++c) {
+		clk_disable_unprepare(v->clocks[c].clk);
+		pr_debug("Disabled clock %s\n", v->clocks[c].name);
+	}
+
+	regulator_disable(v->vdd);
+	pr_debug("Disabled regulator vdd\n");
+
+	msm_bus_scale_client_update_request(v->bus.priv, 0);
+	pr_debug("Unvoted for buses\n");
+
 	return 0;
 }
 
@@ -220,6 +259,32 @@ static inline void __bank_set_state(struct vmem *v, unsigned int bank,
 	__writel(bank_state, OCIMEM_PSCGC_M0_M7_CTL(v));
 }
 
+static inline void __toggle_interrupts(struct vmem *v, bool enable)
+{
+	uint32_t ints = __readl(OCIMEM_INTC_MASK(v)),
+		mask = AXI_ERR_INT_MASK,
+		update = AXI_ERR_INT_UPDATE(!enable);
+
+	ints &= ~mask;
+	ints |= update;
+
+	__writel(ints, OCIMEM_INTC_MASK(v));
+}
+
+static void __enable_interrupts(struct vmem *v)
+{
+	pr_debug("Enabling interrupts\n");
+	enable_irq(v->irq);
+	__toggle_interrupts(v, true);
+}
+
+static void __disable_interrupts(struct vmem *v)
+{
+	pr_debug("Disabling interrupts\n");
+	__toggle_interrupts(v, false);
+	disable_irq_nosync(v->irq);
+}
+
 /**
  * vmem_allocate: - Allocates memory from VMEM.  Allocations have a few
  * restrictions: only allocations of the entire VMEM memory are allowed, and
@@ -245,6 +310,11 @@ int vmem_allocate(size_t size, phys_addr_t *addr)
 		rc = -ENOTSUPP;
 		goto exit;
 	}
+	if (!size) {
+		pr_err("%s Invalid size %ld\n", __func__, size);
+		rc = -EINVAL;
+		goto exit;
+	}
 
 	max_size = resource_size(vmem->mem.resource);
 
@@ -262,38 +332,26 @@ int vmem_allocate(size_t size, phys_addr_t *addr)
 		goto exit;
 	}
 
-	rc = __enable_clocks(vmem);
+	rc = __power_on(vmem);
 	if (rc) {
-		pr_err("Failed to enable axi clock\n");
+		pr_err("Failed power on (%d)\n", rc);
 		goto exit;
 	}
 
-	/* Make sure all the banks are sleeping (default) */
-	BUG_ON(vmem->num_banks != DIV_ROUND_UP(size, BYTES_PER_BANK));
-	for (c = 0; c < vmem->num_banks; ++c) {
-		enum bank_state curr_bank_state = __bank_get_state(vmem, c);
-
-		if (curr_bank_state != BANK_STATE_SLEEP_NO_RET) {
-			pr_err("Found bank %d in a wrong state, expected %d, was %d\n",
-					c, BANK_STATE_SLEEP_NO_RET,
-					curr_bank_state);
-			rc = -EIO;
-			goto disable_clocks;
-		}
-	}
+	BUG_ON(vmem->num_banks != DIV_ROUND_UP(size, vmem->bank_size));
 
 	/* Turn on the necessary banks */
-	for (c = DIV_ROUND_UP(size, BYTES_PER_BANK) - 1; c >= 0; --c) {
+	for (c = 0; c < vmem->num_banks; ++c) {
 		__bank_set_state(vmem, c, BANK_STATE_NORM_FORCE_CORE_ON);
 		__wait_wakeup(vmem);
 	}
 
+	/* Enable interrupts to detect faults */
+	__enable_interrupts(vmem);
+
 	atomic_inc(&vmem->alloc_count);
 	*addr = (phys_addr_t)vmem->mem.resource->start;
 	return 0;
-
-disable_clocks:
-	__disable_clocks(vmem);
 exit:
 	return rc;
 }
@@ -322,7 +380,8 @@ void vmem_free(phys_addr_t to_free)
 		__bank_set_state(vmem, c, BANK_STATE_SLEEP_NO_RET);
 	}
 
-	__disable_clocks(vmem);
+	__disable_interrupts(vmem);
+	__power_off(vmem);
 	atomic_dec(&vmem->alloc_count);
 }
 
@@ -354,16 +413,15 @@ static void __irq_helper(struct work_struct *work)
 	pr_cont("\tmemory status: %x\n", pscgc_stat);
 	pr_cont("\tfault address: %x (absolute), %x (relative)\n",
 			err_addr_abs, err_addr_rel);
-	pr_cont("\tfault bank: %x\n", err_addr_rel / BYTES_PER_BANK);
+	pr_cont("\tfault bank: %x\n", err_addr_rel / v->bank_size);
 	pr_cont("\tfault core: %u (mid), %u (pid), %u (bid)\n",
 			ERR_SYN_AMID(err_syn), ERR_SYN_APID(err_syn),
 			ERR_SYN_ABID(err_syn));
 
 	/* Clear the interrupt */
 	__writel(0, OCIMEM_INTC_CLR(v));
-	enable_irq(v->irq);
 
-	kfree(cookie);
+	__enable_interrupts(v);
 }
 
 static struct vmem_interrupt_cookie interrupt_cookie;
@@ -375,7 +433,8 @@ static irqreturn_t __irq_handler(int irq, void *cookie)
 		IRQ_HANDLED : IRQ_NONE;
 
 	if (status != IRQ_NONE) {
-		disable_irq(v->irq);
+		/* Mask further interrupts while handling this one */
+		__disable_interrupts(v);
 
 		interrupt_cookie.vmem = v;
 		INIT_WORK(&interrupt_cookie.work, __irq_helper);
@@ -388,12 +447,12 @@ static irqreturn_t __irq_handler(int irq, void *cookie)
 static inline int __init_resources(struct vmem *v,
 		struct platform_device *pdev)
 {
-	int rc = 0;
+	int rc = 0, c = 0;
 
 	v->irq = platform_get_irq(pdev, 0);
 	if (v->irq < 0) {
 		rc = v->irq;
-		pr_err("Failed to get irq: %d\n", rc);
+		pr_err("Failed to get irq (%d)\n", rc);
 		v->irq = 0;
 		goto exit;
 	}
@@ -410,7 +469,7 @@ static inline int __init_resources(struct vmem *v,
 	v->reg.base = devm_ioremap_resource(&pdev->dev, v->reg.resource);
 	if (IS_ERR_OR_NULL(v->reg.base)) {
 		rc = PTR_ERR(v->reg.base) ?: -EIO;
-		pr_err("Failed to map register base into kernel: %d\n", rc);
+		pr_err("Failed to map register base into kernel (%d)\n", rc);
 		v->reg.base = NULL;
 		goto exit;
 	}
@@ -430,53 +489,116 @@ static inline int __init_resources(struct vmem *v,
 	pr_debug("Memory range: %pa -> %pa\n", &v->mem.resource->start,
 			&v->mem.resource->end);
 
-	/* Clocks */
-	v->maxi = devm_clk_get(&pdev->dev, "maxi");
-	if (!v->maxi) {
-		pr_err("Failed to find maxi clock\n");
-		rc = -ENOENT;
+	/* Buses, Clocks & Regulators*/
+	v->num_clocks = of_property_count_strings(pdev->dev.of_node,
+			"clock-names");
+	if (v->num_clocks <= 0) {
+		pr_err("Can't find any clocks\n");
 		goto exit;
 	}
 
-	v->ahb = devm_clk_get(&pdev->dev, "ahb");
-	if (!v->ahb) {
-		pr_err("Failed to find ahb clock\n");
-		rc = -ENOENT;
+	v->clocks = devm_kzalloc(&pdev->dev, sizeof(*v->clocks) * v->num_clocks,
+			GFP_KERNEL);
+	if (!v->clocks) {
+		rc = -ENOMEM;
 		goto exit;
 	}
 
-	rc = of_property_read_u32(pdev->dev.of_node, "qcom,banks",
-			&v->num_banks);
-	if (rc || !v->num_banks) {
-		pr_err("Failed reading (or found invalid) qcom,banks in %s (%d)\n",
+	for (c = 0; c < v->num_clocks; ++c) {
+		const char *name = NULL;
+		struct clk *temp = NULL;
+
+		of_property_read_string_index(pdev->dev.of_node, "clock-names",
+				c, &name);
+		temp = devm_clk_get(&pdev->dev, name);
+		if (IS_ERR_OR_NULL(temp)) {
+			rc = PTR_ERR(temp) ?: -ENOENT;
+			pr_err("Failed to find %s (%d)\n", name, rc);
+			goto exit;
+		}
+
+		v->clocks[c].clk = temp;
+		v->clocks[c].name = name;
+	}
+
+	v->vdd = devm_regulator_get(&pdev->dev, "vdd");
+	if (IS_ERR_OR_NULL(v->vdd)) {
+		rc = PTR_ERR(v->vdd) ?: -ENOENT;
+		pr_err("Failed to find regulator (vdd) (%d)\n", rc);
+		goto exit;
+	}
+
+	v->bus.pdata = msm_bus_cl_get_pdata(pdev);
+	if (IS_ERR_OR_NULL(v->bus.pdata)) {
+		rc = PTR_ERR(v->bus.pdata) ?: -ENOENT;
+		pr_err("Failed to find bus vectors (%d)\n", rc);
+		goto exit;
+	}
+
+	v->bus.priv = msm_bus_scale_register_client(v->bus.pdata);
+	if (!v->bus.priv) {
+		rc = -EBADHANDLE;
+		pr_err("Failed to register bus client\n");
+		goto free_pdata;
+	}
+
+	/* Misc. */
+	rc = of_property_read_u32(pdev->dev.of_node, "qcom,bank-size",
+			&v->bank_size);
+	if (rc || !v->bank_size) {
+		pr_err("Failed reading (or found invalid) qcom,bank-size in %s (%d)\n",
 				of_node_full_name(pdev->dev.of_node), rc);
 		rc = -ENOENT;
-		goto exit;
+		goto free_pdata;
 	}
 
-	pr_debug("Found configuration with %d banks\n", v->num_banks);
+	v->num_banks = resource_size(v->mem.resource) / v->bank_size;
+
+	pr_debug("Found configuration with %d banks with size %d\n",
+			v->num_banks, v->bank_size);
+
+	return 0;
+free_pdata:
+	msm_bus_cl_clear_pdata(v->bus.pdata);
 exit:
 	return rc;
+}
+
+static inline void __uninit_resources(struct vmem *v,
+		struct platform_device *pdev)
+{
+	int c = 0;
+
+	msm_bus_cl_clear_pdata(v->bus.pdata);
+	v->bus.pdata = NULL;
+	v->bus.priv = 0;
+
+	for (c = 0; c < v->num_clocks; ++c) {
+		v->clocks[c].clk = NULL;
+		v->clocks[c].name = NULL;
+	}
+
+	v->vdd = NULL;
 }
 
 static int vmem_probe(struct platform_device *pdev)
 {
 	uint32_t version = 0, num_banks = 0, rc = 0;
+	struct vmem *v = NULL;
 
 	if (vmem) {
 		pr_err("Only one instance of %s allowed", pdev->name);
 		return -EEXIST;
 	}
 
-	vmem = devm_kzalloc(&pdev->dev, sizeof(*vmem), GFP_KERNEL);
-	if (!vmem) {
+	v = devm_kzalloc(&pdev->dev, sizeof(*v), GFP_KERNEL);
+	if (!v) {
 		pr_err("Failed allocate context memory in probe\n");
 		return -ENOMEM;
 	}
 
-	platform_set_drvdata(pdev, vmem);
 
-	rc = __init_resources(vmem, pdev);
+	rc = __init_resources(v, pdev);
 	if (rc) {
 		pr_err("Failed to read resources\n");
 		goto exit;
@@ -486,51 +608,51 @@ static int vmem_probe(struct platform_device *pdev)
 	 * For now, only support up to 4 banks. It's unrealistic that VMEM has
 	 * more banks than that (even in the future).
 	 */
-	if (vmem->num_banks > MAX_BANKS) {
+	if (v->num_banks > MAX_BANKS) {
 		pr_err("Number of banks (%d) exceeds what's supported (%d)\n",
-			vmem->num_banks, MAX_BANKS);
+			v->num_banks, MAX_BANKS);
 		rc = -ENOTSUPP;
 		goto exit;
 	}
 
 	/* Cross check the platform resources with what's available on chip */
-	rc = __enable_clocks(vmem);
+	rc = __power_on(v);
 	if (rc) {
-		pr_err("Failed to enable clocks: %d\n", rc);
+		pr_err("Failed to power on (%d)\n", rc);
 		goto exit;
 	}
 
-	version = __readl(OCIMEM_HW_VERSION(vmem));
+	version = __readl(OCIMEM_HW_VERSION(v));
 	pr_debug("v%d.%d.%d\n", VERSION_MAJOR(version), VERSION_MINOR(version),
 			VERSION_STEP(version));
 
-	num_banks = PROFILE_BANKS(__readl(OCIMEM_HW_PROFILE(vmem)));
+	num_banks = PROFILE_BANKS(__readl(OCIMEM_HW_PROFILE(v)));
 	pr_debug("Found %d banks on chip\n", num_banks);
-	if (vmem->num_banks > num_banks) {
-		pr_err("Platform configuration of %d banks exceeds what's available on chip (%d)\n",
-				vmem->num_banks, num_banks);
+	if (v->num_banks != num_banks) {
+		pr_err("Platform configuration of %d banks differs from what's available on chip (%d)\n",
+				v->num_banks, num_banks);
 		rc = -EINVAL;
 		goto disable_clocks;
 	}
 
-	if (vmem->num_banks * BYTES_PER_BANK >
-			resource_size(vmem->mem.resource)) {
-		pr_err("Too many banks in configuration\n");
-		rc = -E2BIG;
-		goto disable_clocks;
-	}
-
-	/* Everything good so far, set up debugfs */
-	rc = devm_request_irq(&pdev->dev, vmem->irq, __irq_handler,
-			IRQF_TRIGGER_HIGH, "vmem", vmem);
+	rc = devm_request_irq(&pdev->dev, v->irq, __irq_handler,
+			IRQF_TRIGGER_HIGH, "vmem", v);
 	if (rc) {
-		pr_err("Failed to setup irq: %d\n", rc);
+		pr_err("Failed to setup irq (%d)\n", rc);
 		goto disable_clocks;
 	}
 
-	vmem->debugfs_root = vmem_debugfs_init(pdev);
+	__disable_interrupts(v);
+
+	/* Everything good so far, set up the global context and debug hooks */
+	pr_info("Up and running with %d banks of memory from %pR\n",
+			v->num_banks, &v->mem.resource);
+	v->debugfs_root = vmem_debugfs_init(pdev);
+	platform_set_drvdata(pdev, v);
+	vmem = v;
+
 disable_clocks:
-	__disable_clocks(vmem);
+	__power_off(v);
 exit:
 	return rc;
 }
@@ -539,7 +661,12 @@ static int vmem_remove(struct platform_device *pdev)
 {
 	struct vmem *v = platform_get_drvdata(pdev);
 
+	BUG_ON(v != vmem);
+
+	__uninit_resources(v, pdev);
 	vmem_debugfs_deinit(v->debugfs_root);
+	vmem = NULL;
+
 	return 0;
 }
 

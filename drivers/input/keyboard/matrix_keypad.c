@@ -2,7 +2,6 @@
  *  GPIO driven matrix keyboard driver
  *
  *  Copyright (c) 2008 Marek Vasut <marek.vasut@gmail.com>
- *  Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  *  Based on corgikbd.c
  *
@@ -15,7 +14,6 @@
 #include <linux/types.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
-#include <linux/init.h>
 #include <linux/input.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
@@ -37,7 +35,7 @@ struct matrix_keypad {
 
 	uint32_t last_key_state[MATRIX_MAX_COLS];
 	struct delayed_work work;
-	struct mutex lock;
+	spinlock_t lock;
 	bool scan_pending;
 	bool stopped;
 	bool gpio_all_disabled;
@@ -166,17 +164,19 @@ static void matrix_keypad_scan(struct work_struct *work)
 
 	activate_all_cols(pdata, true);
 
-	mutex_lock(&keypad->lock);
+	/* Enable IRQs again */
+	spin_lock_irq(&keypad->lock);
 	keypad->scan_pending = false;
 	enable_row_irqs(keypad);
-	mutex_unlock(&keypad->lock);
+	spin_unlock_irq(&keypad->lock);
 }
 
 static irqreturn_t matrix_keypad_interrupt(int irq, void *id)
 {
 	struct matrix_keypad *keypad = id;
+	unsigned long flags;
 
-	mutex_lock(&keypad->lock);
+	spin_lock_irqsave(&keypad->lock, flags);
 
 	/*
 	 * See if another IRQ beaten us to it and scheduled the
@@ -192,7 +192,7 @@ static irqreturn_t matrix_keypad_interrupt(int irq, void *id)
 		msecs_to_jiffies(keypad->pdata->debounce_ms));
 
 out:
-	mutex_unlock(&keypad->lock);
+	spin_unlock_irqrestore(&keypad->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -332,7 +332,7 @@ static int matrix_keypad_init_gpio(struct platform_device *pdev,
 	}
 
 	if (pdata->clustered_irq > 0) {
-		err = request_irq(pdata->clustered_irq,
+		err = request_any_context_irq(pdata->clustered_irq,
 				matrix_keypad_interrupt,
 				pdata->clustered_irq_flags,
 				"matrix-keypad", keypad);
@@ -343,11 +343,9 @@ static int matrix_keypad_init_gpio(struct platform_device *pdev,
 		}
 	} else {
 		for (i = 0; i < pdata->num_row_gpios; i++) {
-			err = request_threaded_irq(
+			err = request_any_context_irq(
 					gpio_to_irq(pdata->row_gpios[i]),
-					NULL,
 					matrix_keypad_interrupt,
-					IRQF_DISABLED | IRQF_ONESHOT |
 					IRQF_TRIGGER_RISING |
 					IRQF_TRIGGER_FALLING,
 					"matrix-keypad", keypad);
@@ -498,7 +496,7 @@ static int matrix_keypad_probe(struct platform_device *pdev)
 	keypad->row_shift = get_count_order(pdata->num_col_gpios);
 	keypad->stopped = true;
 	INIT_DELAYED_WORK(&keypad->work, matrix_keypad_scan);
-	mutex_init(&keypad->lock);
+	spin_lock_init(&keypad->lock);
 
 	input_dev->name		= pdev->name;
 	input_dev->id.bustype	= BUS_HOST;
@@ -548,11 +546,8 @@ static int matrix_keypad_remove(struct platform_device *pdev)
 	device_init_wakeup(&pdev->dev, 0);
 
 	matrix_keypad_free_gpio(keypad);
-	mutex_destroy(&keypad->lock);
 	input_unregister_device(keypad->input_dev);
 	kfree(keypad);
-
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

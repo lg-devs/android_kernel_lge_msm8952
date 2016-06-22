@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,7 +27,7 @@
 #include "mdss_mdp.h"
 #include "mdss_fb.h"
 #include "mdss_wb.h"
-
+#include "mdss_smmu.h"
 
 enum mdss_mdp_wb_state {
 	WB_OPEN,
@@ -105,7 +105,7 @@ struct mdss_mdp_data *mdss_mdp_wb_debug_buffer(struct msm_fb_data_type *mfd)
 		if (is_mdss_iommu_attached()) {
 			int domain = MDSS_IOMMU_DOMAIN_UNSECURE;
 			rc = ion_map_iommu(iclient, ihdl,
-					   mdss_get_iommu_domain(domain),
+					   mdss_smmu_get_domain_id(domain),
 					   0, SZ_4K, 0,
 					   &img->addr,
 					   (unsigned long *) &img->len,
@@ -409,10 +409,12 @@ static struct mdss_mdp_wb_data *get_local_node(struct mdss_mdp_wb *wb,
 static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 						struct msmfb_data *data)
 {
-
+	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
+	struct mdp_layer_buffer buffer;
 	struct mdss_mdp_wb *wb = mfd_to_wb(mfd);
 	struct mdss_mdp_wb_data *node;
 	struct mdss_mdp_img_data *buf;
+	struct mdss_mdp_mixer *mixer;
 	u32 flags = 0;
 	int ret;
 
@@ -453,7 +455,17 @@ static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 	if (wb->is_secure)
 		flags |= MDP_SECURE_OVERLAY_SESSION;
 
-	ret = mdss_mdp_data_get(&node->buf_data, data, 1, flags);
+	mixer = mdss_mdp_mixer_get(ctl, MDSS_MDP_MIXER_MUX_DEFAULT);
+	if (!mixer) {
+		pr_err("Null mixer\n");
+		goto register_fail;
+	}
+	buffer.width = mixer->width;
+	buffer.height = mixer->height;
+	buffer.format = ctl->dst_format;
+	ret = mdss_mdp_data_get_and_validate_size(&node->buf_data,
+		data, 1, flags, &mfd->pdev->dev, true, DMA_FROM_DEVICE,
+		&buffer);
 	if (IS_ERR_VALUE(ret)) {
 		pr_err("error getting buffer info\n");
 		goto register_fail;
@@ -465,7 +477,7 @@ static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 		goto fail_freebuf;
 	}
 
-	ret = mdss_mdp_data_map(&node->buf_data);
+	ret = mdss_mdp_data_map(&node->buf_data, true, DMA_FROM_DEVICE);
 	if (IS_ERR_VALUE(ret)) {
 		pr_err("error mapping buffer\n");
 		mdss_iommu_ctrl(0);
@@ -488,7 +500,7 @@ static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 
 	return node;
 fail_freebuf:
-	mdss_mdp_data_free(&node->buf_data);
+	mdss_mdp_data_free(&node->buf_data, true, DMA_FROM_DEVICE);
 register_fail:
 	kfree(node);
 	return NULL;
@@ -507,7 +519,7 @@ static void mdss_mdp_wb_free_node(struct mdss_mdp_wb_data *node)
 				node->buf_info.offset,
 				&buf->addr);
 
-		mdss_mdp_data_free(&node->buf_data);
+		mdss_mdp_data_free(&node->buf_data, true, DMA_FROM_DEVICE);
 		node->user_alloc = false;
 	}
 }
@@ -899,7 +911,7 @@ int msm_fb_get_iommu_domain(struct fb_info *info, int domain)
 		pr_err("Invalid mdp iommu domain (%d)\n", domain);
 		return -EINVAL;
 	}
-	return mdss_get_iommu_domain(mdss_domain);
+	return mdss_smmu_get_domain_id(mdss_domain);
 }
 EXPORT_SYMBOL(msm_fb_get_iommu_domain);
 

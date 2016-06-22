@@ -742,7 +742,7 @@ static int qpnp_pin_to_irq(struct gpio_chip *gpio_chip, unsigned offset)
 {
 	struct qpnp_pin_chip *q_chip = dev_get_drvdata(gpio_chip->dev);
 	struct qpnp_pin_spec *q_spec;
-	u32 intspec[3];
+	struct of_phandle_args oirq;
 
 	q_spec = qpnp_chip_gpio_get_spec(q_chip, offset);
 	if (!q_spec)
@@ -753,10 +753,13 @@ static int qpnp_pin_to_irq(struct gpio_chip *gpio_chip, unsigned offset)
 		return q_spec->irq;
 
 	/* call into irq_domain to get irq mapping */
-	intspec[0] = q_chip->spmi->sid;
-	intspec[1] = (q_spec->offset >> 8) & 0xFF;
-	intspec[2] = 0;
-	q_spec->irq = irq_create_of_mapping(q_chip->int_ctrl, intspec, 3);
+	oirq.np = q_chip->int_ctrl;
+	oirq.args[0] = q_chip->spmi->sid;
+	oirq.args[1] = (q_spec->offset >> 8) & 0xFF;
+	oirq.args[2] = 0;
+	oirq.args_count = 3;
+
+	q_spec->irq = irq_create_of_mapping(&oirq);
 	if (!q_spec->irq) {
 		dev_err(&q_chip->spmi->dev, "%s: invalid irq for gpio %u\n",
 						__func__, q_spec->pmic_pin);
@@ -1074,12 +1077,9 @@ static int qpnp_pin_free_chip(struct qpnp_pin_chip *q_chip)
 	mutex_lock(&qpnp_pin_chips_lock);
 	list_del(&q_chip->chip_list);
 	mutex_unlock(&qpnp_pin_chips_lock);
-	if (q_chip->chip_registered) {
-		rc = gpiochip_remove(&q_chip->gpio_chip);
-		if (rc)
-			dev_err(&q_chip->spmi->dev, "%s: unable to remove gpio\n",
-					__func__);
-	}
+	if (q_chip->chip_registered)
+		gpiochip_remove(&q_chip->gpio_chip);
+
 	kfree(q_chip->chip_gpios);
 	kfree(q_chip->pmic_pins);
 	kfree(q_chip);

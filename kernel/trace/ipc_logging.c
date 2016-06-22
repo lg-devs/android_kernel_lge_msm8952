@@ -544,7 +544,7 @@ int ipc_log_extract(void *ctxt, char *buff, int size)
 		spin_lock(&ilctxt->context_lock_lhb1);
 	}
 	if ((size - dctxt.size) == 0)
-		INIT_COMPLETION(ilctxt->read_avail);
+		reinit_completion(&ilctxt->read_avail);
 	spin_unlock(&ilctxt->context_lock_lhb1);
 	read_unlock_irqrestore(&context_list_lock_lha1, flags);
 	return size - dctxt.size;

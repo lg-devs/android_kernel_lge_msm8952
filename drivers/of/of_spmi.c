@@ -50,12 +50,12 @@ static inline void of_spmi_init_resource(struct of_spmi_res_info *r_info,
 static void of_spmi_sum_resources(struct of_spmi_res_info *r_info,
 				  bool has_reg)
 {
-	struct of_irq oirq;
+	struct of_phandle_args oirq;
 	uint64_t size;
 	uint32_t flags;
 	int i = 0;
 
-	while (of_irq_map_one(r_info->node, i, &oirq) == 0)
+	while (of_irq_parse_one(r_info->node, i, &oirq) == 0)
 		i++;
 
 	r_info->num_irq += i;

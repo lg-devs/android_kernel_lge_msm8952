@@ -1,5 +1,5 @@
 /*
- * include/linux/ion.h
+ * drivers/staging/android/uapi/ion.h
  *
  * Copyright (C) 2011 Google, Inc.
  *
@@ -14,8 +14,8 @@
  *
  */
 
-#ifndef _UAPI_ION_H
-#define _UAPI_ION_H
+#ifndef _UAPI_LINUX_ION_H
+#define _UAPI_LINUX_ION_H
 
 #include <linux/ioctl.h>
 #include <linux/types.h>
@@ -27,12 +27,12 @@ typedef int ion_user_handle_t;
  * @ION_HEAP_TYPE_SYSTEM:	 memory allocated via vmalloc
  * @ION_HEAP_TYPE_SYSTEM_CONTIG: memory allocated via kmalloc
  * @ION_HEAP_TYPE_CARVEOUT:	 memory allocated from a prereserved
- * 				 carveout heap, allocations are physically
- * 				 contiguous
+ *				 carveout heap, allocations are physically
+ *				 contiguous
  * @ION_HEAP_TYPE_DMA:		 memory allocated via DMA API
  * @ION_NUM_HEAPS:		 helper for iterating over heaps, a bit mask
- * 				 is used to identify the heaps, so only 32
- * 				 total heap types are supported
+ *				 is used to identify the heaps, so only 32
+ *				 total heap types are supported
  */
 enum ion_heap_type {
 	ION_HEAP_TYPE_SYSTEM,
@@ -50,7 +50,7 @@ enum ion_heap_type {
 #define ION_HEAP_CARVEOUT_MASK		(1 << ION_HEAP_TYPE_CARVEOUT)
 #define ION_HEAP_TYPE_DMA_MASK		(1 << ION_HEAP_TYPE_DMA)
 
-#define ION_NUM_HEAP_IDS		sizeof(unsigned int) * 8
+#define ION_NUM_HEAP_IDS		(sizeof(unsigned int) * 8)
 
 /**
  * allocation flags - the lower 16 bits are used by core ion, the upper 16
@@ -78,7 +78,7 @@ enum ion_heap_type {
  * @align:		required alignment of the allocation
  * @heap_id_mask:	mask of heap ids to allocate from
  * @flags:		flags passed to heap
- * @handle:		pointer that will be populated with a cookie to use to 
+ * @handle:		pointer that will be populated with a cookie to use to
  *			refer to this allocation
  *
  * Provided by userspace as an argument to the ioctl
@@ -126,6 +126,7 @@ struct ion_custom_data {
 	unsigned int cmd;
 	unsigned long arg;
 };
+
 #define ION_IOC_MAGIC		'I'
 
 /**
@@ -192,4 +193,4 @@ struct ion_custom_data {
  */
 #define ION_IOC_CUSTOM		_IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
 
-#endif /* _UAPI_ION_H */
+#endif /* _UAPI_LINUX_ION_H */

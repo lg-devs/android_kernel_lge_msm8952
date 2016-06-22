@@ -14,7 +14,7 @@
 #include <linux/slab.h>
 #include <linux/spmi.h>
 #include <linux/err.h>
-#include <linux/qpnp-revid.h>
+#include <linux/qpnp/qpnp-revid.h>
 
 #define REVID_REVISION1	0x0
 #define REVID_REVISION2	0x1
@@ -41,10 +41,12 @@ static const char *const pmic_names[] = {
 	"PM8916",
 	"PM8004",
 	"PM8909",
-	"Unknown PMIC",
-	"Unknown PMIC",
+	"PM2433",
+	"PMD9655",
 	"PM8950",
 	"PMI8950",
+	"PMK8001",
+	"PMI8996",
 };
 
 struct revid_chip {
@@ -105,6 +107,7 @@ EXPORT_SYMBOL(get_revid_data);
 
 #define PM8941_PERIPHERAL_SUBTYPE	0x01
 #define PM8226_PERIPHERAL_SUBTYPE	0x04
+#define PMD9655_PERIPHERAL_SUBTYPE	0x0F
 static size_t build_pmic_string(char *buf, size_t n, int sid,
 		u8 subtype, u8 rev1, u8 rev2, u8 rev3, u8 rev4)
 {
@@ -162,7 +165,11 @@ static int qpnp_revid_probe(struct spmi_device *spmi)
 	rev4 = qpnp_read_byte(spmi, resource->start + REVID_REVISION4);
 
 	pmic_subtype = qpnp_read_byte(spmi, resource->start + REVID_SUBTYPE);
-	pmic_status = qpnp_read_byte(spmi, resource->start + REVID_STATUS1);
+	if (pmic_subtype != PMD9655_PERIPHERAL_SUBTYPE)
+		pmic_status = qpnp_read_byte(spmi,
+					     resource->start + REVID_STATUS1);
+	else
+		pmic_status = 0;
 
 	revid_chip = devm_kzalloc(&spmi->dev, sizeof(struct revid_chip),
 						GFP_KERNEL);

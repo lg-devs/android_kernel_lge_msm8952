@@ -1,6 +1,6 @@
 /*
 
- * drivers/gpu/ion/ion.c
+ * drivers/staging/android/ion/ion.c
  *
  * Copyright (C) 2011 Google, Inc.
  * Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
@@ -16,6 +16,7 @@
  *
  */
 
+#include <linux/err.h>
 #include <linux/file.h>
 #include <linux/freezer.h>
 #include <linux/fs.h>
@@ -37,6 +38,7 @@
 #include <linux/dma-buf.h>
 #include <linux/idr.h>
 #include <linux/msm_ion.h>
+#include <linux/msm_dma_iommu_mapping.h>
 #include <trace/events/kmem.h>
 
 
@@ -59,8 +61,8 @@ struct ion_device {
 	struct mutex buffer_lock;
 	struct rw_semaphore lock;
 	struct plist_head heaps;
-	long (*custom_ioctl) (struct ion_client *client, unsigned int cmd,
-			      unsigned long arg);
+	long (*custom_ioctl)(struct ion_client *client, unsigned int cmd,
+			     unsigned long arg);
 	struct rb_root clients;
 	struct dentry *debug_root;
 	struct dentry *heaps_debug_root;
@@ -222,7 +224,7 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 	if (IS_ERR(table)) {
 		heap->ops->free(buffer);
 		kfree(buffer);
-		return ERR_PTR(PTR_ERR(table));
+		return ERR_CAST(table);
 	}
 	buffer->sg_table = table;
 	if (ion_buffer_fault_user_mappings(buffer)) {
@@ -254,7 +256,7 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 	   our systems the only dma_address space is physical addresses.
 	   Additionally, we can't afford the overhead of invalidating every
 	   allocation via dma_map_sg. The implicit contract here is that
-	   memory comming from the heaps is ready for dma, ie if it has a
+	   memory coming from the heaps is ready for dma, ie if it has a
 	   cached mapping that mapping has been invalidated */
 	for_each_sg(buffer->sg_table->sgl, sg, buffer->sg_table->nents, i) {
 		if (sg_dma_address(sg) == 0)
@@ -295,6 +297,8 @@ static void _ion_buffer_destroy(struct kref *kref)
 	struct ion_buffer *buffer = container_of(kref, struct ion_buffer, ref);
 	struct ion_heap *heap = buffer->heap;
 	struct ion_device *dev = buffer->dev;
+
+	msm_dma_buf_freed(buffer);
 
 	mutex_lock(&dev->buffer_lock);
 	rb_erase(&buffer->node, &dev->buffers);
@@ -450,7 +454,7 @@ static bool ion_handle_validate(struct ion_client *client,
 				struct ion_handle *handle)
 {
 	WARN_ON(!mutex_is_locked(&client->lock));
-	return (idr_find(&client->idr, handle->id) == handle);
+	return idr_find(&client->idr, handle->id) == handle;
 }
 
 static int ion_handle_add(struct ion_client *client, struct ion_handle *handle)
@@ -566,7 +570,7 @@ struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 					    PTR_ERR(buffer));
 		pr_debug("ION is unable to allocate 0x%zx bytes (alignment: 0x%zx) from heap(s) %sfor client %s\n",
 			len, align, dbg_str, client->name);
-		return ERR_PTR(PTR_ERR(buffer));
+		return ERR_CAST(buffer);
 	}
 
 	handle = ion_handle_create(client, buffer);
@@ -884,6 +888,7 @@ struct ion_client *ion_client_create(struct ion_device *dev,
 						client, &debug_client_fops);
 	if (!client->debug_root) {
 		char buf[256], *path;
+
 		path = dentry_path(dev->clients_debug_root, buf, 256);
 		pr_err("Failed to create client debugfs at %s/%s\n",
 			path, client->display_name);
@@ -955,7 +960,7 @@ int ion_handle_get_flags(struct ion_client *client, struct ion_handle *handle,
 EXPORT_SYMBOL(ion_handle_get_flags);
 
 int ion_handle_get_size(struct ion_client *client, struct ion_handle *handle,
-			unsigned long *size)
+			size_t *size)
 {
 	struct ion_buffer *buffer;
 
@@ -1093,7 +1098,7 @@ void ion_pages_sync_for_device(struct device *dev, struct page *page,
 	sg_set_page(&sg, page, size, 0);
 	/*
 	 * This is not correct - sg_dma_address needs a dma_addr_t that is valid
-	 * for the the targeted device, but this works on the currently targeted
+	 * for the targeted device, but this works on the currently targeted
 	 * hardware.
 	 */
 	sg_dma_address(&sg) = page_to_phys(page);
@@ -1205,8 +1210,8 @@ static int ion_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	int ret = 0;
 
 	if (!buffer->heap->ops->map_user) {
-		pr_err("%s: this heap does not define a method for mapping "
-		       "to userspace\n", __func__);
+		pr_err("%s: this heap does not define a method for mapping to userspace\n",
+			__func__);
 		return -EINVAL;
 	}
 
@@ -1252,7 +1257,6 @@ static void *ion_dma_buf_kmap(struct dma_buf *dmabuf, unsigned long offset)
 static void ion_dma_buf_kunmap(struct dma_buf *dmabuf, unsigned long offset,
 			       void *ptr)
 {
-	return;
 }
 
 static int ion_dma_buf_begin_cpu_access(struct dma_buf *dmabuf, size_t start,
@@ -1271,9 +1275,7 @@ static int ion_dma_buf_begin_cpu_access(struct dma_buf *dmabuf, size_t start,
 	mutex_lock(&buffer->lock);
 	vaddr = ion_buffer_kmap_get(buffer);
 	mutex_unlock(&buffer->lock);
-	if (IS_ERR(vaddr))
-		return PTR_ERR(vaddr);
-	return 0;
+	return PTR_ERR_OR_ZERO(vaddr);
 }
 
 static void ion_dma_buf_end_cpu_access(struct dma_buf *dmabuf, size_t start,
@@ -1318,7 +1320,8 @@ struct dma_buf *ion_share_dma_buf(struct ion_client *client,
 	ion_buffer_get(buffer);
 	mutex_unlock(&client->lock);
 
-	dmabuf = dma_buf_export(buffer, &dma_buf_ops, buffer->size, O_RDWR);
+	dmabuf = dma_buf_export(buffer, &dma_buf_ops, buffer->size, O_RDWR,
+				NULL);
 	if (IS_ERR(dmabuf)) {
 		ion_buffer_put(buffer);
 		return dmabuf;
@@ -1353,7 +1356,7 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd)
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR(dmabuf))
-		return ERR_PTR(PTR_ERR(dmabuf));
+		return ERR_CAST(dmabuf);
 	/* if this memory came from ion */
 
 	if (dmabuf->ops != &dma_buf_ops) {
@@ -1703,7 +1706,7 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 	size_t total_orphaned_size = 0;
 
 	seq_printf(s, "%16.s %16.s %16.s\n", "client", "pid", "size");
-	seq_printf(s, "----------------------------------------------------\n");
+	seq_puts(s, "----------------------------------------------------\n");
 
 	down_read(&dev->lock);
 	for (n = rb_first(&dev->clients); n; n = rb_next(n)) {
@@ -1725,9 +1728,8 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 		}
 	}
 	up_read(&dev->lock);
-	seq_printf(s, "----------------------------------------------------\n");
-	seq_printf(s, "orphaned allocations (info is from last known client):"
-		   "\n");
+	seq_puts(s, "----------------------------------------------------\n");
+	seq_puts(s, "orphaned allocations (info is from last known client):\n");
 	mutex_lock(&dev->buffer_lock);
 	for (n = rb_first(&dev->buffers); n; n = rb_next(n)) {
 		struct ion_buffer *buffer = rb_entry(n, struct ion_buffer,
@@ -1744,14 +1746,14 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 		}
 	}
 	mutex_unlock(&dev->buffer_lock);
-	seq_printf(s, "----------------------------------------------------\n");
+	seq_puts(s, "----------------------------------------------------\n");
 	seq_printf(s, "%16.s %16zu\n", "total orphaned",
 		   total_orphaned_size);
 	seq_printf(s, "%16.s %16zu\n", "total ", total_size);
 	if (heap->flags & ION_HEAP_FLAG_DEFER_FREE)
 		seq_printf(s, "%16.s %16zu\n", "deferred free",
 				heap->free_list_size);
-	seq_printf(s, "----------------------------------------------------\n");
+	seq_puts(s, "----------------------------------------------------\n");
 
 	if (heap->debug_show)
 		heap->debug_show(heap, s, unused);
@@ -1866,7 +1868,7 @@ void ion_device_add_heap(struct ion_device *dev, struct ion_heap *heap)
 		char buf[256], *path;
 
 		path = dentry_path(dev->heaps_debug_root, buf, 256);
-		pr_err("Failed to created heap debugfs at %s/%s\n",
+		pr_err("Failed to create heap debugfs at %s/%s\n",
 			path, heap->name);
 	}
 
@@ -1882,7 +1884,7 @@ void ion_device_add_heap(struct ion_device *dev, struct ion_heap *heap)
 			char buf[256], *path;
 
 			path = dentry_path(dev->heaps_debug_root, buf, 256);
-			pr_err("Failed to created heap shrinker debugfs at %s/%s\n",
+			pr_err("Failed to create heap shrinker debugfs at %s/%s\n",
 				path, debug_name);
 		}
 	}
@@ -1984,8 +1986,7 @@ void __init ion_reserve(struct ion_platform_data *data)
 						    data->heaps[i].align,
 						    MEMBLOCK_ALLOC_ANYWHERE);
 			if (!paddr) {
-				pr_err("%s: error allocating memblock for "
-				       "heap %d\n",
+				pr_err("%s: error allocating memblock for heap %d\n",
 					__func__, i);
 				continue;
 			}

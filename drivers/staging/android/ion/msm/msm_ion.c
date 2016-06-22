@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,11 +29,13 @@
 #include <linux/dma-contiguous.h>
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
+#include <linux/cma.h>
 #include <linux/show_mem_notifier.h>
 #include <asm/cacheflush.h>
 #include "../ion_priv.h"
 #include "ion_cp_common.h"
 #include "compat_msm_ion.h"
+#include <soc/qcom/secure_buffer.h>
 
 #define ION_COMPAT_STR	"qcom,msm-ion"
 
@@ -108,6 +110,10 @@ static struct ion_heap_desc ion_heap_meta[] = {
 	{
 		.id	= ION_ADSP_HEAP_ID,
 		.name	= ION_ADSP_HEAP_NAME,
+	},
+	{
+		.id	= ION_SECURE_DISPLAY_HEAP_ID,
+		.name	= ION_SECURE_DISPLAY_HEAP_NAME,
 	}
 };
 #endif
@@ -231,37 +237,38 @@ static int ion_pages_cache_ops(struct ion_client *client,
 			unsigned int cmd)
 {
 	struct sg_table *table = NULL;
+	struct scatterlist *sg;
+	struct page *page;
+	int i;
+	void *ptr;
 
 	table = ion_sg_table(client, handle);
 	if (IS_ERR_OR_NULL(table))
 		return PTR_ERR(table);
 
-	switch (cmd) {
-	case ION_IOC_CLEAN_CACHES:
-		if (!vaddr)
-			dma_sync_sg_for_device(NULL, table->sgl,
-				table->nents, DMA_TO_DEVICE);
+	for_each_sg(table->sgl, sg, table->nents, i) {
+		page = sg_page(sg);
+		if (PageHighMem(page))
+			ptr = kmap_atomic(page);
 		else
-			dmac_clean_range(vaddr, vaddr + length);
-		break;
-	case ION_IOC_INV_CACHES:
-		dma_sync_sg_for_cpu(NULL, table->sgl,
-			table->nents, DMA_FROM_DEVICE);
-		break;
-	case ION_IOC_CLEAN_INV_CACHES:
-		if (!vaddr) {
-			dma_sync_sg_for_device(NULL, table->sgl,
-				table->nents, DMA_TO_DEVICE);
-			dma_sync_sg_for_cpu(NULL, table->sgl,
-				table->nents, DMA_FROM_DEVICE);
-		} else {
-			dmac_flush_range(vaddr, vaddr + length);
-		}
-		break;
-	default:
-		return -EINVAL;
-	}
+			ptr = page_address(page);
 
+		switch (cmd) {
+		case ION_IOC_CLEAN_CACHES:
+			dmac_clean_range(ptr, ptr + sg->length);
+			break;
+		case ION_IOC_INV_CACHES:
+			dmac_inv_range(ptr, ptr + sg->length);
+			break;
+		case ION_IOC_CLEAN_INV_CACHES:
+			dmac_flush_range(ptr, ptr + sg->length);
+			break;
+		default:
+			return -EINVAL;
+		}
+		if (PageHighMem(page))
+			kunmap_atomic(ptr);
+	}
 	return 0;
 }
 
@@ -369,8 +376,8 @@ static struct heap_types_info {
 	MAKE_HEAP_TYPE_MAPPING(CHUNK),
 	MAKE_HEAP_TYPE_MAPPING(DMA),
 	MAKE_HEAP_TYPE_MAPPING(SECURE_DMA),
-	MAKE_HEAP_TYPE_MAPPING(REMOVED),
 	MAKE_HEAP_TYPE_MAPPING(SYSTEM_SECURE),
+	MAKE_HEAP_TYPE_MAPPING(HYP_CMA),
 };
 
 static int msm_ion_get_heap_type_from_dt_node(struct device_node *node,
@@ -427,119 +434,29 @@ static void free_pdata(const struct ion_platform_data *pdata)
 	kfree(pdata);
 }
 
-static void msm_ion_get_heap_align(struct device_node *node,
-				   struct ion_platform_heap *heap)
-{
-	unsigned int val;
-
-	int ret = of_property_read_u32(node, "qcom,heap-align", &val);
-	if (!ret) {
-		switch ((int) heap->type) {
-		case ION_HEAP_TYPE_CARVEOUT:
-		{
-			struct ion_co_heap_pdata *extra =
-						heap->extra_data;
-			extra->align = val;
-			break;
-		}
-		default:
-			pr_err("ION-heap %s: Cannot specify alignment for this type of heap\n",
-					heap->name);
-			break;
-		}
-	}
-}
-
-static int msm_ion_get_heap_size(struct device_node *node,
+static void msm_ion_get_heap_dt_data(struct device_node *node,
 				 struct ion_platform_heap *heap)
 {
-	unsigned int val;
-	int ret = 0;
-	u32 out_values[2];
 	struct device_node *pnode;
 
-	ret = of_property_read_u32(node, "qcom,memory-reservation-size", &val);
-	if (!ret)
-		heap->size = val;
-
-	ret = of_property_read_u32_array(node, "qcom,memory-fixed",
-								out_values, 2);
-	if (!ret) {
-		heap->size = out_values[1];
-		goto out;
-	}
-
-	pnode = of_parse_phandle(node, "linux,contiguous-region", 0);
+	pnode = of_parse_phandle(node, "memory-region", 0);
 	if (pnode != NULL) {
-		const u32 *addr;
+		const __be32 *basep;
 		u64 size;
+		u64 base;
 
-		addr = of_get_address(pnode, 0, &size, NULL);
-		if (!addr) {
-			of_node_put(pnode);
-			ret = -EINVAL;
-			goto out;
+		basep = of_get_address(pnode,  0, &size, NULL);
+		if (!basep) {
+			base = cma_get_base(dev_get_cma_area(heap->priv));
+			size = cma_get_size(dev_get_cma_area(heap->priv));
+		} else {
+			base = of_translate_address(pnode, basep);
+			WARN(base == OF_BAD_ADDR, "Failed to parse DT node for heap %s\n",
+					heap->name);
 		}
-		heap->size = (u32) size;
-		ret = 0;
+		heap->base = base;
+		heap->size = size;
 		of_node_put(pnode);
-	}
-
-	ret = 0;
-out:
-	return ret;
-}
-
-static void msm_ion_get_heap_base(struct device_node *node,
-				 struct ion_platform_heap *heap)
-{
-	u32 out_values[2];
-	int ret = 0;
-	struct device_node *pnode;
-
-	ret = of_property_read_u32_array(node, "qcom,memory-fixed",
-							out_values, 2);
-	if (!ret)
-		heap->base = out_values[0];
-
-	pnode = of_parse_phandle(node, "linux,contiguous-region", 0);
-	if (pnode != NULL) {
-		heap->base = cma_get_base(heap->priv);
-		of_node_put(pnode);
-	}
-
-	return;
-}
-
-static void msm_ion_get_heap_adjacent(struct device_node *node,
-				      struct ion_platform_heap *heap)
-{
-	unsigned int val;
-	int ret = of_property_read_u32(node, "qcom,heap-adjacent", &val);
-	if (!ret) {
-		switch (heap->type) {
-		case ION_HEAP_TYPE_CARVEOUT:
-		{
-			struct ion_co_heap_pdata *extra = heap->extra_data;
-			extra->adjacent_mem_id = val;
-			break;
-		}
-		default:
-			pr_err("ION-heap %s: Cannot specify adjcent mem id for this type of heap\n",
-				heap->name);
-			break;
-		}
-	} else {
-		switch (heap->type) {
-		case ION_HEAP_TYPE_CARVEOUT:
-		{
-			struct ion_co_heap_pdata *extra = heap->extra_data;
-			extra->adjacent_mem_id = INVALID_HEAP_ID;
-			break;
-		}
-		default:
-			break;
-		}
 	}
 }
 
@@ -598,14 +515,7 @@ static struct ion_platform_data *msm_ion_parse_dt(struct platform_device *pdev)
 		if (ret)
 			goto free_heaps;
 
-		msm_ion_get_heap_base(node, &pdata->heaps[idx]);
-		msm_ion_get_heap_align(node, &pdata->heaps[idx]);
-
-		ret = msm_ion_get_heap_size(node, &pdata->heaps[idx]);
-		if (ret)
-			goto free_heaps;
-
-		msm_ion_get_heap_adjacent(node, &pdata->heaps[idx]);
+		msm_ion_get_heap_dt_data(node, &pdata->heaps[idx]);
 
 		++idx;
 	}
@@ -669,6 +579,24 @@ int ion_heap_allow_heap_secure(enum ion_heap_type type)
 	return false;
 }
 
+int get_secure_vmid(unsigned long flags)
+{
+	if (flags & ION_FLAG_CP_TOUCH)
+		return VMID_CP_TOUCH;
+	if (flags & ION_FLAG_CP_BITSTREAM)
+		return VMID_CP_BITSTREAM;
+	if (flags & ION_FLAG_CP_PIXEL)
+		return VMID_CP_PIXEL;
+	if (flags & ION_FLAG_CP_NON_PIXEL)
+		return VMID_CP_NON_PIXEL;
+	if (flags & ION_FLAG_CP_CAMERA)
+		return VMID_CP_CAMERA;
+	if (flags & ION_FLAG_CP_SEC_DISPLAY)
+		return VMID_CP_SEC_DISPLAY;
+	if (flags & ION_FLAG_CP_APP)
+		return VMID_CP_APP;
+	return -EINVAL;
+}
 /* fix up the cases where the ioctl direction bits are incorrect */
 static unsigned int msm_ion_ioctl_dir(unsigned int cmd)
 {
@@ -877,14 +805,13 @@ int msm_ion_heap_high_order_page_zero(struct page *page, int order)
 	return ret;
 }
 
-int msm_ion_heap_buffer_zero(struct ion_buffer *buffer)
+int msm_ion_heap_sg_table_zero(struct sg_table *table, size_t size)
 {
-	struct sg_table *table = buffer->sg_table;
 	struct scatterlist *sg;
 	int i, j, ret = 0, npages = 0;
 	struct pages_mem pages_mem;
 
-	pages_mem.size = PAGE_ALIGN(buffer->size);
+	pages_mem.size = PAGE_ALIGN(size);
 
 	if (msm_ion_heap_alloc_pages_mem(&pages_mem))
 		return -ENOMEM;
@@ -916,11 +843,11 @@ static struct ion_heap *msm_ion_heap_create(struct ion_platform_heap *heap_data)
 		heap = ion_secure_cma_heap_create(heap_data);
 		break;
 #endif
-	case ION_HEAP_TYPE_REMOVED:
-		heap = ion_removed_heap_create(heap_data);
-		break;
 	case ION_HEAP_TYPE_SYSTEM_SECURE:
 		heap = ion_system_secure_heap_create(heap_data);
+		break;
+	case ION_HEAP_TYPE_HYP_CMA:
+		heap = ion_cma_secure_heap_create(heap_data);
 		break;
 	default:
 		heap = ion_heap_create(heap_data);
@@ -950,11 +877,12 @@ static void msm_ion_heap_destroy(struct ion_heap *heap)
 		ion_secure_cma_heap_destroy(heap);
 		break;
 #endif
-	case ION_HEAP_TYPE_REMOVED:
-		ion_removed_heap_destroy(heap);
-		break;
 	case ION_HEAP_TYPE_SYSTEM_SECURE:
 		ion_system_secure_heap_destroy(heap);
+		break;
+
+	case ION_HEAP_TYPE_HYP_CMA:
+		ion_cma_secure_heap_destroy(heap);
 		break;
 	default:
 		ion_heap_destroy(heap);

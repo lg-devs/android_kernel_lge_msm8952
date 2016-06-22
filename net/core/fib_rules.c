@@ -17,11 +17,6 @@
 #include <net/sock.h>
 #include <net/fib_rules.h>
 
-#define uid_valid(uid) ((uid) != -1)
-#define uid_lte(a, b) ((a) <= (b))
-#define uid_eq(a, b) ((a) == (b))
-#define uid_gte(a, b) ((a) >= (b))
-
 int fib_default_rule_add(struct fib_rules_ops *ops,
 			 u32 pref, u32 table, u32 flags)
 {
@@ -39,6 +34,9 @@ int fib_default_rule_add(struct fib_rules_ops *ops,
 	r->uid_start = INVALID_UID;
 	r->uid_end = INVALID_UID;
 	r->fr_net = hold_net(ops->fro_net);
+
+	r->suppress_prefixlen = -1;
+	r->suppress_ifgroup = -1;
 
 	/* The lock is not required here, the list in unreacheable
 	 * at the moment this function is called */
@@ -186,14 +184,14 @@ void fib_rules_unregister(struct fib_rules_ops *ops)
 }
 EXPORT_SYMBOL_GPL(fib_rules_unregister);
 
-static inline uid_t fib_nl_uid(struct nlattr *nla)
+static inline kuid_t fib_nl_uid(struct nlattr *nla)
 {
-	return nla_get_u32(nla);
+	return make_kuid(current_user_ns(), nla_get_u32(nla));
 }
 
-static int nla_put_uid(struct sk_buff *skb, int idx, uid_t uid)
+static int nla_put_uid(struct sk_buff *skb, int idx, kuid_t uid)
 {
-	return nla_put_u32(skb, idx, uid);
+	return nla_put_u32(skb, idx, from_kuid_munged(current_user_ns(), uid));
 }
 
 static int fib_uid_range_match(struct flowi *fl, struct fib_rule *rule)
@@ -252,6 +250,9 @@ jumped:
 			continue;
 		else
 			err = ops->action(rule, fl, flags, arg);
+
+		if (!err && ops->suppress && ops->suppress(rule, arg))
+			continue;
 
 		if (err != -EAGAIN) {
 			if ((arg->flags & FIB_LOOKUP_NOREF) ||
@@ -364,6 +365,15 @@ static int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr* nlh)
 	rule->action = frh->action;
 	rule->flags = frh->flags;
 	rule->table = frh_get_table(frh, tb);
+	if (tb[FRA_SUPPRESS_PREFIXLEN])
+		rule->suppress_prefixlen = nla_get_u32(tb[FRA_SUPPRESS_PREFIXLEN]);
+	else
+		rule->suppress_prefixlen = -1;
+
+	if (tb[FRA_SUPPRESS_IFGROUP])
+		rule->suppress_ifgroup = nla_get_u32(tb[FRA_SUPPRESS_IFGROUP]);
+	else
+		rule->suppress_ifgroup = -1;
 
 	if (!tb[FRA_PRIORITY] && ops->default_pref)
 		rule->pref = ops->default_pref(ops);
@@ -572,6 +582,8 @@ static inline size_t fib_rule_nlmsg_size(struct fib_rules_ops *ops,
 			 + nla_total_size(IFNAMSIZ) /* FRA_OIFNAME */
 			 + nla_total_size(4) /* FRA_PRIORITY */
 			 + nla_total_size(4) /* FRA_TABLE */
+			 + nla_total_size(4) /* FRA_SUPPRESS_PREFIXLEN */
+			 + nla_total_size(4) /* FRA_SUPPRESS_IFGROUP */
 			 + nla_total_size(4) /* FRA_FWMARK */
 			 + nla_total_size(4) /* FRA_FWMASK */
 			 + nla_total_size(4) /* FRA_UID_START */
@@ -598,6 +610,8 @@ static int fib_nl_fill_rule(struct sk_buff *skb, struct fib_rule *rule,
 	frh->family = ops->family;
 	frh->table = rule->table;
 	if (nla_put_u32(skb, FRA_TABLE, rule->table))
+		goto nla_put_failure;
+	if (nla_put_u32(skb, FRA_SUPPRESS_PREFIXLEN, rule->suppress_prefixlen))
 		goto nla_put_failure;
 	frh->res1 = 0;
 	frh->res2 = 0;
@@ -629,14 +643,17 @@ static int fib_nl_fill_rule(struct sk_buff *skb, struct fib_rule *rule,
 	    ((rule->mark_mask || rule->mark) &&
 	     nla_put_u32(skb, FRA_FWMASK, rule->mark_mask)) ||
 	    (rule->target &&
-	     nla_put_u32(skb, FRA_GOTO, rule->target)))
+	     nla_put_u32(skb, FRA_GOTO, rule->target)) ||
+	    (uid_valid(rule->uid_start) &&
+	     nla_put_uid(skb, FRA_UID_START, rule->uid_start)) ||
+	    (uid_valid(rule->uid_end) &&
+	     nla_put_uid(skb, FRA_UID_END, rule->uid_end)))
 		goto nla_put_failure;
 
-	if (uid_valid(rule->uid_start))
-	     nla_put_uid(skb, FRA_UID_START, rule->uid_start);
-
-	if (uid_valid(rule->uid_end))
-	     nla_put_uid(skb, FRA_UID_END, rule->uid_end);
+	if (rule->suppress_ifgroup != -1) {
+		if (nla_put_u32(skb, FRA_SUPPRESS_IFGROUP, rule->suppress_ifgroup))
+			goto nla_put_failure;
+	}
 
 	if (ops->fill(rule, skb, frh) < 0)
 		goto nla_put_failure;
@@ -763,9 +780,9 @@ static void detach_rules(struct list_head *rules, struct net_device *dev)
 
 
 static int fib_rules_event(struct notifier_block *this, unsigned long event,
-			    void *ptr)
+			   void *ptr)
 {
-	struct net_device *dev = ptr;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct net *net = dev_net(dev);
 	struct fib_rules_ops *ops;
 

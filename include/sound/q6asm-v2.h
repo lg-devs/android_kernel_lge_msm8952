@@ -17,6 +17,7 @@
 #include <sound/apr_audio-v2.h>
 #include <linux/list.h>
 #include <linux/msm_ion.h>
+#include <linux/spinlock.h>
 
 #define IN                      0x000
 #define OUT                     0x001
@@ -173,6 +174,8 @@ struct audio_client {
 	/* Relative or absolute TS */
 	atomic_t	       time_flag;
 	atomic_t	       nowait_cmd_cnt;
+	struct list_head       no_wait_que;
+	spinlock_t             no_wait_que_spinlock;
 	atomic_t               mem_state;
 	void		       *priv;
 	uint32_t               io_mode;
@@ -190,6 +193,7 @@ struct audio_client {
 	int					   stream_id;
 	struct device *dev;
 	int		       topology;
+	int		       app_type;
 	/* audio cache operations fptr*/
 	int (*fptr_cache_ops)(struct audio_buffer *abuff, int cache_op);
 	atomic_t               unmap_cb_success;
@@ -272,6 +276,8 @@ int q6asm_memory_unmap(struct audio_client *ac, phys_addr_t buf_add,
 int q6asm_map_rtac_block(struct rtac_cal_block_data *cal_block);
 
 int q6asm_unmap_rtac_block(uint32_t *mem_map_handle);
+
+int q6asm_send_cal(struct audio_client *ac);
 
 int q6asm_run(struct audio_client *ac, uint32_t flags,
 		uint32_t msw_ts, uint32_t lsw_ts);
@@ -441,6 +447,10 @@ int q6asm_set_softvolume_v2(struct audio_client *ac,
 /* Send left-right channel gain */
 int q6asm_set_lrgain(struct audio_client *ac, int left_gain, int right_gain);
 
+/* Send multi channel gain */
+int q6asm_set_multich_gain(struct audio_client *ac, uint32_t channels,
+			   uint32_t *gains, uint8_t *ch_map, bool use_default);
+
 /* Enable Mute/unmute flag */
 int q6asm_set_mute(struct audio_client *ac, int muteflag);
 
@@ -467,8 +477,8 @@ int q6asm_send_meta_data(struct audio_client *ac, uint32_t initial_samples,
 int q6asm_stream_send_meta_data(struct audio_client *ac, uint32_t stream_id,
 		uint32_t initial_samples, uint32_t trailing_samples);
 
-/* Get current ASM topology */
-int q6asm_get_asm_topology(void);
+int q6asm_get_asm_topology(int session_id);
+int q6asm_get_asm_app_type(int session_id);
 
 int q6asm_send_mtmx_strtr_window(struct audio_client *ac,
 		struct asm_session_mtmx_strtr_param_window_v2_t *window_param,

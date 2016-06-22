@@ -23,12 +23,14 @@
 
 #include <linux/types.h>
 #include <linux/blk_types.h>
-#include <linux/msm_rtb.h>
 
 #include <asm/byteorder.h>
 #include <asm/barrier.h>
 #include <asm/pgtable.h>
 #include <asm/early_ioremap.h>
+#include <asm/alternative.h>
+#include <asm/cpufeature.h>
+#include <linux/msm_rtb.h>
 
 #include <xen/xen.h>
 
@@ -56,63 +58,46 @@ static inline void __raw_writeq_no_log(u64 val, volatile void __iomem *addr)
 	asm volatile("str %0, [%1]" : : "r" (val), "r" (addr));
 }
 
-#ifdef CONFIG_ARM64_A57_ERRATA_832075
 static inline u8 __raw_readb_no_log(const volatile void __iomem *addr)
 {
 	u8 val;
-	asm volatile("ldarb %w0, [%1]" : "=r" (val) : "r" (addr));
+	asm volatile(ALTERNATIVE("ldrb %w0, [%1]",
+				 "ldarb %w0, [%1]",
+				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
+		     : "=r" (val) : "r" (addr));
 	return val;
 }
 
 static inline u16 __raw_readw_no_log(const volatile void __iomem *addr)
 {
 	u16 val;
-	asm volatile("ldarh %w0, [%1]" : "=r" (val) : "r" (addr));
+
+	asm volatile(ALTERNATIVE("ldrh %w0, [%1]",
+				 "ldarh %w0, [%1]",
+				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
+		     : "=r" (val) : "r" (addr));
 	return val;
 }
 
 static inline u32 __raw_readl_no_log(const volatile void __iomem *addr)
 {
 	u32 val;
-	asm volatile("ldar %w0, [%1]" : "=r" (val) : "r" (addr));
+	asm volatile(ALTERNATIVE("ldr %w0, [%1]",
+				 "ldar %w0, [%1]",
+				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
+		     : "=r" (val) : "r" (addr));
 	return val;
 }
 
 static inline u64 __raw_readq_no_log(const volatile void __iomem *addr)
 {
 	u64 val;
-	asm volatile("ldar %0, [%1]" : "=r" (val) : "r" (addr));
+	asm volatile(ALTERNATIVE("ldr %0, [%1]",
+				 "ldar %0, [%1]",
+				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
+		     : "=r" (val) : "r" (addr));
 	return val;
 }
-#else
-static inline u8 __raw_readb_no_log(const volatile void __iomem *addr)
-{
-	u8 val;
-	asm volatile("ldrb %w0, [%1]" : "=r" (val) : "r" (addr));
-	return val;
-}
-
-static inline u16 __raw_readw_no_log(const volatile void __iomem *addr)
-{
-	u16 val;
-	asm volatile("ldrh %w0, [%1]" : "=r" (val) : "r" (addr));
-	return val;
-}
-
-static inline u32 __raw_readl_no_log(const volatile void __iomem *addr)
-{
-	u32 val;
-	asm volatile("ldr %w0, [%1]" : "=r" (val) : "r" (addr));
-	return val;
-}
-
-static inline u64 __raw_readq_no_log(const volatile void __iomem *addr)
-{
-	u64 val;
-	asm volatile("ldr %0, [%1]" : "=r" (val) : "r" (addr));
-	return val;
-}
-#endif /* CONFIG_ARM64_A57_ERRATA_832075 */
 
 /*
  * There may be cases when  clients don't want to support or can't support the
@@ -209,29 +194,11 @@ static inline u64 __raw_readq_no_log(const volatile void __iomem *addr)
 #define writeq_no_log(v, c)		({ __iowmb(); writeq_relaxed_no_log((v), (c)); })
 
 /*
- * A typesafe __io() helper
- */
-static inline void __iomem *__typesafe_io(unsigned long addr)
-{
-	return (void __iomem *)addr;
-}
-
-/*
  *  I/O port access primitives.
  */
+#define arch_has_dev_port()	(1)
+#define IO_SPACE_LIMIT		(SZ_32M - 1)
 #define PCI_IOBASE		((void __iomem *)(MODULES_VADDR - SZ_32M))
-
-#if defined(CONFIG_PCI)
-#define IO_SPACE_LIMIT  ((resource_size_t)0xffffffff)
-#define __io(a)         __typesafe_io((unsigned long)PCI_IOBASE + \
-				      ((a) & IO_SPACE_LIMIT))
-#else
-#define IO_SPACE_LIMIT		0xffff
-#define __io(a)         __typesafe_io((a) & IO_SPACE_LIMIT)
-#endif
-extern void __iomem *ioport_map(unsigned long port, unsigned int nr);
-extern void ioport_unmap(void __iomem *addr);
-extern int pci_ioremap_io(unsigned int offset, phys_addr_t phys_addr);
 
 static inline u8 inb(unsigned long addr)
 {
@@ -339,18 +306,16 @@ extern void __iomem *__ioremap(phys_addr_t phys_addr, size_t size, pgprot_t prot
 extern void __iounmap(volatile void __iomem *addr);
 extern void __iomem *ioremap_cache(phys_addr_t phys_addr, size_t size);
 
-#define PROT_DEFAULT		(PTE_TYPE_PAGE | PTE_AF | PTE_DIRTY)
-#define PROT_DEVICE_nGnRE	(PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_DEVICE_nGnRE))
-#define PROT_NORMAL_NC		(PROT_DEFAULT | PTE_ATTRINDX(MT_NORMAL_NC))
-#define PROT_NORMAL		(PROT_DEFAULT | PTE_ATTRINDX(MT_NORMAL))
-
 #define ioremap(addr, size)		__ioremap((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
 #define ioremap_nocache(addr, size)	__ioremap((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
 #define ioremap_wc(addr, size)		__ioremap((addr), (size), __pgprot(PROT_NORMAL_NC))
+#define ioremap_cached(addr, size)	__ioremap((addr), (size), __pgprot(PROT_NORMAL))
 #define iounmap				__iounmap
 
-#define PROT_SECT_DEFAULT	(PMD_TYPE_SECT | PMD_SECT_AF)
-#define PROT_SECT_DEVICE_nGnRE	(PROT_SECT_DEFAULT | PTE_PXN | PTE_UXN | PMD_ATTRINDX(MT_DEVICE_nGnRE))
+#ifdef CONFIG_MACH_LGE
+#define PROT_NORMAL_NC_XN      (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_NORMAL_NC))
+#define ioremap_wc_xn(addr, size)      __ioremap((addr), (size), __pgprot(PROT_NORMAL_NC_XN))
+#endif
 
 #define ARCH_HAS_IOREMAP_WC
 #include <asm-generic/iomap.h>
@@ -360,7 +325,7 @@ extern void __iomem *ioremap_cache(phys_addr_t phys_addr, size_t size);
  * (PHYS_OFFSET and PHYS_MASK taken into account).
  */
 #define ARCH_HAS_VALID_PHYS_ADDR_RANGE
-extern int valid_phys_addr_range(unsigned long addr, size_t size);
+extern int valid_phys_addr_range(phys_addr_t addr, size_t size);
 extern int valid_mmap_phys_addr_range(unsigned long pfn, size_t size);
 
 extern int devmem_is_allowed(unsigned long pfn);

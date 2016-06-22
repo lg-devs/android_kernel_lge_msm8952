@@ -15,6 +15,9 @@
 #include <linux/wait.h>
 #include <linux/stringify.h>
 #include "wcdcal-hwdep.h"
+#ifdef CONFIG_MACH_LGE //LGE Update // add switch dev for mbhc
+#include <linux/switch.h>
+#endif //LGE Update // add switch dev for mbhc
 
 #define TOMBAK_MBHC_NC	0
 #define TOMBAK_MBHC_NO	1
@@ -233,13 +236,12 @@ struct wcd_mbhc_moisture_cfg {
 	enum mbhc_hs_pullup_iref m_iref_ctl;
 };
 
-
 struct wcd_mbhc_config {
 	bool read_fw_bin;
 	void *calibration;
 	bool detect_extn_cable;
 	bool mono_stero_detection;
-	bool (*swap_gnd_mic) (struct snd_soc_codec *codec);
+	bool (*swap_gnd_mic)(struct snd_soc_codec *codec);
 	bool hs_ext_micbias;
 	bool gnd_det_en;
 	int key_code[WCD_MBHC_KEYCODE_NUM];
@@ -303,14 +305,14 @@ do {                                                    \
 	}                                               \
 } while (0)
 
-#define WCD_MBHC_REG_READ(function, val)			\
-do {								\
-	if (mbhc->wcd_mbhc_regs[function].reg) {		\
-		val = (((snd_soc_read(mbhc->codec,		\
-		mbhc->wcd_mbhc_regs[function].reg)) &		\
-		(mbhc->wcd_mbhc_regs[function].mask)) >>	\
-		(mbhc->wcd_mbhc_regs[function].offset));	\
-	}							\
+#define WCD_MBHC_REG_READ(function, val)	        \
+do {                                                    \
+	if (mbhc->wcd_mbhc_regs[function].reg) {        \
+		val = (((snd_soc_read(mbhc->codec,	\
+		mbhc->wcd_mbhc_regs[function].reg)) &	\
+		(mbhc->wcd_mbhc_regs[function].mask)) >> \
+		(mbhc->wcd_mbhc_regs[function].offset)); \
+	}                                               \
 } while (0)
 
 struct wcd_mbhc_cb {
@@ -347,7 +349,6 @@ struct wcd_mbhc_cb {
 				    enum mbhc_hs_pullup_iref);
 	int (*mbhc_micbias_control)(struct snd_soc_codec *, int req);
 	void (*mbhc_micb_ramp_control)(struct snd_soc_codec *, bool);
-	void (*skip_imped_detect)(struct snd_soc_codec *);
 	bool (*extn_use_mb)(struct snd_soc_codec *);
 	int (*mbhc_micb_ctrl_thr_mic)(struct snd_soc_codec *, int, bool);
 	void (*mbhc_gnd_det_ctrl)(struct snd_soc_codec *, bool);
@@ -378,8 +379,6 @@ struct wcd_mbhc {
 	bool btn_press_intr;
 	bool is_hs_recording;
 	bool is_extn_cable;
-	bool skip_imped_detection;
-	bool is_btn_already_regd;
 
 	struct snd_soc_codec *codec;
 	/* Work to perform MBHC Firmware Read */
@@ -411,10 +410,13 @@ struct wcd_mbhc {
 	struct notifier_block nblock;
 
 	struct wcd_mbhc_register *wcd_mbhc_regs;
-
-	struct completion btn_press_compl;
 	struct mutex hphl_pa_lock;
 	struct mutex hphr_pa_lock;
+
+	struct completion btn_press_compl;
+#ifdef CONFIG_MACH_LGE //LGE Update // add switch dev for mbhc
+	struct switch_dev sdev;
+#endif //LGE Update // add switch dev for mbhc
 };
 #define WCD_MBHC_CAL_SIZE(buttons, rload) ( \
 	sizeof(struct wcd_mbhc_general_cfg) + \

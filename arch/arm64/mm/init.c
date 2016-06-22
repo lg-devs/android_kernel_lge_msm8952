@@ -32,25 +32,20 @@
 #include <linux/of_fdt.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-contiguous.h>
+#include <linux/efi.h>
 
+#include <asm/fixmap.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/sizes.h>
 #include <asm/tlb.h>
+#include <asm/alternative.h>
 
 #include "mm.h"
 
-static unsigned long phys_initrd_start __initdata = 0;
-static unsigned long phys_initrd_size __initdata = 0;
-
 phys_addr_t memstart_addr __read_mostly = 0;
 
-void __init early_init_dt_setup_initrd_arch(u64 start, u64 end)
-{
-	phys_initrd_start = start;
-	phys_initrd_size = end - start;
-}
-
+#ifdef CONFIG_BLK_DEV_INITRD
 static int __init early_initrd(char *p)
 {
 	unsigned long start, size;
@@ -60,12 +55,24 @@ static int __init early_initrd(char *p)
 	if (*endp == ',') {
 		size = memparse(endp + 1, NULL);
 
-		phys_initrd_start = start;
-		phys_initrd_size = size;
+		initrd_start = (unsigned long)__va(start);
+		initrd_end = (unsigned long)__va(start + size);
 	}
 	return 0;
 }
 early_param("initrd", early_initrd);
+#endif
+
+/*
+ * Return the maximum physical address for ZONE_DMA (DMA_BIT_MASK(32)). It
+ * currently assumes that for memory starting above 4G, 32-bit devices will
+ * use a DMA offset.
+ */
+static phys_addr_t max_zone_dma_phys(void)
+{
+	phys_addr_t offset = memblock_start_of_DRAM() & GENMASK_ULL(63, 32);
+	return min(offset + (1ULL << 32), memblock_end_of_DRAM());
+}
 
 static void __init zone_sizes_init(unsigned long min, unsigned long max)
 {
@@ -77,9 +84,7 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 
 	/* 4GB maximum for 32-bit only capable devices */
 	if (IS_ENABLED(CONFIG_ZONE_DMA)) {
-		unsigned long max_dma_phys =
-			(unsigned long)(dma_to_phys(NULL, DMA_BIT_MASK(32)) + 1);
-		max_dma = max(min, min(max, max_dma_phys >> PAGE_SHIFT));
+		max_dma = PFN_DOWN(max_zone_dma_phys());
 		zone_size[ZONE_DMA] = max_dma - min;
 	}
 	zone_size[ZONE_NORMAL] = max - max_dma;
@@ -137,30 +142,21 @@ void __init arm64_memblock_init(void)
 {
 	phys_addr_t dma_phys_limit = 0;
 
-	/* Register the kernel text, kernel data and initrd with memblock */
+	/*
+	 * Register the kernel text, kernel data, initrd, and initial
+	 * pagetables with memblock.
+	 */
 	memblock_reserve(__pa(_text), _end - _text);
 #ifdef CONFIG_BLK_DEV_INITRD
-	if (phys_initrd_size) {
-		memblock_reserve(phys_initrd_start, phys_initrd_size);
-
-		/* Now convert initrd to virtual addresses */
-		initrd_start = __phys_to_virt(phys_initrd_start);
-		initrd_end = initrd_start + phys_initrd_size;
-	}
+	if (initrd_start)
+		memblock_reserve(__virt_to_phys(initrd_start), initrd_end - initrd_start);
 #endif
-
-	/*
-	 * Reserve the page tables.  These are already in use,
-	 * and can only be in node 0.
-	 */
-	memblock_reserve(__pa(swapper_pg_dir), SWAPPER_DIR_SIZE);
-	memblock_reserve(__pa(idmap_pg_dir), IDMAP_DIR_SIZE);
 
 	early_init_fdt_scan_reserved_mem();
 
 	/* 4GB maximum for 32-bit only capable devices */
 	if (IS_ENABLED(CONFIG_ZONE_DMA))
-		dma_phys_limit = dma_to_phys(NULL, DMA_BIT_MASK(32)) + 1;
+		dma_phys_limit = max_zone_dma_phys();
 	dma_contiguous_reserve(dma_phys_limit);
 
 	memblock_allow_resize();
@@ -174,8 +170,6 @@ void __init bootmem_init(void)
 	min = PFN_UP(memblock_start_of_DRAM());
 	max = PFN_DOWN(memblock_end_of_DRAM());
 
-	early_memtest(min << PAGE_SHIFT, max << PAGE_SHIFT);
-
 	/*
 	 * Sparsemem tries to allocate bootmem in memory_present(), so must be
 	 * done after the fixed reservations.
@@ -187,14 +181,6 @@ void __init bootmem_init(void)
 
 	high_memory = __va((max << PAGE_SHIFT) - 1) + 1;
 	max_pfn = max_low_pfn = max;
-}
-
-/*
- * Poison init memory with an undefined instruction (0x0).
- */
-static inline void poison_init_mem(void *s, size_t count)
-{
-	memset(s, 0, count);
 }
 
 #ifndef CONFIG_SPARSEMEM_VMEMMAP
@@ -254,7 +240,7 @@ static void __init free_unused_memmap(void)
 		 * memmap entries are valid from the bank end aligned to
 		 * MAX_ORDER_NR_PAGES.
 		 */
-		prev_end = ALIGN(start + __phys_to_pfn(reg->size),
+		prev_end = ALIGN(__phys_to_pfn(reg->base + reg->size),
 				 MAX_ORDER_NR_PAGES);
 	}
 
@@ -272,9 +258,7 @@ static void __init free_unused_memmap(void)
  */
 void __init mem_init(void)
 {
-	arm64_swiotlb_init();
-
-	max_mapnr   = pfn_to_page(max_pfn + PHYS_PFN_OFFSET) - mem_map;
+	set_max_mapnr(pfn_to_page(max_pfn) - mem_map);
 
 #ifndef CONFIG_SPARSEMEM_VMEMMAP
 	free_unused_memmap();
@@ -286,26 +270,33 @@ void __init mem_init(void)
 
 #define MLK(b, t) b, t, ((t) - (b)) >> 10
 #define MLM(b, t) b, t, ((t) - (b)) >> 20
+#define MLG(b, t) b, t, ((t) - (b)) >> 30
 #define MLK_ROUNDUP(b, t) b, t, DIV_ROUND_UP(((t) - (b)), SZ_1K)
 
 	pr_notice("Virtual kernel memory layout:\n"
-		  "    vmalloc : 0x%16lx - 0x%16lx   (%6ld MB)\n"
+		  "    vmalloc : 0x%16lx - 0x%16lx   (%6ld GB)\n"
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
-		  "    vmemmap : 0x%16lx - 0x%16lx   (%6ld MB)\n"
+		  "    vmemmap : 0x%16lx - 0x%16lx   (%6ld GB maximum)\n"
+		  "              0x%16lx - 0x%16lx   (%6ld MB actual)\n"
 #endif
+		  "    PCI I/O : 0x%16lx - 0x%16lx   (%6ld MB)\n"
+		  "    fixed   : 0x%16lx - 0x%16lx   (%6ld KB)\n"
 		  "    modules : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 		  "    memory  : 0x%16lx - 0x%16lx   (%6ld MB)\n"
-		  "      .init : 0x%p" " - 0x%p" "   (%6ld kB)\n"
-		  "      .text : 0x%p" " - 0x%p" "   (%6ld kB)\n"
-		  "      .data : 0x%p" " - 0x%p" "   (%6ld kB)\n",
-		  MLM(VMALLOC_START, VMALLOC_END),
+		  "      .init : 0x%p" " - 0x%p" "   (%6ld KB)\n"
+		  "      .text : 0x%p" " - 0x%p" "   (%6ld KB)\n"
+		  "      .data : 0x%p" " - 0x%p" "   (%6ld KB)\n",
+		  MLG(VMALLOC_START, VMALLOC_END),
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
+		  MLG((unsigned long)vmemmap,
+		      (unsigned long)vmemmap + VMEMMAP_SIZE),
 		  MLM((unsigned long)virt_to_page(PAGE_OFFSET),
 		      (unsigned long)virt_to_page(high_memory)),
 #endif
+		  MLM((unsigned long)PCI_IOBASE, (unsigned long)PCI_IOBASE + SZ_16M),
+		  MLK(FIXADDR_START, FIXADDR_TOP),
 		  MLM(MODULES_VADDR, MODULES_END),
 		  MLM(PAGE_OFFSET, (unsigned long)high_memory),
-
 		  MLK_ROUNDUP(__init_begin, __init_end),
 		  MLK_ROUNDUP(_text, _etext),
 		  MLK_ROUNDUP(_sdata, _edata));
@@ -334,21 +325,17 @@ void __init mem_init(void)
 	}
 }
 
-#ifdef CONFIG_STRICT_MEMORY_RWX
-void free_initmem(void)
+static inline void poison_init_mem(void *s, size_t count)
 {
-	poison_init_mem(__init_data_begin, __init_end - __init_data_begin);
-	free_reserved_area(PAGE_ALIGN((unsigned long)&__init_data_begin),
-				  ((unsigned long)&__init_end) & PAGE_MASK,
-				  0, "unused kernel");
+	memset(s, 0, count);
 }
-#else
+
 void free_initmem(void)
 {
-	poison_init_mem(__init_begin, __init_end - __init_begin);
+	fixup_init();
 	free_initmem_default(0);
+	free_alternatives_memory();
 }
-#endif
 
 #ifdef CONFIG_BLK_DEV_INITRD
 
@@ -356,10 +343,8 @@ static int keep_initrd;
 
 void free_initrd_mem(unsigned long start, unsigned long end)
 {
-	if (!keep_initrd) {
-		poison_init_mem((void *)start, PAGE_ALIGN(end) - start);
-		free_reserved_area(start, end, 0, "initrd");
-	}
+	if (!keep_initrd)
+		free_reserved_area((void *)start, (void *)end, 0, "initrd");
 }
 
 static int __init keepinitrd_setup(char *__unused)

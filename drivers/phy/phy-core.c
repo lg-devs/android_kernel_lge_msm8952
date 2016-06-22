@@ -21,6 +21,7 @@
 #include <linux/phy/phy.h>
 #include <linux/idr.h>
 #include <linux/pm_runtime.h>
+#include <linux/regulator/consumer.h>
 
 static struct class *phy_class;
 static DEFINE_MUTEX(phy_provider_mutex);
@@ -50,7 +51,9 @@ static void devm_phy_consume(struct device *dev, void *res)
 
 static int devm_phy_match(struct device *dev, void *res, void *match_data)
 {
-	return res == match_data;
+	struct phy **phy = res;
+
+	return *phy == match_data;
 }
 
 static struct phy *phy_lookup(struct device *device, const char *port)
@@ -86,10 +89,15 @@ static struct phy *phy_lookup(struct device *device, const char *port)
 static struct phy_provider *of_phy_provider_lookup(struct device_node *node)
 {
 	struct phy_provider *phy_provider;
+	struct device_node *child;
 
 	list_for_each_entry(phy_provider, &phy_provider_list, list) {
 		if (phy_provider->dev->of_node == node)
 			return phy_provider;
+
+		for_each_child_of_node(phy_provider->dev->of_node, child)
+			if (child == node)
+				return phy_provider;
 	}
 
 	return ERR_PTR(-EPROBE_DEFER);
@@ -226,6 +234,12 @@ int phy_power_on(struct phy *phy)
 	if (!phy)
 		return 0;
 
+	if (phy->pwr) {
+		ret = regulator_enable(phy->pwr);
+		if (ret)
+			return ret;
+	}
+
 	ret = phy_pm_runtime_get_sync(phy);
 	if (ret < 0 && ret != -ENOTSUPP)
 		return ret;
@@ -247,6 +261,8 @@ int phy_power_on(struct phy *phy)
 out:
 	mutex_unlock(&phy->mutex);
 	phy_pm_runtime_put_sync(phy);
+	if (phy->pwr)
+		regulator_disable(phy->pwr);
 
 	return ret;
 }
@@ -271,6 +287,9 @@ int phy_power_off(struct phy *phy)
 	--phy->power_count;
 	mutex_unlock(&phy->mutex);
 	phy_pm_runtime_put(phy);
+
+	if (phy->pwr)
+		regulator_disable(phy->pwr);
 
 	return 0;
 }
@@ -597,6 +616,16 @@ struct phy *phy_create(struct device *dev, struct device_node *node,
 		goto free_phy;
 	}
 
+	/* phy-supply */
+	phy->pwr = regulator_get_optional(dev, "phy");
+	if (IS_ERR(phy->pwr)) {
+		if (PTR_ERR(phy->pwr) == -EPROBE_DEFER) {
+			ret = -EPROBE_DEFER;
+			goto free_ida;
+		}
+		phy->pwr = NULL;
+	}
+
 	device_initialize(&phy->dev);
 	mutex_init(&phy->mutex);
 
@@ -623,8 +652,12 @@ struct phy *phy_create(struct device *dev, struct device_node *node,
 	return phy;
 
 put_dev:
-	put_device(&phy->dev);
-	ida_remove(&phy_ida, phy->id);
+	put_device(&phy->dev);  /* calls phy_release() which frees resources */
+	return ERR_PTR(ret);
+
+free_ida:
+	ida_simple_remove(&phy_ida, phy->id);
+
 free_phy:
 	kfree(phy);
 	return ERR_PTR(ret);
@@ -810,7 +843,8 @@ static void phy_release(struct device *dev)
 
 	phy = to_phy(dev);
 	dev_vdbg(dev, "releasing '%s'\n", dev_name(dev));
-	ida_remove(&phy_ida, phy->id);
+	regulator_put(phy->pwr);
+	ida_simple_remove(&phy_ida, phy->id);
 	kfree(phy);
 }
 

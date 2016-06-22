@@ -221,9 +221,11 @@ kgsl_memdesc_has_guard_page(const struct kgsl_memdesc *memdesc)
  * Returns guard page size
  */
 static inline int
-kgsl_memdesc_guard_page_size(const struct kgsl_memdesc *memdesc)
+kgsl_memdesc_guard_page_size(const struct kgsl_mmu *mmu,
+				const struct kgsl_memdesc *memdesc)
 {
-	return kgsl_memdesc_is_secured(memdesc) ? SZ_1M : PAGE_SIZE;
+	return kgsl_memdesc_is_secured(memdesc) ? mmu->secure_align_mask + 1 :
+								PAGE_SIZE;
 }
 
 /*
@@ -322,5 +324,8 @@ static inline void kgsl_free_global(struct kgsl_memdesc *memdesc)
 	kgsl_remove_global_pt_entry(memdesc);
 	kgsl_sharedmem_free(memdesc);
 }
+
+void kgsl_sharedmem_set_noretry(bool val);
+bool kgsl_sharedmem_get_noretry(void);
 
 #endif /* __KGSL_SHAREDMEM_H */

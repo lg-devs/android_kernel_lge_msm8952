@@ -212,6 +212,10 @@
 #define HFI_BUFFER_INTERNAL_PERSIST		(HFI_COMMON_BASE + 0x4)
 #define HFI_BUFFER_INTERNAL_PERSIST_1		(HFI_COMMON_BASE + 0x5)
 
+#define  HFI_BITDEPTH_8				(HFI_COMMON_BASE + 0x0)
+#define  HFI_BITDEPTH_9				(HFI_COMMON_BASE + 0x1)
+#define  HFI_BITDEPTH_10			(HFI_COMMON_BASE + 0x2)
+
 #define HFI_VENC_PERFMODE_MAX_QUALITY	0x1
 #define HFI_VENC_PERFMODE_POWER_SAVE	0x2
 
@@ -283,6 +287,8 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_PARAM_VDEC_COMMON_START + 0x002)
 #define HFI_PROPERTY_PARAM_VDEC_NONCP_OUTPUT2				\
 	(HFI_PROPERTY_PARAM_VDEC_COMMON_START + 0x003)
+#define  HFI_PROPERTY_PARAM_VDEC_PIXEL_BITDEPTH				\
+	(HFI_PROPERTY_PARAM_VDEC_COMMON_START + 0x007)
 
 #define HFI_PROPERTY_CONFIG_VDEC_COMMON_START				\
 	(HFI_DOMAIN_BASE_VDEC + HFI_ARCH_COMMON_OFFSET + 0x4000)
@@ -349,8 +355,6 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x020)
 #define HFI_PROPERTY_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC \
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x021)
-#define HFI_PROPERTY_PARAM_VENC_LOW_LATENCY_MODE	\
-	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x022)
 #define HFI_PROPERTY_PARAM_VENC_PRESERVE_TEXT_QUALITY \
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x023)
 #define HFI_PROPERTY_PARAM_VENC_HIER_P_MAX_NUM_ENH_LAYER	\
@@ -367,6 +371,8 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x02F)
 #define  HFI_PROPERTY_PARAM_VENC_BITRATE_TYPE		\
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x031)
+#define  HFI_PROPERTY_PARAM_VENC_VQZIP_SEI_TYPE		\
+	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x033)
 
 #define HFI_PROPERTY_CONFIG_VENC_COMMON_START				\
 	(HFI_DOMAIN_BASE_VENC + HFI_ARCH_COMMON_OFFSET + 0x6000)
@@ -397,6 +403,8 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_CONFIG_VENC_COMMON_START + 0x00C)
 #define  HFI_PROPERTY_CONFIG_VENC_PERF_MODE			\
 	(HFI_PROPERTY_CONFIG_VENC_COMMON_START + 0x00E)
+#define HFI_PROPERTY_CONFIG_VENC_BASELAYER_PRIORITYID		\
+	(HFI_PROPERTY_CONFIG_VENC_COMMON_START + 0x00F)
 
 #define HFI_PROPERTY_CONFIG_VPE_COMMON_START				\
 	(HFI_DOMAIN_BASE_VPE + HFI_ARCH_COMMON_OFFSET + 0x8000)
@@ -419,12 +427,9 @@ struct hfi_bitrate {
 #define HFI_CAPABILITY_SCALE_Y				(HFI_COMMON_BASE + 0x7)
 #define HFI_CAPABILITY_BITRATE				(HFI_COMMON_BASE + 0x8)
 #define HFI_CAPABILITY_BFRAME				(HFI_COMMON_BASE + 0x9)
-#define HFI_CAPABILITY_PEAKBITRATE			(HFI_COMMON_BASE + 0xa)
 #define HFI_CAPABILITY_HIER_P_NUM_ENH_LAYERS		(HFI_COMMON_BASE + 0x10)
 #define HFI_CAPABILITY_ENC_LTR_COUNT			(HFI_COMMON_BASE + 0x11)
 #define HFI_CAPABILITY_CP_OUTPUT2_THRESH		(HFI_COMMON_BASE + 0x12)
-#define HFI_CAPABILITY_HIER_B_NUM_ENH_LAYERS	(HFI_COMMON_BASE + 0x13)
-#define HFI_CAPABILITY_LCU_SIZE				(HFI_COMMON_BASE + 0x14)
 #define HFI_CAPABILITY_HIER_P_HYBRID_NUM_ENH_LAYERS	(HFI_COMMON_BASE + 0x15)
 
 struct hfi_capability_supported {
@@ -455,7 +460,7 @@ struct hfi_debug_config {
 };
 
 struct hfi_enable {
-	int enable;
+	u32 enable;
 };
 
 #define HFI_H264_DB_MODE_DISABLE			(HFI_COMMON_BASE + 0x1)
@@ -465,8 +470,8 @@ struct hfi_enable {
 
 struct hfi_h264_db_control {
 	u32 mode;
-	int slice_alpha_offset;
-	int slice_beta_offset;
+	u32 slice_alpha_offset;
+	u32 slice_beta_offset;
 };
 
 #define HFI_H264_ENTROPY_CAVLC				(HFI_COMMON_BASE + 0x1)
@@ -582,7 +587,8 @@ struct hfi_nal_stream_format_select {
 #define HFI_PICTURE_TYPE_I					0x01
 #define HFI_PICTURE_TYPE_P					0x02
 #define HFI_PICTURE_TYPE_B					0x04
-#define HFI_PICTURE_TYPE_IDR				0x08
+#define HFI_PICTURE_TYPE_IDR					0x08
+#define HFI_PICTURE_TYPE_CRA					0x10
 
 struct hfi_profile_level {
 	u32 profile;
@@ -650,6 +656,21 @@ struct hfi_h264_vui_timing_info {
 	u32 time_scale;
 };
 
+struct hfi_bit_depth {
+	u32 buffer_type;
+	u32 bit_depth;
+};
+
+struct hfi_picture_type {
+	u32 is_sync_frame;
+	u32 picture_type;
+};
+
+/* Base Offset for UBWC color formats  */
+#define HFI_COLOR_FORMAT_UBWC_BASE        (0x8000)
+/* Base Offset for 10-bit color formats */
+#define HFI_COLOR_FORMAT_10_BIT_BASE      (0x4000)
+
 #define HFI_COLOR_FORMAT_MONOCHROME			(HFI_COMMON_BASE + 0x1)
 #define HFI_COLOR_FORMAT_NV12				(HFI_COMMON_BASE + 0x2)
 #define HFI_COLOR_FORMAT_NV21				(HFI_COMMON_BASE + 0x3)
@@ -663,6 +684,20 @@ struct hfi_h264_vui_timing_info {
 #define HFI_COLOR_FORMAT_BGR565				(HFI_COMMON_BASE + 0xB)
 #define HFI_COLOR_FORMAT_RGB888				(HFI_COMMON_BASE + 0xC)
 #define HFI_COLOR_FORMAT_BGR888				(HFI_COMMON_BASE + 0xD)
+#define HFI_COLOR_FORMAT_YUV444				(HFI_COMMON_BASE + 0xE)
+#define HFI_COLOR_FORMAT_RGBA8888			(HFI_COMMON_BASE + 0x10)
+
+#define HFI_COLOR_FORMAT_YUV420_TP10					\
+		(HFI_COLOR_FORMAT_10_BIT_BASE + HFI_COLOR_FORMAT_NV12)
+
+#define HFI_COLOR_FORMAT_NV12_UBWC					\
+		(HFI_COLOR_FORMAT_UBWC_BASE + HFI_COLOR_FORMAT_NV12)
+
+#define HFI_COLOR_FORMAT_YUV420_TP10_UBWC				\
+		(HFI_COLOR_FORMAT_UBWC_BASE + HFI_COLOR_FORMAT_YUV420_TP10)
+
+#define  HFI_COLOR_FORMAT_RGBA8888_UBWC					\
+		(HFI_COLOR_FORMAT_UBWC_BASE + HFI_COLOR_FORMAT_RGBA8888)
 
 #define HFI_MAX_MATRIX_COEFFS 9
 #define HFI_MAX_BIAS_COEFFS 3
@@ -671,6 +706,7 @@ struct hfi_h264_vui_timing_info {
 #define HFI_STATISTICS_MODE_DEFAULT 0x10
 #define HFI_STATISTICS_MODE_1 0x11
 #define HFI_STATISTICS_MODE_2 0x12
+#define HFI_STATISTICS_MODE_3 0x13
 
 struct hfi_uncompressed_format_select {
 	u32 buffer_type;
@@ -684,7 +720,7 @@ struct hfi_uncompressed_format_supported {
 };
 
 struct hfi_uncompressed_plane_actual {
-	int actual_stride;
+	u32 actual_stride;
 	u32 actual_plane_buffer_height;
 };
 
@@ -721,6 +757,10 @@ struct hfi_vpe_color_space_conversion {
 	u32 csc_matrix[HFI_MAX_MATRIX_COEFFS];
 	u32 csc_bias[HFI_MAX_BIAS_COEFFS];
 	u32 csc_limit[HFI_MAX_LIMIT_COEFFS];
+};
+
+struct hfi_scs_threshold {
+	u32 threshold_value;
 };
 
 #define HFI_ROTATE_NONE					(HFI_COMMON_BASE + 0x1)
@@ -766,12 +806,12 @@ struct hfi_venc_config_advanced {
 	u8 hw_mode;
 	u8 low_delay_enforce;
 	u8 worker_vppsg_delay;
-	int close_gop;
-	int h264_constrain_intra_pred;
-	int h264_transform_8x8_flag;
-	int mpeg4_qpel_enable;
-	int multi_refp_en;
-	int qmatrix_en;
+	u32 close_gop;
+	u32 h264_constrain_intra_pred;
+	u32 h264_transform_8x8_flag;
+	u32 mpeg4_qpel_enable;
+	u32 multi_refp_en;
+	u32 qmatrix_en;
 	u8 vpp_info_packet_mode;
 	u8 ref_tile_mode;
 	u8 bitstream_flush_mode;
@@ -801,10 +841,12 @@ struct hfi_codec_mask_supported {
 struct hfi_seq_header_info {
 	u32 max_hader_len;
 };
+
 struct hfi_aspect_ratio {
 	u32 aspect_width;
 	u32 aspect_height;
 };
+
 #define HFI_MVC_BUFFER_LAYOUT_TOP_BOTTOM  (0)
 #define HFI_MVC_BUFFER_LAYOUT_SIDEBYSIDE  (1)
 #define HFI_MVC_BUFFER_LAYOUT_SEQ         (2)
@@ -851,6 +893,7 @@ struct hfi_mvc_buffer_layout_descp_type {
 #define HFI_MSG_SYS_IDLE		(HFI_MSG_SYS_COMMON_START + 0x8)
 #define HFI_MSG_SYS_COV                 (HFI_MSG_SYS_COMMON_START + 0x9)
 #define HFI_MSG_SYS_PROPERTY_INFO	(HFI_MSG_SYS_COMMON_START + 0xA)
+#define HFI_MSG_SESSION_SYNC_DONE      (HFI_MSG_SESSION_OX_START + 0xD)
 
 #define HFI_MSG_SESSION_COMMON_START		\
 	(HFI_DOMAIN_BASE_COMMON + HFI_ARCH_COMMON_OFFSET +	\
@@ -859,7 +902,7 @@ struct hfi_mvc_buffer_layout_descp_type {
 #define HFI_MSG_SESSION_GET_SEQUENCE_HEADER_DONE	\
 	(HFI_MSG_SESSION_COMMON_START + 0x2)
 
-#define  HFI_CMD_SYS_TEST_SSR	(HFI_CMD_SYS_TEST_START + 0x1)
+#define HFI_CMD_SYS_TEST_SSR	(HFI_CMD_SYS_TEST_START + 0x1)
 #define HFI_TEST_SSR_SW_ERR_FATAL	0x1
 #define HFI_TEST_SSR_SW_DIV_BY_ZERO	0x2
 #define HFI_TEST_SSR_HW_WDOG_IRQ	0x3
@@ -969,6 +1012,14 @@ struct hfi_cmd_session_get_sequence_header_packet {
 	u32 session_id;
 	u32 buffer_len;
 	u32 packet_buffer;
+};
+
+struct hfi_cmd_session_sync_process_packet {
+	u32 size;
+	u32 packet_type;
+	u32 session_id;
+	u32 sync_id;
+	u32 rg_data[1];
 };
 
 struct hfi_msg_event_notify_packet {

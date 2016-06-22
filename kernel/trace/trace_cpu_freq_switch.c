@@ -211,8 +211,8 @@ static void freq_switch_stat_release(void *stat)
 
 static int freq_switch_stat_headers(struct seq_file *s)
 {
-	seq_printf(s, "CPU START_KHZ  END_KHZ COUNT AVG_US MIN_US MAX_US\n");
-	seq_printf(s, "  |         |        |     |      |      |      |\n");
+	seq_puts(s, "CPU START_KHZ  END_KHZ COUNT AVG_US MIN_US MAX_US\n");
+	seq_puts(s, "  |         |        |     |      |      |      |\n");
 	return 0;
 }
 
@@ -300,6 +300,7 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_tracing_state_fops, debug_tracing_state_get,
 static int __init trace_freq_switch_init(void)
 {
 	struct dentry *d_tracer = tracing_init_dentry();
+
 	if (!d_tracer)
 		return 0;
 

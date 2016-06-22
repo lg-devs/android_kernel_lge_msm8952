@@ -76,6 +76,21 @@ ENTRY(cpu_reset)
 	ret	x0
 ENDPROC(cpu_reset)
 
+ENTRY(cpu_soft_restart)
+	/* Save address of cpu_reset() and reset address */
+	mov	x19, x0
+	mov	x20, x1
+
+	/* Turn D-cache off */
+	bl	cpu_cache_off
+
+	/* Push out all dirty data, and ensure cache is empty */
+	bl	flush_cache_all
+
+	mov	x0, x20
+	ret	x19
+ENDPROC(cpu_soft_restart)
+
 /*
  *	cpu_do_idle()
  *
@@ -228,20 +243,6 @@ ENTRY(__cpu_setup)
 	ret					// return to head.S
 ENDPROC(__cpu_setup)
 
-#ifdef CONFIG_ARMV7_COMPAT
-	/*
-	 *                 n n            T
-	 *       U E      WT T UD     US IHBS
-	 *       CE0      XWHW CZ     ME TEEA S
-	 * .... .IEE .... NEAI TE.I ..AD DEN0 ACAM
-	 * 0011 0... 1101 ..0. ..0. 10.. .... .... < hardware reserved
-	 * .... .100 .... 01.1 11.1 ..01 0011 1101 < software settings
-	 */
-	.type	crval, #object
-crval:
-	.word	0x030802e2			// clear
-	.word	0x0405d03d			// set
-#else
 	/*
 	 *                 n n            T
 	 *       U E      WT T UD     US IHBS
@@ -267,4 +268,3 @@ crval:
 
 	.word	0x000802c2	// clear
 	.word	0x0405c039 | CR_IBIT | CR_CBIT	// set
-#endif

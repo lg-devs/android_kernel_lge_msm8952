@@ -78,7 +78,7 @@
  * Value n means CQE would send CMD13 during the transfer of data block
  * BLOCK_CNT-n
  */
-#define SEND_QSR_INTERVAL 0x70001
+#define SEND_QSR_INTERVAL 0x70000
 
 /* send status config 2 */
 #define CQSSC2		0x44
@@ -88,6 +88,7 @@
 
 /* response mode error mask */
 #define CQRMEM		0x50
+#define CQ_EXCEPTION	(1 << 6)
 
 /* task error info */
 #define CQTERRI		0x54
@@ -112,11 +113,6 @@
 #define CQ_INT_ALL	0xF
 #define CQIC_DEFAULT_ICCTH 31
 #define CQIC_DEFAULT_ICTOVAL 1
-
-#define CQ_CMD_DBG_RAM	0x158
-#define CQ_CMD_DBG_RAM_WA 0x198
-#define CQ_CMD_DBG_RAM_OL 0x19C
-
 
 /* attribute fields */
 #define VALID(x)	((x & 1) << 0)
@@ -164,7 +160,6 @@ struct cmdq_host {
 	u32 quirks;
 #define CMDQ_QUIRK_SHORT_TXFR_DESC_SZ 0x1
 #define CMDQ_QUIRK_NO_DCMD	0x2
-#define CMDQ_QUIRK_PRIO_READ	(1<<2)
 
 	bool enabled;
 	bool halted;
@@ -202,13 +197,12 @@ struct cmdq_host_ops {
 	void (*write_l)(struct cmdq_host *host, u32 val, int reg);
 	u32 (*read_l)(struct cmdq_host *host, int reg);
 	void (*clear_set_dumpregs)(struct mmc_host *mmc, bool set);
+	void (*enhanced_strobe_mask)(struct mmc_host *mmc, bool set);
 	int (*reset)(struct mmc_host *mmc);
 	int (*crypto_cfg)(struct mmc_host *mmc, struct mmc_request *mrq,
 				u32 slot);
 	void (*crypto_cfg_reset)(struct mmc_host *mmc, unsigned int slot);
 	void (*post_cqe_halt)(struct mmc_host *mmc);
-	void (*pm_qos_update)(struct mmc_host *mmc, struct mmc_request *mrq,
-				bool enable);
 };
 
 static inline void cmdq_writel(struct cmdq_host *host, u32 val, int reg)

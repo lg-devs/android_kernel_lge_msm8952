@@ -3,7 +3,6 @@
  *
  * Copyright (C) 1995-2009 Russell King
  * Copyright (C) 2012 ARM Ltd.
- * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -137,7 +136,6 @@ static void dump_instr(const char *lvl, struct pt_regs *regs)
 static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
 	struct stackframe frame;
-	const register unsigned long current_sp asm ("sp");
 
 	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
 
@@ -150,7 +148,7 @@ static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 		frame.pc = regs->pc;
 	} else if (tsk == current) {
 		frame.fp = (unsigned long)__builtin_frame_address(0);
-		frame.sp = current_sp;
+		frame.sp = current_stack_pointer;
 		frame.pc = (unsigned long)dump_backtrace;
 	} else {
 		/*
@@ -161,7 +159,7 @@ static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 		frame.pc = thread_saved_pc(tsk);
 	}
 
-	printk("Call trace:\n");
+	pr_emerg("Call trace:\n");
 	while (1) {
 		unsigned long where = frame.pc;
 		int ret;
@@ -190,6 +188,10 @@ void show_stack(struct task_struct *tsk, unsigned long *sp)
 #define S_SMP ""
 #endif
 
+#ifdef CONFIG_MACH_LGE
+extern DEFINE_PER_CPU(struct pt_regs, regs_before_stop);
+#endif
+
 static int __die(const char *str, int err, struct thread_info *thread,
 		 struct pt_regs *regs)
 {
@@ -207,6 +209,9 @@ static int __die(const char *str, int err, struct thread_info *thread,
 
 	print_modules();
 	__show_regs(regs);
+#ifdef CONFIG_MACH_LGE
+        per_cpu(regs_before_stop, raw_smp_processor_id()) = *regs;
+#endif
 	pr_emerg("Process %.*s (pid: %d, stack limit = 0x%p)\n",
 		 TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk), thread + 1);
 
@@ -313,57 +318,80 @@ int is_valid_bugaddr(unsigned long pc)
 #endif
 
 static LIST_HEAD(undef_hook);
+static DEFINE_RAW_SPINLOCK(undef_lock);
 
 void register_undef_hook(struct undef_hook *hook)
 {
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&undef_lock, flags);
 	list_add(&hook->node, &undef_hook);
+	raw_spin_unlock_irqrestore(&undef_lock, flags);
 }
 
-static int call_undef_hook(struct pt_regs *regs, unsigned int instr)
+void unregister_undef_hook(struct undef_hook *hook)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&undef_lock, flags);
+	list_del(&hook->node);
+	raw_spin_unlock_irqrestore(&undef_lock, flags);
+}
+
+static int call_undef_hook(struct pt_regs *regs)
 {
 	struct undef_hook *hook;
-	int (*fn)(struct pt_regs *regs, unsigned int instr) = NULL;
+	unsigned long flags;
+	u32 instr;
+	int (*fn)(struct pt_regs *regs, u32 instr) = NULL;
+	void __user *pc = (void __user *)instruction_pointer(regs);
 
+	if (!user_mode(regs))
+		return 1;
+
+	if (compat_thumb_mode(regs)) {
+		/* 16-bit Thumb instruction */
+		if (get_user(instr, (u16 __user *)pc))
+			goto exit;
+		instr = le16_to_cpu(instr);
+		if (aarch32_insn_is_wide(instr)) {
+			u32 instr2;
+
+			if (get_user(instr2, (u16 __user *)(pc + 2)))
+				goto exit;
+			instr2 = le16_to_cpu(instr2);
+			instr = (instr << 16) | instr2;
+		}
+	} else {
+		/* 32-bit ARM instruction */
+		if (get_user(instr, (u32 __user *)pc))
+			goto exit;
+		instr = le32_to_cpu(instr);
+	}
+
+	raw_spin_lock_irqsave(&undef_lock, flags);
 	list_for_each_entry(hook, &undef_hook, node)
 		if ((instr & hook->instr_mask) == hook->instr_val &&
-		    (regs->pstate & hook->pstate_mask) == hook->pstate_val)
+			(regs->pstate & hook->pstate_mask) == hook->pstate_val)
 			fn = hook->fn;
 
+	raw_spin_unlock_irqrestore(&undef_lock, flags);
+exit:
 	return fn ? fn(regs, instr) : 1;
 }
 
 asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 {
-	u32 instr;
 	siginfo_t info;
 	void __user *pc = (void __user *)instruction_pointer(regs);
 
 	/* check for AArch32 breakpoint instructions */
 	if (!aarch32_break_handler(regs))
 		return;
-	if (user_mode(regs)) {
-		if (compat_thumb_mode(regs)) {
-			if (get_user(instr, (u16 __user *)pc))
-				goto die_sig;
-			if (is_wide_instruction(instr)) {
-				u32 instr2;
-				if (get_user(instr2, (u16 __user *)pc+1))
-					goto die_sig;
-				instr <<= 16;
-				instr |= instr2;
-			}
-		} else if (get_user(instr, (u32 __user *)pc)) {
-			goto die_sig;
-		}
-	} else {
-		/* kernel mode */
-		instr = *((u32 *)pc);
-	}
 
-	if (call_undef_hook(regs, instr) == 0)
+	if (call_undef_hook(regs) == 0)
 		return;
 
-die_sig:
 	trace_undef_instr(regs, (void *)pc);
 
 	if (user_mode(regs) && show_unhandled_signals &&
@@ -434,17 +462,22 @@ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
 
 void __pte_error(const char *file, int line, unsigned long val)
 {
-	printk("%s:%d: bad pte %016lx.\n", file, line, val);
+	pr_crit("%s:%d: bad pte %016lx.\n", file, line, val);
 }
 
 void __pmd_error(const char *file, int line, unsigned long val)
 {
-	printk("%s:%d: bad pmd %016lx.\n", file, line, val);
+	pr_crit("%s:%d: bad pmd %016lx.\n", file, line, val);
+}
+
+void __pud_error(const char *file, int line, unsigned long val)
+{
+	pr_crit("%s:%d: bad pud %016lx.\n", file, line, val);
 }
 
 void __pgd_error(const char *file, int line, unsigned long val)
 {
-	printk("%s:%d: bad pgd %016lx.\n", file, line, val);
+	pr_crit("%s:%d: bad pgd %016lx.\n", file, line, val);
 }
 
 void __init trap_init(void)

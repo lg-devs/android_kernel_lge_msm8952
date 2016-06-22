@@ -59,7 +59,7 @@ ENTRY(cpu_v7_switch_mm)
 	mcr	p15, 0, r0, c2, c0, 0		@ set TTB 0
 	isb
 #endif
-	mov	pc, lr
+	bx	lr
 ENDPROC(cpu_v7_switch_mm)
 
 /*
@@ -106,7 +106,7 @@ ENTRY(cpu_v7_set_pte_ext)
 	ALT_SMP(W(nop))
 	ALT_UP (mcr	p15, 0, r0, c7, c10, 1)		@ flush_pte
 #endif
-	mov	pc, lr
+	bx	lr
 ENDPROC(cpu_v7_set_pte_ext)
 
 	/*
@@ -138,11 +138,7 @@ ENDPROC(cpu_v7_set_pte_ext)
 	 *   NOS = PRRR[24+n] = 1	- not outer shareable
 	 */
 .equ	PRRR,	0xff0a81a8
-#ifdef CONFIG_ARCH_MSM_SCORPIONMP
-.equ	NMRR,	0x40e080e0
-#else
 .equ	NMRR,	0x40e040e0
-#endif
 
 	/*
 	 * Macro for setting up the TTBRx and TTBCR registers.
@@ -157,8 +153,6 @@ ENDPROC(cpu_v7_set_pte_ext)
 	mcr	p15, 0, \ttbr1, c2, c0, 1	@ load TTB1
 	.endm
 
-	__CPUINIT
-
 	/*   AT
 	 *  TFR   EV X F   I D LR    S
 	 * .EEE ..EE PUI. .T.T 4RVI ZWRS BLDP WCAM
@@ -169,5 +163,3 @@ ENDPROC(cpu_v7_set_pte_ext)
 	.type	v7_crval, #object
 v7_crval:
 	crval	clear=0x2120c302, mmuset=0x10c03c7d, ucset=0x00c01c7c
-
-	.previous

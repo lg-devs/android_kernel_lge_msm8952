@@ -39,12 +39,6 @@ static inline const struct dma_map_ops *__generic_dma_ops(struct device *dev)
 		return dev->archdata.dma_ops;
 }
 
-static inline void set_dma_ops(struct device *dev,
-			const struct dma_map_ops *ops)
-{
-	dev->archdata.dma_ops = ops;
-}
-
 static inline const struct dma_map_ops *get_dma_ops(struct device *dev)
 {
 	if (xen_initial_domain())
@@ -52,6 +46,19 @@ static inline const struct dma_map_ops *get_dma_ops(struct device *dev)
 	else
 		return __generic_dma_ops(dev);
 }
+
+static inline void set_dma_ops(struct device *dev,
+			const struct dma_map_ops *ops)
+{
+	dev->archdata.dma_ops = ops;
+}
+
+static inline int set_arch_dma_coherent_ops(struct device *dev)
+{
+	set_dma_ops(dev, &coherent_swiotlb_dma_ops);
+	return 0;
+}
+#define set_arch_dma_coherent_ops	set_arch_dma_coherent_ops
 
 #include <asm-generic/dma-mapping-common.h>
 
@@ -128,23 +135,6 @@ static inline void dma_free_attrs(struct device *dev, size_t size,
 
 	debug_dma_free_coherent(dev, size, vaddr, dev_addr);
 	ops->free(dev, size, vaddr, dev_addr, attrs);
-}
-
-
-static inline void *dma_alloc_writecombine(struct device *dev, size_t size,
-					dma_addr_t *dma_handle, gfp_t flag)
-{
-	DEFINE_DMA_ATTRS(attrs);
-	dma_set_attr(DMA_ATTR_WRITE_COMBINE, &attrs);
-	return dma_alloc_attrs(dev, size, dma_handle, flag, &attrs);
-}
-
-static inline void dma_free_writecombine(struct device *dev, size_t size,
-					void *cpu_addr, dma_addr_t dma_handle)
-{
-	DEFINE_DMA_ATTRS(attrs);
-	dma_set_attr(DMA_ATTR_WRITE_COMBINE, &attrs);
-	return dma_free_attrs(dev, size, cpu_addr, dma_handle, &attrs);
 }
 
 static inline void *dma_alloc_nonconsistent(struct device *dev, size_t size,

@@ -100,10 +100,19 @@ struct mdp_pcc_coeff32 {
 	uint32_t c, r, g, b, rr, gg, bb, rg, gb, rb, rgb_0, rgb_1;
 };
 
+struct mdp_pcc_coeff_v1_7_32 {
+	uint32_t c, r, g, b, rg, gb, rb, rgb;
+};
+
+struct mdp_pcc_data_v1_7_32 {
+	struct mdp_pcc_coeff_v1_7_32 r, g, b;
+};
 struct mdp_pcc_cfg_data32 {
+	uint32_t version;
 	uint32_t block;
 	uint32_t ops;
 	struct mdp_pcc_coeff32 r, g, b;
+	compat_caddr_t cfg_payload;
 };
 
 struct mdp_csc_cfg32 {
@@ -150,9 +159,43 @@ struct mdp_pa_v2_data32 {
 	compat_caddr_t six_zone_curve_p1;
 };
 
+struct mdp_pa_mem_col_data_v1_7_32 {
+	uint32_t color_adjust_p0;
+	uint32_t color_adjust_p1;
+	uint32_t color_adjust_p2;
+	uint32_t blend_gain;
+	uint8_t sat_hold;
+	uint8_t val_hold;
+	uint32_t hue_region;
+	uint32_t sat_region;
+	uint32_t val_region;
+};
+
+struct mdp_pa_data_v1_7_32 {
+	uint32_t mode;
+	uint32_t global_hue_adj;
+	uint32_t global_sat_adj;
+	uint32_t global_val_adj;
+	uint32_t global_cont_adj;
+	struct mdp_pa_mem_col_data_v1_7_32 skin_cfg;
+	struct mdp_pa_mem_col_data_v1_7_32 sky_cfg;
+	struct mdp_pa_mem_col_data_v1_7_32 fol_cfg;
+	uint32_t six_zone_thresh;
+	uint32_t six_zone_adj_p0;
+	uint32_t six_zone_adj_p1;
+	uint8_t six_zone_sat_hold;
+	uint8_t six_zone_val_hold;
+	uint32_t six_zone_len;
+	compat_caddr_t six_zone_curve_p0;
+	compat_caddr_t six_zone_curve_p1;
+};
+
 struct mdp_pa_v2_cfg_data32 {
+	uint32_t version;
 	uint32_t block;
+	uint32_t flags;
 	struct mdp_pa_v2_data32 pa_v2_data;
+	compat_caddr_t cfg_payload;
 };
 
 struct mdp_pa_cfg32 {
@@ -168,6 +211,13 @@ struct mdp_pa_cfg_data32 {
 	struct mdp_pa_cfg32 pa_data;
 };
 
+struct mdp_igc_lut_data_v1_7_32 {
+	uint32_t table_fmt;
+	uint32_t len;
+	compat_caddr_t c0_c1_data;
+	compat_caddr_t c2_data;
+};
+
 struct mdp_rgb_lut_data32 {
 	uint32_t flags;
 	uint32_t lut_type;
@@ -176,16 +226,26 @@ struct mdp_rgb_lut_data32 {
 
 struct mdp_igc_lut_data32 {
 	uint32_t block;
+	uint32_t version;
 	uint32_t len, ops;
 	compat_caddr_t c0_c1_data;
 	compat_caddr_t c2_data;
+	compat_caddr_t cfg_payload;
+};
+
+struct mdp_hist_lut_data_v1_7_32 {
+	uint32_t len;
+	compat_caddr_t data;
 };
 
 struct mdp_hist_lut_data32 {
 	uint32_t block;
+	uint32_t version;
+	uint32_t hist_lut_first;
 	uint32_t ops;
 	uint32_t len;
 	compat_caddr_t data;
+	compat_caddr_t cfg_payload;
 };
 
 struct mdp_ar_gc_lut_data32 {
@@ -194,7 +254,15 @@ struct mdp_ar_gc_lut_data32 {
 	uint32_t offset;
 };
 
+struct mdp_pgc_lut_data_v1_7_32 {
+	uint32_t  len;
+	compat_caddr_t c0_data;
+	compat_caddr_t c1_data;
+	compat_caddr_t c2_data;
+};
+
 struct mdp_pgc_lut_data32 {
+	uint32_t version;
 	uint32_t block;
 	uint32_t flags;
 	uint8_t num_r_stages;
@@ -203,6 +271,7 @@ struct mdp_pgc_lut_data32 {
 	compat_caddr_t r_data;
 	compat_caddr_t g_data;
 	compat_caddr_t b_data;
+	compat_caddr_t cfg_payload;
 };
 
 struct mdp_lut_cfg_data32 {
@@ -235,14 +304,25 @@ struct mdp_dither_cfg_data32 {
 	uint32_t b_cb_depth;
 };
 
+struct mdp_gamut_data_v1_7_32 {
+	uint32_t mode;
+	uint32_t tbl_size[MDP_GAMUT_TABLE_NUM_V1_7];
+	compat_caddr_t c0_data[MDP_GAMUT_TABLE_NUM_V1_7];
+	compat_caddr_t c1_c2_data[MDP_GAMUT_TABLE_NUM_V1_7];
+	uint32_t  tbl_scale_off_sz[MDP_GAMUT_SCALE_OFF_TABLE_NUM];
+	compat_caddr_t scale_off_data[MDP_GAMUT_SCALE_OFF_TABLE_NUM];
+};
+
 struct mdp_gamut_cfg_data32 {
 	uint32_t block;
 	uint32_t flags;
+	uint32_t version;
 	uint32_t gamut_first;
 	uint32_t tbl_size[MDP_GAMUT_TABLE_NUM];
 	compat_caddr_t r_tbl[MDP_GAMUT_TABLE_NUM];
 	compat_caddr_t g_tbl[MDP_GAMUT_TABLE_NUM];
 	compat_caddr_t b_tbl[MDP_GAMUT_TABLE_NUM];
+	compat_caddr_t cfg_payload;
 };
 
 struct mdp_calib_config_data32 {
@@ -354,6 +434,8 @@ struct mdp_overlay_pp_params32 {
 	struct mdp_sharp_cfg32 sharp_cfg;
 	struct mdp_histogram_cfg32 hist_cfg;
 	struct mdp_hist_lut_data32 hist_lut_cfg;
+	struct mdp_pa_v2_cfg_data32 pa_v2_cfg_data;
+	struct mdp_pcc_cfg_data32 pcc_cfg_data;
 };
 
 struct msmfb_mdp_pp32 {
@@ -405,6 +487,55 @@ struct mdp_overlay_list32 {
 	compat_caddr_t overlay_list;
 	uint32_t flags;
 	uint32_t processed_overlays;
+};
+
+struct mdp_input_layer32 {
+	uint32_t		flags;
+	uint32_t		pipe_ndx;
+	uint8_t			horz_deci;
+	uint8_t			vert_deci;
+	uint8_t			alpha;
+	uint16_t		z_order;
+	uint32_t		transp_mask;
+	uint32_t		bg_color;
+	enum mdss_mdp_blend_op		blend_op;
+	struct mdp_rect		src_rect;
+	struct mdp_rect		dst_rect;
+	compat_caddr_t		scale;
+	struct mdp_layer_buffer	buffer;
+	compat_caddr_t		pp_info;
+	int			error_code;
+	uint32_t		reserved[6];
+};
+
+struct mdp_output_layer32 {
+	uint32_t			flags;
+	uint32_t			writeback_ndx;
+	struct mdp_layer_buffer		buffer;
+	uint32_t			reserved[6];
+};
+struct mdp_layer_commit_v1_32 {
+	uint32_t		flags;
+	int			release_fence;
+	struct mdp_rect		left_roi;
+	struct mdp_rect		right_roi;
+	compat_caddr_t		input_layers;
+	uint32_t		input_layer_cnt;
+	compat_caddr_t		output_layer;
+	int			retire_fence;
+	uint32_t		reserved[6];
+};
+
+struct mdp_layer_commit32 {
+	uint32_t version;
+	union {
+		struct mdp_layer_commit_v1_32 commit_v1;
+	};
+};
+
+struct mdp_position_update32 {
+	compat_caddr_t __user	*input_layers;
+	uint32_t input_layer_cnt;
 };
 
 #endif

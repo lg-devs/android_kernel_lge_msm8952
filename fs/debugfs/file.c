@@ -451,7 +451,7 @@ static ssize_t read_file_bool(struct file *file, char __user *user_buf,
 {
 	char buf[3];
 	u32 *val = file->private_data;
-	
+
 	if (*val)
 		buf[0] = 'Y';
 	else
@@ -473,6 +473,7 @@ static ssize_t write_file_bool(struct file *file, const char __user *user_buf,
 	if (copy_from_user(buf, user_buf, buf_size))
 		return -EFAULT;
 
+	buf[buf_size] = '\0';
 	if (strtobool(buf, &bv) == 0)
 		*val = bv;
 

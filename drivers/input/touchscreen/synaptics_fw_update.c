@@ -131,12 +131,14 @@ struct image_header_data {
 			unsigned char firmware_size[4];
 			unsigned char config_size[4];
 			/* 0x10-0x1F */
-			unsigned char product_id[SYNAPTICS_RMI4_PRODUCT_ID_SIZE];
+			unsigned char product_id[
+					SYNAPTICS_RMI4_PRODUCT_ID_SIZE];
 			unsigned char pkg_id_lsb;
 			unsigned char pkg_id_msb;
 			unsigned char pkg_id_rev_lsb;
 			unsigned char pkg_id_rev_msb;
-			unsigned char product_info[SYNAPTICS_RMI4_PRODUCT_INFO_SIZE];
+			unsigned char product_info[
+					SYNAPTICS_RMI4_PRODUCT_INFO_SIZE];
 			/* 0x20-0x2F */
 			unsigned char reserved_20_2f[0x10];
 			/* 0x30-0x3F */
@@ -574,6 +576,7 @@ static int fwu_read_interrupt_status(void)
 {
 	int retval;
 	unsigned char interrupt_status;
+
 	retval = fwu->fn_ptr->read(fwu->rmi4_data,
 			fwu->addr_f01_interrupt_register,
 			&interrupt_status,
@@ -666,6 +669,7 @@ static int fwu_wait_for_idle(int timeout_ms)
 {
 	int count = 0;
 	int timeout_count = ((timeout_ms * 1000) / SLEEP_TIME_US) + 1;
+
 	do {
 		if (fwu->interrupt_flag)
 			return 0;
@@ -710,9 +714,6 @@ static enum flash_area fwu_go_nogo(void)
 
 	imagePR = kzalloc(sizeof(MAX_FIRMWARE_ID_LEN), GFP_KERNEL);
 	if (!imagePR) {
-		dev_err(&i2c_client->dev,
-			"%s: Failed to alloc mem for image pointer\n",
-			__func__);
 		flash_area = NONE;
 		return flash_area;
 	}
@@ -809,8 +810,7 @@ static enum flash_area fwu_go_nogo(void)
 				sizeof(fwu->image_name));
 		if (!strptr) {
 			dev_err(&i2c_client->dev,
-				"No valid PR number (PRxxxxxxx)" \
-				"found in image file name...\n");
+			"No valid PR number found in image file name...\n");
 			goto exit;
 		}
 
@@ -883,7 +883,7 @@ exit:
 	kfree(imagePR);
 	if (flash_area == MISMATCH)
 		dev_info(&i2c_client->dev,
-			"%s: Package ID indicates mismatch of firmware and" \
+			"%s: Package ID indicates mismatch of firmware and"
 			" controller compatibility\n", __func__);
 	else if (flash_area == NONE)
 		dev_info(&i2c_client->dev,
@@ -1403,12 +1403,10 @@ static int fwu_do_read_config(void)
 	kfree(fwu->read_config_buf);
 	fwu->read_config_buf = kzalloc(fwu->config_size, GFP_KERNEL);
 	if (!fwu->read_config_buf) {
-		dev_err(&fwu->rmi4_data->i2c_client->dev,
-			"%s: Failed to alloc memory for config buffer\n",
-			__func__);
 		retval = -ENOMEM;
 		goto exit;
 	}
+
 	block_offset[1] |= (fwu->config_area << 5);
 
 	retval = fwu->fn_ptr->write(fwu->rmi4_data,
@@ -1750,10 +1748,9 @@ static ssize_t fwu_sysfs_force_reflash_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
-	if (sscanf(buf, "%u", &input) != 1) {
-		retval = -EINVAL;
+	retval = kstrtouint(buf, 10, &input);
+	if (retval)
 		goto exit;
-	}
 
 	if (input != 1) {
 		retval = -EINVAL;
@@ -1788,10 +1785,9 @@ static ssize_t fwu_sysfs_do_reflash_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
-	if (sscanf(buf, "%u", &input) != 1) {
-		retval = -EINVAL;
+	retval = kstrtouint(buf, 10, &input);
+	if (retval)
 		goto exit;
-	}
 
 	if (input & LOCKDOWN) {
 		fwu->do_lockdown = true;
@@ -1866,10 +1862,9 @@ static ssize_t fwu_sysfs_write_config_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
-	if (sscanf(buf, "%u", &input) != 1) {
-		retval = -EINVAL;
+	retval = kstrtouint(buf, 10, &input);
+	if (retval)
 		goto exit;
-	}
 
 	if (input != 1) {
 		retval = -EINVAL;
@@ -1899,8 +1894,9 @@ static ssize_t fwu_sysfs_read_config_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
-	if (sscanf(buf, "%u", &input) != 1)
-		return -EINVAL;
+	retval = kstrtouint(buf, 10, &input);
+	if (retval)
+		return retval;
 
 	if (input != 1)
 		return -EINVAL;
@@ -1944,7 +1940,6 @@ static ssize_t fwu_sysfs_image_size_store(struct device *dev,
 {
 	int retval;
 	unsigned long size;
-	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
 	retval = kstrtoul(buf, 10, &size);
 	if (retval)
@@ -1955,12 +1950,8 @@ static ssize_t fwu_sysfs_image_size_store(struct device *dev,
 
 	kfree(fwu->ext_data_source);
 	fwu->ext_data_source = kzalloc(fwu->image_size, GFP_KERNEL);
-	if (!fwu->ext_data_source) {
-		dev_err(&rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for image data\n",
-				__func__);
+	if (!fwu->ext_data_source)
 		return -ENOMEM;
-	}
 
 	return count;
 }
@@ -2138,18 +2129,12 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 
 	fwu = kzalloc(sizeof(*fwu), GFP_KERNEL);
 	if (!fwu) {
-		dev_err(&rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for fwu\n",
-				__func__);
 		retval = -ENOMEM;
 		goto exit;
 	}
 
 	fwu->fn_ptr = kzalloc(sizeof(*(fwu->fn_ptr)), GFP_KERNEL);
 	if (!fwu->fn_ptr) {
-		dev_err(&rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for fn_ptr\n",
-				__func__);
 		retval = -ENOMEM;
 		goto exit_free_fwu;
 	}
@@ -2237,10 +2222,8 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 	}
 
 	fwu->ts_info = kzalloc(RMI4_INFO_MAX_LEN, GFP_KERNEL);
-	if (!fwu->ts_info) {
-		dev_err(&rmi4_data->i2c_client->dev, "Not enough memory\n");
+	if (!fwu->ts_info)
 		goto exit_free_ts_info;
-	}
 
 	synaptics_rmi4_update_debug_info();
 

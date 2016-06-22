@@ -32,7 +32,6 @@
 #include <sound/pcm.h>
 
 struct snd_compr_ops;
-struct snd_pcm_substream;
 
 /**
  * struct snd_compr_runtime: runtime stream description
@@ -60,7 +59,6 @@ struct snd_compr_runtime {
 	u64 total_bytes_available;
 	u64 total_bytes_transferred;
 	wait_queue_head_t sleep;
-	struct snd_pcm_substream *fe_substream;
 	void *private_data;
 };
 
@@ -97,6 +95,8 @@ struct snd_compr_stream {
  * This can be called in during stream creation only to set codec params
  * and the stream properties
  * @get_params: retrieve the codec parameters, mandatory
+ * @set_next_track_param: send codec specific data of subsequent track
+ * in gapless
  * @trigger: Trigger operations like start, pause, resume, drain, stop.
  * This callback is mandatory
  * @pointer: Retrieve current h/w pointer information. Mandatory
@@ -174,6 +174,15 @@ void snd_compress_free(struct snd_card *card, struct snd_compr *compr);
  */
 static inline void snd_compr_fragment_elapsed(struct snd_compr_stream *stream)
 {
+	wake_up(&stream->runtime->sleep);
+}
+
+static inline void snd_compr_drain_notify(struct snd_compr_stream *stream)
+{
+	if (snd_BUG_ON(!stream))
+		return;
+
+	stream->runtime->state = SNDRV_PCM_STATE_SETUP;
 	wake_up(&stream->runtime->sleep);
 }
 

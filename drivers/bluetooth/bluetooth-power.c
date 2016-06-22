@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2010, 2013-2014 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2010, 2013-2015 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -204,6 +204,14 @@ static int bluetooth_power(int on)
 				goto vdd_xtal_fail;
 			}
 		}
+		if (bt_power_pdata->bt_vdd_core) {
+			rc = bt_configure_vreg(bt_power_pdata->bt_vdd_core);
+			if (rc < 0) {
+				BT_PWR_ERR("bt_power vddcore config failed");
+				goto vdd_core_fail;
+			}
+		}
+
 		if (bt_power_pdata->bt_vdd_pa) {
 			rc = bt_configure_vreg(bt_power_pdata->bt_vdd_pa);
 			if (rc < 0) {
@@ -221,7 +229,7 @@ static int bluetooth_power(int on)
 		if (bt_power_pdata->bt_chip_pwd) {
 			rc = bt_configure_vreg(bt_power_pdata->bt_chip_pwd);
 			if (rc < 0) {
-				BT_PWR_ERR("bt_power vddldo config failed");
+				BT_PWR_ERR("bt_power chippwd config failed");
 				goto chip_pwd_fail;
 			}
 		}
@@ -243,6 +251,8 @@ chip_pwd_fail:
 vdd_ldo_fail:
 		bt_vreg_disable(bt_power_pdata->bt_vdd_pa);
 vdd_pa_fail:
+		bt_vreg_disable(bt_power_pdata->bt_vdd_core);
+vdd_core_fail:
 		bt_vreg_disable(bt_power_pdata->bt_vdd_xtal);
 vdd_xtal_fail:
 		bt_vreg_disable(bt_power_pdata->bt_vdd_io);
@@ -270,7 +280,7 @@ static const struct rfkill_ops bluetooth_power_rfkill_ops = {
 	.set_block = bluetooth_toggle_radio,
 };
 
-#ifdef CONFIG_CNSS_PCI
+#ifdef CONFIG_CNSS
 static ssize_t enable_extldo(struct device *dev, struct device_attribute *attr,
 			char *buf)
 {
@@ -407,6 +417,11 @@ static int bt_power_populate_dt_pinfo(struct platform_device *pdev)
 			BT_PWR_ERR("bt-reset-gpio not provided in device tree");
 			return bt_power_pdata->bt_gpio_sys_rst;
 		}
+		rc = bt_dt_parse_vreg_info(&pdev->dev,
+					&bt_power_pdata->bt_vdd_core,
+					"qca,bt-vdd-core");
+		if (rc < 0)
+			return rc;
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_io,

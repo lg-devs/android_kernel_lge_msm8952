@@ -113,8 +113,8 @@ struct clock_event_device {
 					    struct clock_event_device *);
 	void			(*suspend)(struct clock_event_device *);
 	void			(*resume)(struct clock_event_device *);
-	s64			min_delta_ticks;
-	s64			max_delta_ticks;
+	unsigned long		min_delta_ticks;
+	unsigned long		max_delta_ticks;
 
 	const char		*name;
 	int			rating;
@@ -149,6 +149,7 @@ static inline unsigned long div_sc(unsigned long ticks, unsigned long nsec,
 extern u64 clockevent_delta2ns(unsigned long latch,
 			       struct clock_event_device *evt);
 extern void clockevents_register_device(struct clock_event_device *dev);
+extern int clockevents_unbind_device(struct clock_event_device *ced, int cpu);
 
 extern void clockevents_config(struct clock_event_device *dev, u32 freq);
 extern void clockevents_config_and_register(struct clock_event_device *dev,
@@ -206,6 +207,7 @@ static inline void clockevents_resume(void) {}
 
 static inline int clockevents_notify(unsigned long reason, void *arg) { return 0; }
 static inline int tick_check_broadcast_expired(void) { return 0; }
+static inline void tick_setup_hrtimer_broadcast(void) {};
 
 #endif
 

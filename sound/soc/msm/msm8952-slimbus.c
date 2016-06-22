@@ -25,7 +25,6 @@
 #include <sound/q6afe-v2.h>
 #include <sound/q6core.h>
 #include <sound/pcm_params.h>
-#include <sound/info.h>
 #include <soc/qcom/socinfo.h>
 #include <linux/input.h>
 #include "qdsp6v2/msm-pcm-routing-v2.h"
@@ -66,10 +65,6 @@
 #define HS_STARTWORK_TIMEOUT        4000
 
 #define Q6AFE_LPASS_OSR_CLK_9_P600_MHZ	0x927C00
-#define MAX_AUX_CODECS	4
-
-#define WSA8810_NAME_1 "wsa881x.20170211"
-#define WSA8810_NAME_2 "wsa881x.20170212"
 
 enum btsco_rates {
 	RATE_8KHZ_ID,
@@ -78,13 +73,10 @@ enum btsco_rates {
 
 static int slim0_rx_sample_rate = SAMPLING_RATE_48KHZ;
 static int slim0_tx_sample_rate = SAMPLING_RATE_48KHZ;
-static int slim1_tx_sample_rate = SAMPLING_RATE_48KHZ;
 static int slim0_rx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
 static int slim0_tx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
-static int slim1_tx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
 static int msm_slim_0_rx_ch = 1;
 static int msm_slim_0_tx_ch = 1;
-static int msm_slim_1_tx_ch = 1;
 static int msm_vi_feed_tx_ch = 2;
 static int msm_slim_5_rx_ch = 1;
 static int slim5_rx_sample_rate = SAMPLING_RATE_48KHZ;
@@ -105,11 +97,6 @@ static void *adsp_state_notifier;
 static int msm8952_enable_codec_mclk(struct snd_soc_codec *codec, int enable,
 					bool dapm);
 
-/*
- * Android L spec
- * Need to report LINEIN
- * if R/L channel impedance is larger than 5K ohm
- */
 static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.read_fw_bin = false,
 	.calibration = NULL,
@@ -117,15 +104,6 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.mono_stero_detection = false,
 	.swap_gnd_mic = NULL,
 	.hs_ext_micbias = true,
-	.key_code[0] = KEY_MEDIA,
-	.key_code[1] = KEY_VOICECOMMAND,
-	.key_code[2] = KEY_VOLUMEUP,
-	.key_code[3] = KEY_VOLUMEDOWN,
-	.key_code[4] = 0,
-	.key_code[5] = 0,
-	.key_code[6] = 0,
-	.key_code[7] = 0,
-	.linein_th = 5000,
 };
 
 static struct wcd9xxx_mbhc_config wcd9xxx_mbhc_cfg = {
@@ -150,14 +128,6 @@ static struct wcd9xxx_mbhc_config wcd9xxx_mbhc_cfg = {
 	.use_vddio_meas = true,
 	.enable_anc_mic_detect = false,
 	.hw_jack_type = FOUR_POLE_JACK,
-	.key_code[0] = KEY_MEDIA,
-	.key_code[1] = KEY_VOICECOMMAND,
-	.key_code[2] = KEY_VOLUMEUP,
-	.key_code[3] = KEY_VOLUMEDOWN,
-	.key_code[4] = 0,
-	.key_code[5] = 0,
-	.key_code[6] = 0,
-	.key_code[7] = 0,
 };
 
 static void *def_tasha_mbhc_cal(void)
@@ -168,10 +138,8 @@ static void *def_tasha_mbhc_cal(void)
 
 	tasha_wcd_cal = kzalloc(WCD_MBHC_CAL_SIZE(WCD_MBHC_DEF_BUTTONS,
 				WCD9XXX_MBHC_DEF_RLOADS), GFP_KERNEL);
-	if (!tasha_wcd_cal) {
-		pr_err("%s: out of memory\n", __func__);
+	if (!tasha_wcd_cal)
 		return NULL;
-	}
 
 #define S(X, Y) ((WCD_MBHC_CAL_PLUG_TYPE_PTR(tasha_wcd_cal)->X) = (Y))
 	S(v_hs_max, 1500);
@@ -308,17 +276,10 @@ struct msm8952_asoc_mach_data {
 	struct snd_soc_codec *codec;
 	struct msm8952_codec msm8952_codec_fn;
 	struct ext_intf_cfg clk_ref;
-	struct snd_info_entry *codec_root;
 	void __iomem *vaddr_gpio_mux_spkr_ctl;
 	void __iomem *vaddr_gpio_mux_mic_ctl;
 	void __iomem *vaddr_gpio_mux_pcm_ctl;
-	void __iomem *vaddr_gpio_mux_sec_pcm_ctl;
 	void __iomem *vaddr_gpio_mux_quin_ctl;
-};
-
-struct msm895x_auxcodec_prefix_map {
-	char codec_name[50];
-	char codec_prefix[25];
 };
 
 static inline int param_is_mask(int p)
@@ -332,60 +293,30 @@ static inline struct snd_mask *param_to_mask(struct snd_pcm_hw_params *p, int n)
 	return &(p->masks[n - SNDRV_PCM_HW_PARAM_FIRST_MASK]);
 }
 
-int msm895x_wsa881x_init(struct snd_soc_dapm_context *dapm)
+int msm895x_wsa881x_init(struct snd_soc_component *component)
 {
 	u8 spkleft_ports[WSA881X_MAX_SWR_PORTS] = {100, 101, 102, 106};
 	u8 spkright_ports[WSA881X_MAX_SWR_PORTS] = {103, 104, 105, 107};
 	unsigned int ch_rate[WSA881X_MAX_SWR_PORTS] = {2400, 600, 300, 1200};
 	unsigned int ch_mask[WSA881X_MAX_SWR_PORTS] = {0x1, 0xF, 0x3, 0x3};
-	struct snd_soc_card *card = dapm->codec->card;
-	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
-	struct msm895x_auxcodec_prefix_map codec_prefix_map[MAX_AUX_CODECS] = {
-	{ "wsa881x.20170211", "SpkrLeft" },
-	{ "wsa881x.20170212", "SpkrRight" },
-	{ "wsa881x.21170213", "SpkrLeft" },
-	{ "wsa881x.21170214", "SpkrRight" } };
-	u8 i;
+	struct snd_soc_codec *codec = snd_soc_component_to_codec(component);
 
-	if (!dapm->codec->name) {
-		pr_err("%s codec_name is NULL\n", __func__);
+	if (!codec) {
+		pr_err("%s codec is NULL\n", __func__);
 		return -EINVAL;
 	}
-	dev_dbg(dapm->codec->dev, "%s codec_name: %s\n", __func__,
-			dapm->codec->name);
-	for (i = 0; i < MAX_AUX_CODECS; i++) {
-		if (!strcmp(dapm->codec->name, codec_prefix_map[i].codec_name))
-			break;
-	}
-	if (i >= MAX_AUX_CODECS) {
-		pr_err("%s: could not find prefix map\n" , __func__);
-		return -EINVAL;
-	}
-
-	if (!strcmp(codec_prefix_map[i].codec_prefix, "SpkrLeft")) {
-		wsa881x_set_channel_map(dapm->codec, &spkleft_ports[0],
+	if (!strcmp(codec->component.name, "wsa881x.20170212")) {
+		wsa881x_set_channel_map(codec, &spkleft_ports[0],
 				WSA881X_MAX_SWR_PORTS, &ch_mask[0],
 				&ch_rate[0]);
-	} else if (!strcmp(codec_prefix_map[i].codec_prefix, "SpkrRight")) {
-		wsa881x_set_channel_map(dapm->codec, &spkright_ports[0],
+	} else if (!strcmp(codec->component.name, "wsa881x.20170211")) {
+		wsa881x_set_channel_map(codec, &spkright_ports[0],
 				WSA881X_MAX_SWR_PORTS, &ch_mask[0],
 				&ch_rate[0]);
 	} else {
-		dev_err(dapm->codec->dev, "%s: wrong codec name %s\n", __func__,
-			dapm->codec->name);
+		dev_err(codec->dev, "%s: wrong codec name %s\n", __func__,
+			codec->component.name);
 		return -EINVAL;
-	}
-	pdata = snd_soc_card_get_drvdata(card);
-	if (pdata && pdata->codec_root)
-		wsa881x_codec_info_create_codec_entry(pdata->codec_root,
-						      dapm->codec);
-
-	if (!strcmp(codec_prefix_map[i].codec_prefix, "SpkrLeft")) {
-		snd_soc_dapm_ignore_suspend(dapm, "SpkrLeft IN");
-		snd_soc_dapm_ignore_suspend(dapm, "SpkrLeft SPKR");
-	} else if (!strcmp(codec_prefix_map[i].codec_prefix, "SpkrRight")) {
-		snd_soc_dapm_ignore_suspend(dapm, "SpkrRight IN");
-		snd_soc_dapm_ignore_suspend(dapm, "SpkrRight SPKR");
 	}
 	return 0;
 }
@@ -396,6 +327,7 @@ static void param_set_mask(struct snd_pcm_hw_params *p, int n, unsigned bit)
 		return;
 	if (param_is_mask(n)) {
 		struct snd_mask *m = param_to_mask(p, n);
+
 		m->bits[0] = 0;
 		m->bits[1] = 0;
 		m->bits[bit >> 5] |= (1 << (bit & 31));
@@ -406,7 +338,7 @@ static void msm8952_ext_control(struct snd_soc_codec *codec)
 {
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 
-	mutex_lock(&dapm->codec->mutex);
+	mutex_lock(&codec->mutex);
 	pr_debug("%s: msm8952_spk_control = %d", __func__, msm8952_spk_control);
 	if (msm8952_spk_control == MSM8952_SPK_ON) {
 		snd_soc_dapm_enable_pin(dapm, "Lineout_1 amp");
@@ -415,7 +347,7 @@ static void msm8952_ext_control(struct snd_soc_codec *codec)
 		snd_soc_dapm_disable_pin(dapm, "Lineout_1 amp");
 		snd_soc_dapm_disable_pin(dapm, "Lineout_3 amp");
 	}
-	mutex_unlock(&dapm->codec->mutex);
+	mutex_unlock(&codec->mutex);
 	snd_soc_dapm_sync(dapm);
 }
 
@@ -446,11 +378,14 @@ static int msm8952_set_spk(struct snd_kcontrol *kcontrol,
 static int msm8952_enable_codec_mclk(struct snd_soc_codec *codec, int enable,
 					bool dapm)
 {
+	struct snd_soc_card *card = codec->component.card;
+	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
+
 	pr_debug("%s: enable = %d\n", __func__, enable);
 
-	if (!strcmp(dev_name(codec->dev), "tomtom_codec"))
+	if (!strcmp(dev_name(pdata->codec->dev), "tomtom_codec"))
 		tomtom_codec_mclk_enable(codec, enable, dapm);
-	else if (!strcmp(dev_name(codec->dev), "tasha_codec"))
+	else if (!strcmp(dev_name(pdata->codec->dev), "tasha_codec"))
 		tasha_cdc_mclk_enable(codec, enable, dapm);
 
 	return 0;
@@ -557,10 +492,6 @@ static int slim0_rx_sample_rate_get(struct snd_kcontrol *kcontrol,
 	int sample_rate_val = 0;
 
 	switch (slim0_rx_sample_rate) {
-	case SAMPLING_RATE_44P1KHZ:
-		sample_rate_val = 3;
-		break;
-
 	case SAMPLING_RATE_192KHZ:
 		sample_rate_val = 2;
 		break;
@@ -589,9 +520,6 @@ static int slim0_rx_sample_rate_put(struct snd_kcontrol *kcontrol,
 			ucontrol->value.integer.value[0]);
 
 	switch (ucontrol->value.integer.value[0]) {
-	case 3:
-		slim0_rx_sample_rate = SAMPLING_RATE_44P1KHZ;
-		break;
 	case 2:
 		slim0_rx_sample_rate = SAMPLING_RATE_192KHZ;
 		break;
@@ -797,24 +725,6 @@ static int msm_slim_0_tx_ch_put(struct snd_kcontrol *kcontrol,
 	return 1;
 }
 
-static int msm_slim_1_tx_ch_get(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	pr_debug("%s: msm_slim_1_tx_ch  = %d\n", __func__,
-		 msm_slim_1_tx_ch);
-	ucontrol->value.integer.value[0] = msm_slim_1_tx_ch - 1;
-	return 0;
-}
-
-static int msm_slim_1_tx_ch_put(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	msm_slim_1_tx_ch = ucontrol->value.integer.value[0] + 1;
-
-	pr_debug("%s: msm_slim_1_tx_ch = %d\n", __func__, msm_slim_1_tx_ch);
-	return 1;
-}
-
 static int slim0_tx_sample_rate_get(struct snd_kcontrol *kcontrol,
 			struct snd_ctl_elem_value *ucontrol)
 {
@@ -895,52 +805,6 @@ static int msm_btsco_rate_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static int msm_auxpcm_rate_get(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	pr_debug("%s: msm8952_auxpcm_rate  = %d", __func__,
-						msm8952_auxpcm_rate);
-	ucontrol->value.integer.value[0] = msm8952_auxpcm_rate;
-	return 0;
-}
-
-static int msm_auxpcm_rate_put(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	switch (ucontrol->value.integer.value[0]) {
-	case RATE_8KHZ_ID:
-		msm8952_auxpcm_rate = BTSCO_RATE_8KHZ;
-		break;
-	case RATE_16KHZ_ID:
-		msm8952_auxpcm_rate = BTSCO_RATE_16KHZ;
-		break;
-	default:
-		msm8952_auxpcm_rate = BTSCO_RATE_8KHZ;
-		break;
-	}
-
-	pr_err("%s: msm8952_auxpcm_rate = %d\n", __func__, msm8952_auxpcm_rate);
-	return 0;
-}
-
-static int msm_proxy_rx_ch_get(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	pr_debug("%s: msm_proxy_rx_ch = %d\n", __func__,
-						msm_proxy_rx_ch);
-	ucontrol->value.integer.value[0] = msm_proxy_rx_ch - 1;
-	return 0;
-}
-
-static int msm_proxy_rx_ch_put(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	msm_proxy_rx_ch = ucontrol->value.integer.value[0] + 1;
-	pr_debug("%s: msm_proxy_rx_ch = %d\n", __func__,
-						msm_proxy_rx_ch);
-	return 0;
-}
-
 static const char *const spk_function[] = {"Off", "On"};
 static const char *const slim0_rx_ch_text[] = {"One", "Two"};
 static const char *const slim0_tx_ch_text[] = {"One", "Two", "Three", "Four",
@@ -949,26 +813,22 @@ static const char *const slim0_tx_ch_text[] = {"One", "Two", "Three", "Four",
 static const char *const vi_feed_ch_text[] = {"One", "Two"};
 static char const *rx_bit_format_text[] = {"S16_LE", "S24_LE"};
 static char const *slim0_rx_sample_rate_text[] = {"KHZ_48", "KHZ_96",
-					"KHZ_192", "KHZ_44P1"};
+					"KHZ_192"};
 static const char *const slim5_rx_ch_text[] = {"One", "Two"};
 static char const *slim5_rx_sample_rate_text[] = {"KHZ_48", "KHZ_96",
 	"KHZ_192", "KHZ_44P1"};
 static char const *slim5_rx_bit_format_text[] = {"S16_LE", "S24_LE"};
-static const char *const proxy_rx_ch_text[] = {"One", "Two", "Three", "Four",
-	"Five", "Six", "Seven", "Eight"};
 
 static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, spk_function),
 	SOC_ENUM_SINGLE_EXT(2, slim0_rx_ch_text),
 	SOC_ENUM_SINGLE_EXT(8, slim0_tx_ch_text),
 	SOC_ENUM_SINGLE_EXT(2, rx_bit_format_text),
-	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(slim0_rx_sample_rate_text),
-				slim0_rx_sample_rate_text),
+	SOC_ENUM_SINGLE_EXT(3, slim0_rx_sample_rate_text),
 	SOC_ENUM_SINGLE_EXT(2, vi_feed_ch_text),
 	SOC_ENUM_SINGLE_EXT(4, slim5_rx_sample_rate_text),
 	SOC_ENUM_SINGLE_EXT(2, slim5_rx_bit_format_text),
 	SOC_ENUM_SINGLE_EXT(2, slim5_rx_ch_text),
-	SOC_ENUM_SINGLE_EXT(8, proxy_rx_ch_text),
 };
 
 static const char *const btsco_rate_text[] = {"BTSCO_RATE_8KHZ",
@@ -986,8 +846,6 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_slim_5_rx_ch_get, msm_slim_5_rx_ch_put),
 	SOC_ENUM_EXT("SLIM_0_TX Channels", msm_snd_enum[2],
 			msm_slim_0_tx_ch_get, msm_slim_0_tx_ch_put),
-	SOC_ENUM_EXT("SLIM_1_TX Channels", msm_snd_enum[2],
-			msm_slim_1_tx_ch_get, msm_slim_1_tx_ch_put),
 	SOC_ENUM_EXT("MI2S_RX Format", msm_snd_enum[3],
 			mi2s_rx_bit_format_get, mi2s_rx_bit_format_put),
 	SOC_ENUM_EXT("SLIM_0_RX Format", msm_snd_enum[3],
@@ -1006,10 +864,6 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			slim0_tx_bit_format_get, slim0_tx_bit_format_put),
 	SOC_ENUM_EXT("Internal BTSCO SampleRate", msm_btsco_enum[0],
 		     msm_btsco_rate_get, msm_btsco_rate_put),
-	SOC_ENUM_EXT("AUXPCM SampleRate", msm_btsco_enum[0],
-		     msm_auxpcm_rate_get, msm_auxpcm_rate_put),
-	SOC_ENUM_EXT("PROXY_RX Channels", msm_snd_enum[9],
-			msm_proxy_rx_ch_get, msm_proxy_rx_ch_put),
 };
 
 int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
@@ -1164,15 +1018,13 @@ int msm_snd_hw_params(struct snd_pcm_substream *substream,
 			user_set_tx_ch = msm_slim_0_tx_ch;
 		/* For <codec>_tx2 case */
 		else if (dai_link->be_id == MSM_BACKEND_DAI_SLIMBUS_1_TX)
-			user_set_tx_ch = msm_slim_1_tx_ch;
+			user_set_tx_ch = params_channels(params);
 		else if (dai_link->be_id == MSM_BACKEND_DAI_SLIMBUS_3_TX)
 			/* DAI 5 is used for external EC reference from codec.
 			 * Since Rx is fed as reference for EC, the config of
 			 * this DAI is based on that of the Rx path.
 			 */
 			user_set_tx_ch = msm_slim_0_rx_ch;
-		else if (dai_link->be_id == MSM_BACKEND_DAI_SLIMBUS_4_TX)
-			user_set_tx_ch = msm_vi_feed_tx_ch;
 		else
 			user_set_tx_ch = tx_ch_cnt;
 
@@ -1285,24 +1137,6 @@ int msm_slim_0_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 
-int msm_slim_1_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
-					    struct snd_pcm_hw_params *params)
-{
-	struct snd_interval *rate = hw_param_interval(params,
-	SNDRV_PCM_HW_PARAM_RATE);
-
-	struct snd_interval *channels = hw_param_interval(params,
-			SNDRV_PCM_HW_PARAM_CHANNELS);
-
-	pr_debug("%s()\n", __func__);
-	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
-				   slim1_tx_bit_format);
-	rate->min = rate->max = slim1_tx_sample_rate;
-	channels->min = channels->max = msm_slim_1_tx_ch;
-
-	return 0;
-}
-
 int msm_slim_4_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					    struct snd_pcm_hw_params *params)
 {
@@ -1312,28 +1146,8 @@ int msm_slim_4_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	struct snd_interval *channels = hw_param_interval(params,
 			SNDRV_PCM_HW_PARAM_CHANNELS);
 
-	struct snd_soc_codec *codec = rtd->codec;
-
-	pr_debug("%s: codec name: %s", __func__, dev_name(codec->dev));
-	if (!strcmp(dev_name(codec->dev), "tomtom_codec")) {
-		rate->min = rate->max = SAMPLING_RATE_48KHZ;
-		channels->min = channels->max = msm_vi_feed_tx_ch;
-		pr_debug("%s: tomtom vi sample rate = %d\n",
-				__func__, rate->min);
-	} else if (!strcmp(dev_name(codec->dev), "tasha_codec")) {
-		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
-			SNDRV_PCM_FORMAT_S32_LE);
-		rate->min = rate->max = SAMPLING_RATE_8KHZ;
-		channels->min = channels->max = msm_vi_feed_tx_ch/2;
-		pr_debug("%s: tasha vi sample rate = %d\n",
-				__func__, rate->min);
-	} else {
-		rate->min = rate->max = SAMPLING_RATE_48KHZ;
-		channels->min = channels->max = msm_vi_feed_tx_ch;
-		pr_debug("%s: default sample rate = %d\n",
-				__func__, rate->min);
-	}
-
+	rate->min = rate->max = SAMPLING_RATE_48KHZ;
+	channels->min = channels->max = msm_vi_feed_tx_ch;
 	pr_debug("%s: %d\n", __func__, msm_vi_feed_tx_ch);
 	return 0;
 }
@@ -1368,7 +1182,7 @@ int msm_slim_5_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	    hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
 	struct snd_interval *channels =
 	    hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
-	struct snd_soc_card *card = codec->card;
+	struct snd_soc_card *card = codec->component.card;
 	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
 
 	pr_debug("%s enter\n", __func__);
@@ -1436,7 +1250,7 @@ static int msm_afe_set_config(struct snd_soc_codec *codec)
 {
 	int rc;
 	void *config_data;
-	struct snd_soc_card *card = codec->card;
+	struct snd_soc_card *card = codec->component.card;
 	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
 
 	pr_debug("%s: enter\n", __func__);
@@ -1722,53 +1536,6 @@ void msm_prim_auxpcm_shutdown(struct snd_pcm_substream *substream)
 				__func__, "quat_i2s");
 }
 
-int msm_sec_auxpcm_startup(struct snd_pcm_substream *substream)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
-	int ret = 0, val = 0;
-
-	pr_debug("%s(): substream = %s\n",
-			__func__, substream->name);
-
-	if (pdata->vaddr_gpio_mux_quin_ctl) {
-		val = ioread32(pdata->vaddr_gpio_mux_quin_ctl);
-		val = val | 0x1;
-		iowrite32(val, pdata->vaddr_gpio_mux_quin_ctl);
-	}
-	if (pdata->vaddr_gpio_mux_sec_pcm_ctl) {
-		val = ioread32(pdata->vaddr_gpio_mux_sec_pcm_ctl);
-		val = val | 0x1;
-		iowrite32(val, pdata->vaddr_gpio_mux_sec_pcm_ctl);
-	}
-	atomic_inc(&pdata->clk_ref.sec_auxpcm_mi2s_clk_ref);
-
-	/* enable the gpio's used for the external AUXPCM interface */
-	ret = msm_gpioset_activate(CLIENT_WCD_EXT, "quin_i2s");
-	if (ret < 0)
-		pr_err("%s(): configure gpios failed = %s\n",
-				__func__, "quin_i2s");
-	return ret;
-}
-
-void msm_sec_auxpcm_shutdown(struct snd_pcm_substream *substream)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
-	int ret;
-
-	pr_debug("%s(): substream = %s\n",
-			__func__, substream->name);
-	if (atomic_read(&pdata->clk_ref.sec_auxpcm_mi2s_clk_ref) > 0)
-		atomic_dec(&pdata->clk_ref.sec_auxpcm_mi2s_clk_ref);
-	ret = msm_gpioset_suspend(CLIENT_WCD_EXT, "quin_i2s");
-	if (ret < 0)
-		pr_err("%s(): configure gpios failed = %s\n",
-				__func__, "quin_i2s");
-}
-
 int msm_quat_mi2s_snd_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -2006,30 +1773,15 @@ static int msm8952_codec_event_cb(struct snd_soc_codec *codec,
 	}
 }
 
-static int msm8976_tasha_codec_event_cb(struct snd_soc_codec *codec,
-					enum wcd9335_codec_event codec_event)
-{
-	switch (codec_event) {
-	case WCD9335_CODEC_EVENT_CODEC_UP:
-		return msm8952_wcd93xx_codec_up(codec);
-	default:
-		pr_err("%s: UnSupported codec event %d\n",
-			__func__, codec_event);
-		return -EINVAL;
-	}
-}
-
 int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 {
 	int err;
-	struct snd_card *card;
-	struct snd_info_entry *entry;
-	struct msm8952_asoc_mach_data *pdata;
 	struct snd_soc_codec *codec = rtd->codec;
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct snd_soc_aux_dev *aux_dev = rtd->card->aux_dev;
+	struct snd_soc_card *card = codec->component.card;
+	struct msm8952_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
 
 	/* Codec SLIMBUS configuration
 	 * RX1, RX2, RX3, RX4, RX5, RX6, RX7, RX8, RX9, RX10, RX11, RX12, RX13
@@ -2044,8 +1796,6 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 
 	pr_debug("%s: dev_name%s\n", __func__, dev_name(cpu_dai->dev));
 
-	pdata = snd_soc_card_get_drvdata(codec->card);
-
 	rtd->pmdown_time = 0;
 
 	err = snd_soc_add_codec_controls(codec, msm_snd_controls,
@@ -2059,7 +1809,6 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	if (!strcmp(dev_name(codec_dai->dev), "tomtom_codec")) {
 		pdata->msm8952_codec_fn.get_afe_config_fn =
 			tomtom_get_afe_config;
-		pdata->msm8952_codec_fn.mbhc_hs_detect = tomtom_hs_detect;
 		snd_soc_dapm_new_controls(dapm, msm8952_tomtom_dapm_widgets,
 				ARRAY_SIZE(msm8952_tomtom_dapm_widgets));
 	} else if (!strcmp(dev_name(codec_dai->dev), "tasha_codec")) {
@@ -2069,17 +1818,6 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 				ARRAY_SIZE(msm8952_tasha_dapm_widgets));
 		snd_soc_dapm_add_routes(dapm, wcd9335_audio_paths,
 				ARRAY_SIZE(wcd9335_audio_paths));
-		/*
-		 * Send speaker configuration only for WSA8810.
-		 * Defalut configuration is for WSA8815.
-		 */
-		if (aux_dev)
-			if (!strcmp(aux_dev->codec_name, WSA8810_NAME_1) ||
-				!strcmp(aux_dev->codec_name, WSA8810_NAME_2)) {
-				tasha_set_spkr_mode(codec, SPKR_MODE_1);
-				tasha_set_spkr_gain_offset(rtd->codec,
-							RX_GAIN_OFFSET_M1P5_DB);
-			}
 	}
 
 	snd_soc_dapm_enable_pin(dapm, "Lineout_1 amp");
@@ -2107,14 +1845,11 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic3");
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic4");
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic5");
-	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic4");
-	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic6");
-	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic7");
-	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic8");
 	snd_soc_dapm_ignore_suspend(dapm, "MADINPUT");
 	snd_soc_dapm_ignore_suspend(dapm, "MAD_CPE_INPUT");
 
 	snd_soc_dapm_ignore_suspend(dapm, "EAR");
+	snd_soc_dapm_ignore_suspend(dapm, "HEADPHONE");
 	snd_soc_dapm_ignore_suspend(dapm, "LINEOUT1");
 	snd_soc_dapm_ignore_suspend(dapm, "LINEOUT2");
 	snd_soc_dapm_ignore_suspend(dapm, "LINEOUT3");
@@ -2130,28 +1865,19 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC3");
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC4");
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC5");
-	snd_soc_dapm_ignore_suspend(dapm, "DMIC6");
-	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic6");
 	snd_soc_dapm_ignore_suspend(dapm, "ANC EAR");
 	snd_soc_dapm_ignore_suspend(dapm, "ANC HEADPHONE");
 	if (!strcmp(dev_name(codec_dai->dev), "tomtom_codec")) {
+		snd_soc_dapm_ignore_suspend(dapm, "DMIC6");
+		snd_soc_dapm_ignore_suspend(dapm, "Digital Mic6");
 		snd_soc_dapm_ignore_suspend(dapm, "SPK_OUT");
-		snd_soc_dapm_ignore_suspend(dapm, "HEADPHONE");
 	} else if (!strcmp(dev_name(codec_dai->dev), "tasha_codec")) {
 		snd_soc_dapm_ignore_suspend(dapm, "Digital Mic0");
 		snd_soc_dapm_ignore_suspend(dapm, "DMIC0");
 		snd_soc_dapm_ignore_suspend(dapm, "SPK1 OUT");
 		snd_soc_dapm_ignore_suspend(dapm, "SPK2 OUT");
-		snd_soc_dapm_ignore_suspend(dapm, "HPHL");
-		snd_soc_dapm_ignore_suspend(dapm, "HPHR");
-		snd_soc_dapm_ignore_suspend(dapm, "ANC HPHL");
-		snd_soc_dapm_ignore_suspend(dapm, "ANC HPHR");
-		snd_soc_dapm_ignore_suspend(dapm, "ANC LINEOUT1");
-		snd_soc_dapm_ignore_suspend(dapm, "ANC LINEOUT2");
 	}
 
-	snd_soc_dapm_ignore_suspend(dapm, "AIF4 VI");
-	snd_soc_dapm_ignore_suspend(dapm, "VIINPUT");
 
 	snd_soc_dapm_sync(dapm);
 
@@ -2176,15 +1902,11 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	}
 
 	if (!strcmp(dev_name(codec_dai->dev), "tomtom_codec")) {
-
-		wcd9xxx_mbhc_cfg.gpio_level_insert = of_property_read_bool(
-						codec->card->dev->of_node,
-						"qcom,headset-jack-type-NC");
 		/* start mbhc */
 		wcd9xxx_mbhc_cfg.calibration = def_codec_mbhc_cal();
 		if (wcd9xxx_mbhc_cfg.calibration) {
 			/*
-			 * mbhc inital calibration needs mclk to be enabled,
+			 * mbhc initial calibration needs mclk to be enabled,
 			 * so schedule headset detection for 4sec so that
 			 * adsp gets loaded and will be ready to accept
 			 * mclk request command.
@@ -2217,26 +1939,8 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 
 	if (!strcmp(dev_name(codec_dai->dev), "tomtom_codec"))
 		tomtom_event_register(msm8952_codec_event_cb, rtd->codec);
-	else if (!strcmp(dev_name(codec_dai->dev), "tasha_codec"))
-		tasha_event_register(msm8976_tasha_codec_event_cb, rtd->codec);
 
 	codec_reg_done = true;
-
-	if (!strcmp(dev_name(codec_dai->dev), "tasha_codec")) {
-		card = rtd->card->snd_card;
-		entry = snd_register_module_info(card->module,
-						 "codecs",
-						 card->proc_root);
-		if (!entry) {
-			pr_debug("%s: Cannot create codecs module entry\n",
-				 __func__);
-			err = 0;
-			goto out;
-		}
-		pdata->codec_root = entry;
-		tasha_codec_info_create_codec_entry(pdata->codec_root,
-						    codec);
-	}
 	return 0;
 out:
 	return err;
@@ -2255,15 +1959,14 @@ static void hs_detect_work(struct work_struct *work)
 	if (!pdata || !pdata->codec ||
 			!pdata->msm8952_codec_fn.mbhc_hs_detect)
 		return;
-	pr_debug("%s: enter codec %s\n", __func__, pdata->codec->name);
 	ret = pdata->msm8952_codec_fn.mbhc_hs_detect(pdata->codec,
 						&wcd9xxx_mbhc_cfg);
 	if (ret < 0)
 		pr_err("%s: Failed to intialise mbhc %d\n", __func__, ret);
 	tomtom_enable_qfuse_sensing(pdata->codec);
 	/*
-	 * Set pdata->codec back to NULL, to ensure codec pointer
-	 * is not referenced further from this structure.
+	 *  Set pdata->codec back to NULL, to ensure codec pointer
+	 *  is not referenced further from this structure.
 	 */
 	pdata->codec =  NULL;
 	pr_debug("%s: leave\n", __func__);
@@ -2271,7 +1974,7 @@ static void hs_detect_work(struct work_struct *work)
 
 static bool msm8952_swap_gnd_mic(struct snd_soc_codec *codec)
 {
-	struct snd_soc_card *card = codec->card;
+	struct snd_soc_card *card = codec->component.card;
 	struct msm8952_asoc_mach_data *pdata = NULL;
 	int value = 0;
 	int ret = 0;
@@ -2319,17 +2022,16 @@ static int is_us_eu_switch_gpio_support(struct platform_device *pdev,
 			pr_err("%s: Invalid gpio: %d", __func__,
 					pdata->us_euro_gpio);
 			return -EINVAL;
-		} else {
-			ret = msm_get_gpioset_index(CLIENT_WCD_EXT,
-					"us_eu_gpio");
-			if (ret < 0) {
-				pr_err("%s: gpio set name does not exist: %s",
-							__func__, "us_eu_gpio");
-				return ret;
-			}
-			wcd9xxx_mbhc_cfg.swap_gnd_mic = msm8952_swap_gnd_mic;
-			wcd_mbhc_cfg.swap_gnd_mic = msm8952_swap_gnd_mic;
 		}
+		ret = msm_get_gpioset_index(CLIENT_WCD_EXT,
+				"us_eu_gpio");
+		if (ret < 0) {
+			pr_err("%s: gpio set name does not exist: %s",
+						__func__, "us_eu_gpio");
+			return ret;
+		}
+		wcd9xxx_mbhc_cfg.swap_gnd_mic = msm8952_swap_gnd_mic;
+		wcd_mbhc_cfg.swap_gnd_mic = msm8952_swap_gnd_mic;
 	}
 	return 0;
 }
@@ -2433,10 +2135,8 @@ static int msm8952_asoc_machine_probe(struct platform_device *pdev)
 
 	pdata = devm_kzalloc(&pdev->dev,
 			sizeof(struct msm8952_asoc_mach_data), GFP_KERNEL);
-	if (!pdata) {
-		dev_err(&pdev->dev, "Can't allocate msm8952_asoc_mach_data\n");
+	if (!pdata)
 		return -ENOMEM;
-	}
 
 	muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 			"csr_gp_io_mux_mic_ctl");
@@ -2457,29 +2157,13 @@ static int msm8952_asoc_machine_probe(struct platform_device *pdev)
 	muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 			"csr_gp_io_lpaif_pri_pcm_pri_mode_muxsel");
 	if (!muxsel) {
-		dev_err(&pdev->dev, "MUX addr invalid for PRI PCM\n");
+		dev_err(&pdev->dev, "MUX addr invalid for QUAT I2S\n");
 		ret = -ENODEV;
 		goto err;
 	}
 	pdata->vaddr_gpio_mux_pcm_ctl =
 		ioremap(muxsel->start, resource_size(muxsel));
 	if (pdata->vaddr_gpio_mux_pcm_ctl == NULL) {
-		pr_err("%s ioremap failure for muxsel virt addr\n",
-				__func__);
-		ret = -ENOMEM;
-		goto err;
-	}
-
-	muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-			"csr_gp_io_lpaif_sec_pcm_sec_mode_muxsel");
-	if (!muxsel) {
-		dev_err(&pdev->dev, "MUX addr invalid for SEC AUXPCM\n");
-		ret = -ENODEV;
-		goto err;
-	}
-	pdata->vaddr_gpio_mux_sec_pcm_ctl =
-		ioremap(muxsel->start, resource_size(muxsel));
-	if (pdata->vaddr_gpio_mux_sec_pcm_ctl == NULL) {
 		pr_err("%s ioremap failure for muxsel virt addr\n",
 				__func__);
 		ret = -ENOMEM;
@@ -2523,17 +2207,19 @@ static int msm8952_asoc_machine_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&pdata->hs_detect_dwork, hs_detect_work);
 	atomic_set(&pdata->clk_ref.quat_mi2s_clk_ref, 0);
 	atomic_set(&pdata->clk_ref.auxpcm_mi2s_clk_ref, 0);
-	atomic_set(&pdata->clk_ref.sec_auxpcm_mi2s_clk_ref, 0);
 	card = populate_snd_card_dailinks(&pdev->dev);
 	if (!card) {
 		dev_err(&pdev->dev, "%s: Card uninitialized\n", __func__);
-		ret = -EPROBE_DEFER;
+		ret = -EINVAL;
 		goto err;
 	}
 	card->dev = &pdev->dev;
 	platform_set_drvdata(pdev, card);
 	snd_soc_card_set_drvdata(card, pdata);
 
+	wcd9xxx_mbhc_cfg.gpio_level_insert = of_property_read_bool(
+						pdev->dev.of_node,
+					"qcom,headset-jack-type-NC");
 	ret = snd_soc_of_parse_audio_routing(card,
 			"qcom,audio-routing");
 	if (ret)

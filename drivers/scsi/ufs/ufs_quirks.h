@@ -24,6 +24,7 @@
 
 #define UFS_VENDOR_TOSHIBA     0x198
 #define UFS_VENDOR_SAMSUNG     0x1CE
+#define UFS_VENDOR_HYNIX       0x1AD
 
 /* UFS TOSHIBA MODELS */
 #define UFS_MODEL_TOSHIBA_32GB "THGLF2G8D4KBADR"
@@ -114,6 +115,31 @@ struct ufs_card_fix {
  * if device advertises RX_MIN_ACTIVATETIME_CAPABILITY less than 1ms.
  */
 #define UFS_DEVICE_QUIRK_PA_TACTIVATE	(1 << 4)
+
+/*
+ * Some UFS memory devices may have really low read/write throughput in
+ * FAST AUTO mode, enable this quirk to make sure that FAST AUTO mode is
+ * never enabled for such devices.
+ */
+#define UFS_DEVICE_NO_FASTAUTO		(1 << 5)
+
+/*
+ * Some UFS devices require host PA_TACTIVATE to be lower than device
+ * PA_TACTIVATE, enabling this quirk ensure this.
+ */
+#define UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE	(1 << 6)
+
+#ifdef CONFIG_MACH_LGE
+/*
+ * The max. value PA_SaveConfigTime is 250 (10us) but this is not enough for
+ * some vendors.
+ * Gear switch from PWM to HS may fail even with this max. PA_SaveConfigTime.
+ * Gear switch can be issued by host controller as an error recovery and any
+ * software delay will not help on this case so we need to increase
+ * PA_SaveConfigTime to >32us as per vendor recommendation.
+ */
+#define UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME	(1 << 7)
+#endif
 
 struct ufs_hba;
 void ufs_advertise_fixup_device(struct ufs_hba *hba);

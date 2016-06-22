@@ -34,7 +34,6 @@
 
 /* Max size of payload (buf size - apr header) */
 #define MAX_PAYLOAD_SIZE		4076
-#define RTAC_MAX_ACTIVE_DEVICES		4
 #define RTAC_MAX_ACTIVE_VOICE_COMBOS	2
 #define RTAC_MAX_ACTIVE_POPP		8
 #define RTAC_BUF_SIZE			163840
@@ -71,28 +70,7 @@ static struct rtac_apr_data	rtac_asm_apr_data[SESSION_MAX+1];
 static struct rtac_apr_data	rtac_afe_apr_data;
 static struct rtac_apr_data	rtac_voice_apr_data[RTAC_VOICE_MODES];
 
-
 /* ADM info & APR */
-struct rtac_popp_data {
-	uint32_t	popp;
-	uint32_t	popp_topology;
-};
-
-struct rtac_adm_data {
-	uint32_t		topology_id;
-	uint32_t		afe_port;
-	uint32_t		copp;
-	uint32_t		num_of_popp;
-	uint32_t		app_type;
-	uint32_t		acdb_dev_id;
-	struct rtac_popp_data	popp[RTAC_MAX_ACTIVE_POPP];
-};
-
-struct rtac_adm {
-	uint32_t			num_of_dev;
-	struct rtac_adm_data		device[RTAC_MAX_ACTIVE_DEVICES];
-};
-
 static struct rtac_adm		rtac_adm_data;
 static u32			*rtac_adm_buffer;
 
@@ -106,6 +84,8 @@ static u32			*rtac_afe_buffer;
 struct rtac_voice_data_t {
 	uint32_t	tx_topology_id;
 	uint32_t	rx_topology_id;
+	uint32_t	tx_afe_topology;
+	uint32_t	rx_afe_topology;
 	uint32_t	tx_afe_port;
 	uint32_t	rx_afe_port;
 	uint16_t	cvs_handle;
@@ -395,8 +375,20 @@ void add_popp(u32 dev_idx, u32 port_id, u32 popp_id)
 	rtac_adm_data.device[dev_idx].popp[
 		rtac_adm_data.device[dev_idx].num_of_popp].popp = popp_id;
 	rtac_adm_data.device[dev_idx].popp[
-		rtac_adm_data.device[dev_idx].num_of_popp++].popp_topology =
-		q6asm_get_asm_topology();
+		rtac_adm_data.device[dev_idx].num_of_popp].popp_topology =
+		q6asm_get_asm_topology(popp_id);
+	rtac_adm_data.device[dev_idx].popp[
+		rtac_adm_data.device[dev_idx].num_of_popp++].app_type =
+		q6asm_get_asm_app_type(popp_id);
+
+	pr_debug("%s: popp_id = %d, popp topology = 0x%x, popp app type = 0x%x\n",
+		__func__,
+		rtac_adm_data.device[dev_idx].popp[
+			rtac_adm_data.device[dev_idx].num_of_popp - 1].popp,
+		rtac_adm_data.device[dev_idx].popp[
+		rtac_adm_data.device[dev_idx].num_of_popp - 1].popp_topology,
+		rtac_adm_data.device[dev_idx].popp[
+		rtac_adm_data.device[dev_idx].num_of_popp - 1].app_type);
 done:
 	return;
 }
@@ -405,8 +397,8 @@ void rtac_add_adm_device(u32 port_id, u32 copp_id, u32 path_id, u32 popp_id,
 			 u32 app_type, u32 acdb_id)
 {
 	u32 i = 0;
-	pr_debug("%s: port_id = %d, popp_id = %d\n", __func__, port_id,
-		popp_id);
+	pr_debug("%s: num rtac devices %d port_id = %d, copp_id = %d\n",
+		__func__, rtac_adm_data.num_of_dev, port_id, copp_id);
 
 	mutex_lock(&rtac_adm_mutex);
 	if (rtac_adm_data.num_of_dev == RTAC_MAX_ACTIVE_DEVICES) {
@@ -442,8 +434,25 @@ void rtac_add_adm_device(u32 port_id, u32 copp_id, u32 path_id, u32 popp_id,
 	rtac_adm_data.device[i].popp[
 		rtac_adm_data.device[i].num_of_popp].popp = popp_id;
 	rtac_adm_data.device[i].popp[
-		rtac_adm_data.device[i].num_of_popp++].popp_topology =
-		q6asm_get_asm_topology();
+		rtac_adm_data.device[i].num_of_popp].popp_topology =
+		q6asm_get_asm_topology(popp_id);
+	rtac_adm_data.device[i].popp[
+		rtac_adm_data.device[i].num_of_popp++].app_type =
+		q6asm_get_asm_app_type(popp_id);
+
+	pr_debug("%s: topology = 0x%x, port_id = %d, copp_id = %d, app id = 0x%x, acdb id = %d, popp_id = %d, popp topology = 0x%x, popp app type = 0x%x\n",
+		__func__,
+		rtac_adm_data.device[i].topology_id,
+		rtac_adm_data.device[i].afe_port,
+		rtac_adm_data.device[i].copp,
+		rtac_adm_data.device[i].app_type,
+		rtac_adm_data.device[i].acdb_dev_id,
+		rtac_adm_data.device[i].popp[
+			rtac_adm_data.device[i].num_of_popp - 1].popp,
+		rtac_adm_data.device[i].popp[
+		rtac_adm_data.device[i].num_of_popp - 1].popp_topology,
+		rtac_adm_data.device[i].popp[
+		rtac_adm_data.device[i].num_of_popp - 1].app_type);
 done:
 	mutex_unlock(&rtac_adm_mutex);
 	return;
@@ -482,7 +491,8 @@ static void shift_popp(u32 copp_idx, u32 popp_idx)
 void rtac_remove_adm_device(u32 port_id, u32 copp_id)
 {
 	s32 i;
-	pr_debug("%s: port_id = %d\n", __func__, port_id);
+	pr_debug("%s: num rtac devices %d port_id = %d, copp_id = %d\n",
+		__func__, rtac_adm_data.num_of_dev, port_id, copp_id);
 
 	mutex_lock(&rtac_adm_mutex);
 	/* look for device */
@@ -536,15 +546,21 @@ static void set_rtac_voice_data(int idx, u32 cvs_handle, u32 cvp_handle,
 		voice_get_topology(CVP_VOC_TX_TOPOLOGY_CAL);
 	rtac_voice_data.voice[idx].rx_topology_id =
 		voice_get_topology(CVP_VOC_RX_TOPOLOGY_CAL);
+	rtac_voice_data.voice[idx].tx_afe_topology =
+		afe_get_port_index(tx_afe_port);
+	rtac_voice_data.voice[idx].rx_afe_topology =
+		afe_get_port_index(rx_afe_port);
 	rtac_voice_data.voice[idx].tx_afe_port = tx_afe_port;
 	rtac_voice_data.voice[idx].rx_afe_port = rx_afe_port;
 	rtac_voice_data.voice[idx].tx_acdb_id = tx_acdb_id;
 	rtac_voice_data.voice[idx].rx_acdb_id = rx_acdb_id;
 	rtac_voice_data.voice[idx].cvs_handle = cvs_handle;
 	rtac_voice_data.voice[idx].cvp_handle = cvp_handle;
-	pr_debug("%s\n%s: %x\n%s: %d %s: %d\n%s: %d %s: %d\n%s: %d %s: %d\n%s",
+	pr_debug("%s\n%s: %x\n%s: %d %s: %d\n%s: %d %s: %d\n %s: %d\n %s: %d\n%s: %d %s: %d\n%s",
 		 "<---- Voice Data Info ---->", "Session id", session_id,
 		 "cvs_handle", cvs_handle, "cvp_handle", cvp_handle,
+		 "rx_afe_topology", rtac_voice_data.voice[idx].rx_afe_topology,
+		 "tx_afe_topology", rtac_voice_data.voice[idx].tx_afe_topology,
 		 "rx_afe_port", rx_afe_port, "tx_afe_port", tx_afe_port,
 		 "rx_acdb_id", rx_acdb_id, "tx_acdb_id", tx_acdb_id,
 		 "<-----------End----------->");
@@ -696,7 +712,7 @@ bool rtac_make_adm_callback(uint32_t *payload, u32 payload_size)
 	return true;
 }
 
-u32 send_adm_apr(void *buf, u32 opcode)
+int send_adm_apr(void *buf, u32 opcode)
 {
 	s32	result;
 	u32	user_buf_size = 0;
@@ -823,7 +839,7 @@ u32 send_adm_apr(void *buf, u32 opcode)
 	rtac_adm_buffer[5] =
 		lower_32_bits(rtac_cal[ADM_RTAC_CAL].cal_data.paddr);
 	rtac_adm_buffer[6] =
-		populate_upper_32_bits(rtac_cal[ADM_RTAC_CAL].cal_data.paddr);
+		upper_32_bits(rtac_cal[ADM_RTAC_CAL].cal_data.paddr);
 	rtac_adm_buffer[7] = rtac_cal[ADM_RTAC_CAL].map_data.map_handle;
 
 	memcpy(rtac_adm_buffer, &adm_params, sizeof(adm_params));
@@ -917,7 +933,7 @@ bool rtac_make_asm_callback(u32 session_id, uint32_t *payload,
 	return true;
 }
 
-u32 send_rtac_asm_apr(void *buf, u32 opcode)
+int send_rtac_asm_apr(void *buf, u32 opcode)
 {
 	s32	result;
 	u32	user_buf_size = 0;
@@ -1042,7 +1058,7 @@ u32 send_rtac_asm_apr(void *buf, u32 opcode)
 	rtac_asm_buffer[5] =
 		lower_32_bits(rtac_cal[ASM_RTAC_CAL].cal_data.paddr);
 	rtac_asm_buffer[6] =
-		populate_upper_32_bits(rtac_cal[ASM_RTAC_CAL].cal_data.paddr);
+		upper_32_bits(rtac_cal[ASM_RTAC_CAL].cal_data.paddr);
 	rtac_asm_buffer[7] = rtac_cal[ASM_RTAC_CAL].map_data.map_handle;
 
 	memcpy(rtac_asm_buffer, &asm_params, sizeof(asm_params));
@@ -1158,7 +1174,7 @@ static int fill_afe_apr_hdr(struct apr_hdr *apr_hdr, uint32_t port,
 	return 0;
 
 }
-static u32 send_rtac_afe_apr(void *buf, uint32_t opcode)
+static int send_rtac_afe_apr(void *buf, uint32_t opcode)
 {
 	int32_t result;
 	uint32_t bytes_returned = 0;
@@ -1255,8 +1271,7 @@ static u32 send_rtac_afe_apr(void *buf, uint32_t opcode)
 		afe_set_apr_msg->payload_address_lsw =
 			lower_32_bits(rtac_cal[AFE_RTAC_CAL].cal_data.paddr);
 		afe_set_apr_msg->payload_address_msw =
-				populate_upper_32_bits(
-					rtac_cal[AFE_RTAC_CAL].cal_data.paddr);
+			upper_32_bits(rtac_cal[AFE_RTAC_CAL].cal_data.paddr);
 		afe_set_apr_msg->mem_map_handle =
 				rtac_cal[AFE_RTAC_CAL].map_data.map_handle;
 
@@ -1290,8 +1305,7 @@ static u32 send_rtac_afe_apr(void *buf, uint32_t opcode)
 		afe_get_apr_msg->payload_address_lsw =
 			lower_32_bits(rtac_cal[AFE_RTAC_CAL].cal_data.paddr);
 		afe_get_apr_msg->payload_address_msw =
-				populate_upper_32_bits(
-					rtac_cal[AFE_RTAC_CAL].cal_data.paddr);
+			upper_32_bits(rtac_cal[AFE_RTAC_CAL].cal_data.paddr);
 		afe_get_apr_msg->mem_map_handle =
 				rtac_cal[AFE_RTAC_CAL].map_data.map_handle;
 		afe_get_apr_msg->payload_size -= sizeof(struct apr_hdr);
@@ -1397,7 +1411,7 @@ bool rtac_make_voice_callback(u32 mode, uint32_t *payload, u32 payload_size)
 	return true;
 }
 
-u32 send_voice_apr(u32 mode, void *buf, u32 opcode)
+int send_voice_apr(u32 mode, void *buf, u32 opcode)
 {
 	s32	result;
 	u32	user_buf_size = 0;
@@ -1524,7 +1538,7 @@ u32 send_voice_apr(u32 mode, void *buf, u32 opcode)
 	rtac_voice_buffer[6] =
 		lower_32_bits(rtac_cal[VOICE_RTAC_CAL].cal_data.paddr);
 	rtac_voice_buffer[7] =
-		populate_upper_32_bits(rtac_cal[VOICE_RTAC_CAL].cal_data.paddr);
+		upper_32_bits(rtac_cal[VOICE_RTAC_CAL].cal_data.paddr);
 
 	memcpy(rtac_voice_buffer, &voice_params, sizeof(voice_params));
 	atomic_set(&rtac_voice_apr_data[mode].cmd_state, 1);
@@ -1590,6 +1604,12 @@ err:
 	return result;
 }
 
+void get_rtac_adm_data(struct rtac_adm *adm_data)
+{
+	mutex_lock(&rtac_adm_mutex);
+	memcpy(adm_data, &rtac_adm_data, sizeof(struct rtac_adm));
+	mutex_unlock(&rtac_adm_mutex);
+}
 
 
 static long rtac_ioctl_shared(struct file *f,
@@ -1604,25 +1624,31 @@ static long rtac_ioctl_shared(struct file *f,
 
 	switch (cmd) {
 	case AUDIO_GET_RTAC_ADM_INFO: {
+		mutex_lock(&rtac_adm_mutex);
 		if (copy_to_user((void *)arg, &rtac_adm_data,
 						sizeof(rtac_adm_data))) {
 			pr_err("%s: copy_to_user failed for AUDIO_GET_RTAC_ADM_INFO\n",
 					__func__);
+			mutex_unlock(&rtac_adm_mutex);
 			return -EFAULT;
 		} else {
 			result = sizeof(rtac_adm_data);
 		}
+		mutex_unlock(&rtac_adm_mutex);
 		break;
 	}
 	case AUDIO_GET_RTAC_VOICE_INFO: {
+		mutex_lock(&rtac_voice_mutex);
 		if (copy_to_user((void *)arg, &rtac_voice_data,
 						sizeof(rtac_voice_data))) {
 			pr_err("%s: copy_to_user failed for AUDIO_GET_RTAC_VOICE_INFO\n",
 					__func__);
+			mutex_unlock(&rtac_voice_mutex);
 			return -EFAULT;
 		} else {
 			result = sizeof(rtac_voice_data);
 		}
+		mutex_unlock(&rtac_voice_mutex);
 		break;
 	}
 

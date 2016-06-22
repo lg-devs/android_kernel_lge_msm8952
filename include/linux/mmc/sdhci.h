@@ -15,9 +15,8 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/io.h>
-#include <linux/mmc/host.h>
-#include <linux/pm_qos.h>
 #include <linux/ratelimit.h>
+#include <linux/mmc/host.h>
 
 struct sdhci_next {
 	unsigned int sg_count;
@@ -26,21 +25,8 @@ struct sdhci_next {
 
 enum sdhci_power_policy {
 	SDHCI_PERFORMANCE_MODE,
-	SDHCI_PERFORMANCE_MODE_INIT,
 	SDHCI_POWER_SAVE_MODE,
-};
-
-struct sdhci_host_qos {
-	unsigned int *cpu_dma_latency_us;
-	unsigned int cpu_dma_latency_tbl_sz;
-	struct pm_qos_request pm_qos_req_dma;
-};
-
-enum sdhci_host_qos_policy {
-	SDHCI_QOS_READ_WRITE,
-	SDHCI_QOS_READ,
-	SDHCI_QOS_WRITE,
-	SDHCI_QOS_MAX_POLICY,
+	SDHCI_POWER_POLICY_NUM /* Always keep this one last */
 };
 
 struct sdhci_host {
@@ -83,12 +69,8 @@ struct sdhci_host {
 #define SDHCI_QUIRK_BROKEN_CARD_DETECTION		(1<<15)
 /* Controller reports inverted write-protect state */
 #define SDHCI_QUIRK_INVERTED_WRITE_PROTECT		(1<<16)
-/* Controller has nonstandard clock management */
-#define SDHCI_QUIRK_NONSTANDARD_CLOCK			(1<<17)
 /* Controller does not like fast PIO transfers */
 #define SDHCI_QUIRK_PIO_NEEDS_DELAY			(1<<18)
-/* Controller losing signal/interrupt enable states after reset */
-#define SDHCI_QUIRK_RESTORE_IRQS_AFTER_RESET		(1<<19)
 /* Controller has to be forced to use block size of 2048 bytes */
 #define SDHCI_QUIRK_FORCE_BLK_SZ_2048			(1<<20)
 /* Controller cannot do multi-block transfers */
@@ -121,48 +103,51 @@ struct sdhci_host {
 /* The system physically doesn't support 1.8v, even if the host does */
 #define SDHCI_QUIRK2_NO_1_8_V				(1<<2)
 #define SDHCI_QUIRK2_PRESET_VALUE_BROKEN		(1<<3)
+#define SDHCI_QUIRK2_CARD_ON_NEEDS_BUS_ON		(1<<4)
+/* Controller has a non-standard host control register */
+#define SDHCI_QUIRK2_BROKEN_HOST_CONTROL		(1<<5)
+/* Controller does not support HS200 */
+#define SDHCI_QUIRK2_BROKEN_HS200			(1<<6)
+/* Controller does not support DDR50 */
+#define SDHCI_QUIRK2_BROKEN_DDR50			(1<<7)
+/* Stop command (CMD12) can set Transfer Complete when not using MMC_RSP_BUSY */
+#define SDHCI_QUIRK2_STOP_WITH_TC			(1<<8)
 /*
  * Read Transfer Active/ Write Transfer Active may be not
  * de-asserted after end of transaction. Issue reset for DAT line.
  */
-#define SDHCI_QUIRK2_RDWR_TX_ACTIVE_EOT			(1<<4)
+#define SDHCI_QUIRK2_RDWR_TX_ACTIVE_EOT			(1<<9)
 /*
  * Slow interrupt clearance at 400KHz may cause
  * host controller driver interrupt handler to
  * be called twice.
  */
-#define SDHCI_QUIRK2_SLOW_INT_CLR			(1<<5)
+#define SDHCI_QUIRK2_SLOW_INT_CLR			(1<<10)
 /*
  * If the base clock can be scalable, then there should be no further
  * clock dividing as the input clock itself will be scaled down to
  * required frequency.
  */
-#define SDHCI_QUIRK2_ALWAYS_USE_BASE_CLOCK		(1<<6)
-/*
- * Dont use the max_discard_to in sdhci driver so that the maximum discard
- * unit gets picked by the mmc queue. Otherwise, it takes a long time for
- * secure discard kind of operations to complete.
- */
-#define SDHCI_QUIRK2_USE_MAX_DISCARD_SIZE		(1<<7)
+#define SDHCI_QUIRK2_ALWAYS_USE_BASE_CLOCK		(1<<11)
 /*
  * Ignore data timeout error for R1B commands as there will be no
  * data associated and the busy timeout value for these commands
  * could be lager than the maximum timeout value that controller
  * can handle.
  */
-#define SDHCI_QUIRK2_IGNORE_DATATOUT_FOR_R1BCMD		(1<<8)
+#define SDHCI_QUIRK2_IGNORE_DATATOUT_FOR_R1BCMD		(1<<12)
 /*
  * The preset value registers are not properly initialized by
  * some hardware and hence preset value must not be enabled for
  * such controllers.
  */
-#define SDHCI_QUIRK2_BROKEN_PRESET_VALUE		(1<<9)
+#define SDHCI_QUIRK2_BROKEN_PRESET_VALUE		(1<<13)
 /*
  * Some controllers define the usage of 0xF in data timeout counter
  * register (0x2E) which is actually a reserved bit as per
  * specification.
  */
-#define SDHCI_QUIRK2_USE_RESERVED_MAX_TIMEOUT		(1<<10)
+#define SDHCI_QUIRK2_USE_RESERVED_MAX_TIMEOUT		(1<<14)
 /*
  * This is applicable for controllers that advertize timeout clock
  * value in capabilities register (bit 5-0) as just 50MHz whereas the
@@ -175,34 +160,37 @@ struct sdhci_host {
  * will be used in such cases to avoid controller mulplication when timeout is
  * calculated based on the base clock.
  */
-#define SDHCI_QUIRK2_DIVIDE_TOUT_BY_4 (1 << 11)
+#define SDHCI_QUIRK2_DIVIDE_TOUT_BY_4			(1<<15)
 /*
  * Some SDHC controllers are unable to handle data-end bit error in
  * 1-bit mode of SDIO.
  */
-#define SDHCI_QUIRK2_IGN_DATA_END_BIT_ERROR             (1<<12)
+#define SDHCI_QUIRK2_IGN_DATA_END_BIT_ERROR             (1<<16)
 
 /*
  * Some SDHC controllers do not require data buffers alignment, skip
  * the bounce buffer logic when preparing data
  */
-#define SDHCI_QUIRK2_ADMA_SKIP_DATA_ALIGNMENT             (1<<13)
-/* Some controllers doesn't have have any LED control */
-#define SDHCI_QUIRK2_BROKEN_LED_CONTROL	(1 << 14)
+#define SDHCI_QUIRK2_ADMA_SKIP_DATA_ALIGNMENT		(1<<17)
+
+/* Controller has nonstandard clock management */
+#define SDHCI_QUIRK_NONSTANDARD_CLOCK			(1<<18)
+/* Capability register bit-63 indicates HS400 support */
+#define SDHCI_QUIRK2_CAPS_BIT63_FOR_HS400		(1<<19)
 /* Use reset workaround in case sdhci reset timeouts */
-#define SDHCI_QUIRK2_USE_RESET_WORKAROUND (1 << 15)
+#define SDHCI_QUIRK2_USE_RESET_WORKAROUND		(1<<20)
+/* Some controllers doesn't have have any LED control */
+#define SDHCI_QUIRK2_BROKEN_LED_CONTROL			(1<<21)
 
 	int irq;		/* Device IRQ */
 	void __iomem *ioaddr;	/* Mapped address */
 
 	const struct sdhci_ops *ops;	/* Low level hw interface */
 
-	struct regulator *vmmc;		/* Power regulator (vmmc) */
-	struct regulator *vqmmc;	/* Signaling regulator (vccq) */
-
 	/* Internal data */
 	struct mmc_host *mmc;	/* MMC structure */
 	u64 dma_mask;		/* custom DMA mask */
+	u64 coherent_dma_mask;
 
 #if defined(CONFIG_LEDS_CLASS) || defined(CONFIG_LEDS_CLASS_MODULE)
 	struct led_classdev led;	/* LED control */
@@ -222,10 +210,9 @@ struct sdhci_host {
 #define SDHCI_AUTO_CMD23	(1<<7)	/* Auto CMD23 support */
 #define SDHCI_PV_ENABLED	(1<<8)	/* Preset value enabled */
 #define SDHCI_SDIO_IRQ_ENABLED	(1<<9)	/* SDIO irq enabled */
-#define SDHCI_HS200_NEEDS_TUNING (1<<10)	/* HS200 needs tuning */
+#define SDHCI_SDR104_NEEDS_TUNING (1<<10)	/* SDR104/HS200 needs tuning */
 #define SDHCI_USING_RETUNING_TIMER (1<<11)	/* Host is using a retuning timer for the card */
-#define SDHCI_HS400_NEEDS_TUNING (1<<12)	/* HS400 needs tuning */
-#define SDHCI_USE_ADMA_64BIT	 (1<<13)/* Host is 64-bit ADMA capable */
+#define SDHCI_USE_ADMA_64BIT	 (1<<12)/* Host is 64-bit ADMA capable */
 
 	unsigned int version;	/* SDHCI spec. version */
 
@@ -237,11 +224,14 @@ struct sdhci_host {
 	u8 pwr;			/* Current voltage */
 
 	bool runtime_suspended;	/* Host is runtime suspended */
+	bool bus_on;		/* Bus power prevents runtime suspend */
+	bool preset_enabled;	/* Preset is enabled */
 
 	struct mmc_request *mrq;	/* Current request */
 	struct mmc_command *cmd;	/* Current command */
 	struct mmc_data *data;	/* Current data request */
 	unsigned int data_early:1;	/* Data finished before cmd */
+	unsigned int busy_handle:1;	/* Handling the order of Busy-end */
 
 	struct sg_mapping_iter sg_miter;	/* SG state for PIO */
 	unsigned int blocks;	/* remaining PIO blocks */
@@ -260,8 +250,7 @@ struct sdhci_host {
 	dma_addr_t adma_addr;	/* Mapped ADMA descr. table */
 	dma_addr_t align_addr;	/* Mapped bounce buffer */
 
-	struct tasklet_struct card_tasklet;	/* Tasklet structures */
-	struct tasklet_struct finish_tasklet;
+	struct tasklet_struct finish_tasklet;	/* Tasklet structures */
 
 	struct timer_list timer;	/* Timer for timeouts */
 
@@ -271,6 +260,14 @@ struct sdhci_host {
 	unsigned int            ocr_avail_sdio;	/* OCR bit masks */
 	unsigned int            ocr_avail_sd;
 	unsigned int            ocr_avail_mmc;
+	u32 ocr_mask;		/* available voltages */
+
+	unsigned		timing;		/* Current timing */
+
+	u32			thread_isr;
+
+	/* cached registers */
+	u32			ier;
 
 	wait_queue_head_t	buf_ready_int;	/* Waitqueue for Buffer Read Ready interrupt */
 	unsigned int		tuning_done;	/* Condition flag set when CMD19 succeeds */
@@ -280,32 +277,19 @@ struct sdhci_host {
 #define SDHCI_TUNING_MODE_1	0
 	struct timer_list	tuning_timer;	/* Timer for tuning */
 
-	struct sdhci_host_qos host_qos[SDHCI_QOS_MAX_POLICY];
-	enum sdhci_host_qos_policy last_qos_policy;
-
-	bool host_use_default_qos;
-	unsigned int pm_qos_timeout_us;         /* timeout for PM QoS request */
-	struct device_attribute pm_qos_tout;
-	struct delayed_work pm_qos_work;
-	struct mutex qos_lock;
-
 	struct sdhci_next next_data;
 	ktime_t data_start_time;
-	struct mutex ios_mutex;
 	enum sdhci_power_policy power_policy;
 
 	bool is_crypto_en;
 	bool crypto_reset_reqd;
 
-	bool irq_enabled; /* host irq status flag */
-	bool async_int_supp;  /* async support to rxv int, when clks are off */
-	bool disable_sdio_irq_deferred; /* status of disabling sdio irq */
 	u32 auto_cmd_err_sts;
 	struct ratelimit_state dbg_dump_rs;
+	struct cmdq_host *cq_host;
 	int reset_wa_applied; /* reset workaround status */
 	ktime_t reset_wa_t; /* time when the reset workaround is applied */
 	int reset_wa_cnt; /* total number of times workaround is used */
-	struct cmdq_host *cq_host;
 
 	unsigned long private[0] ____cacheline_aligned;
 };

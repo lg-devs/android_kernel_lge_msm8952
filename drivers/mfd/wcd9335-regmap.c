@@ -1458,13 +1458,13 @@ int wcd9335_regmap_register_patch(struct regmap *regmap, int version)
 	case TASHA_VERSION_1_1:
 		regcache_cache_only(regmap, true);
 		rc = regmap_multi_reg_write(regmap, wcd9335_1_x_defaults,
-					ARRAY_SIZE(wcd9335_1_x_defaults));
+					    ARRAY_SIZE(wcd9335_1_x_defaults));
 		regcache_cache_only(regmap, false);
 		break;
 	case TASHA_VERSION_2_0:
 		regcache_cache_only(regmap, true);
 		rc = regmap_multi_reg_write(regmap, wcd9335_2_0_defaults,
-					ARRAY_SIZE(wcd9335_2_0_defaults));
+					    ARRAY_SIZE(wcd9335_2_0_defaults));
 		regcache_cache_only(regmap, false);
 		break;
 	default:

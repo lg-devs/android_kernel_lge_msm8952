@@ -15,13 +15,11 @@
 
 #include <linux/switch.h>
 #include "mdss_hdmi_util.h"
-#include "mdss_cec_abstract.h"
-
-#define MAX_SWITCH_NAME_SIZE        5
 
 enum hdmi_tx_io_type {
 	HDMI_TX_CORE_IO,
 	HDMI_TX_QFPROM_IO,
+	HDMI_TX_HDCP_IO,
 	HDMI_TX_MAX_IO
 };
 
@@ -40,16 +38,9 @@ struct hdmi_tx_platform_data {
 	bool cond_power_on;
 	struct dss_io_data io[HDMI_TX_MAX_IO];
 	struct dss_module_power power_data[HDMI_TX_MAX_PM];
+	struct reg_bus_client *reg_bus_clt[HDMI_TX_MAX_PM];
 	/* bitfield representing each module's pin state */
 	u64 pin_states;
-};
-
-struct hdmi_audio {
-	int sample_rate;
-	int channel_num;
-	int spkr_alloc;
-	int level_shift;
-	int down_mix;
 };
 
 struct hdmi_tx_pinctrl {
@@ -61,17 +52,86 @@ struct hdmi_tx_pinctrl {
 	struct pinctrl_state *state_suspend;
 };
 
+enum hdmi_scan_info {
+	HDMI_SCAN_DEFAULT,
+	HDMI_SCAN_OVERSCAN,
+	HDMI_SCAN_UNDERSCAN,
+};
+
+enum hdmi_colorimetry_info {
+	HDMI_COLORIMETRY_SMPTE170M,
+	HDMI_COLORIMETRY_ITUR_BT_709,
+	HDMI_COLORIMETRY_ADOBE_RGB,
+	HDMI_COLORIMETRY_ADOBE_YCC601,
+	HDMI_COLORIMETRY_ITUR_BT_2020
+};
+
+enum hdmi_quantization_range {
+	HDMI_QUANTIZATION_DEFAULT,
+	HDMI_QUANTIZATION_LIMITED_RANGE,
+	HDMI_QUANTIZATION_FULL_RANGE
+};
+
+enum hdmi_scaling_info {
+	HDMI_SCALING_NONE,
+	HDMI_SCALING_HORZ,
+	HDMI_SCALING_VERT,
+	HDMI_SCALING_HORZ_VERT,
+};
+
+enum hdmi_avi_content_type {
+	HDMI_CONTENT_GRAPHICS,
+	HDMI_CONTENT_PHOTO,
+	HDMI_CONTENT_CINEMA,
+	HDMI_CONTENT_GAME,
+};
+
+struct hdmi_avi_iframe_bar_info {
+	bool vert_binfo_present;
+	bool horz_binfo_present;
+	u32 end_of_top_bar;
+	u32 start_of_bottom_bar;
+	u32 end_of_left_bar;
+	u32 start_of_right_bar;
+};
+
+struct hdmi_avi_infoframe_config {
+	u32 pixel_format;
+	u32 scan_info;
+	bool act_fmt_info_present;
+	u32 colorimetry_info;
+	u32 ext_colorimetry_info;
+	u32 rgb_quantization_range;
+	u32 yuv_quantization_range;
+	u32 scaling_info;
+	bool is_it_content;
+	u8 content_type;
+	u8 pixel_rpt_factor;
+	struct hdmi_avi_iframe_bar_info bar_info;
+};
+
+struct hdmi_video_config {
+	u32 vic;
+	struct msm_hdmi_mode_timing_info timing;
+	struct hdmi_avi_infoframe_config avi_iframe;
+};
+
 struct hdmi_tx_ctrl {
 	struct platform_device *pdev;
+	u32 hdmi_tx_ver;
+	u32 max_pclk_khz;
 	struct hdmi_tx_platform_data pdata;
 	struct mdss_panel_data panel_data;
 	struct mdss_util_intf *mdss_util;
 
 
 	struct hdmi_tx_pinctrl pin_res;
-	struct hdmi_audio audio_data;
+	struct msm_hdmi_audio_setup_params audio_data;
 
 	struct mutex mutex;
+#ifdef CONFIG_SLIMPORT_DYNAMIC_HPD
+	struct mutex mutex_hpd;
+#endif
 	struct mutex lut_lock;
 	struct mutex power_mutex;
 	struct mutex cable_notify_mutex;
@@ -82,7 +142,7 @@ struct hdmi_tx_ctrl {
 	struct workqueue_struct *workq;
 	spinlock_t hpd_state_lock;
 
-	uint32_t video_resolution;
+	struct hdmi_video_config vid_cfg;
 
 	u32 panel_power_on;
 	u32 panel_suspend;
@@ -94,19 +154,28 @@ struct hdmi_tx_ctrl {
 	u32 vote_hdmi_core_on;
 	u8  timing_gen_on;
 	u8  mhl_hpd_on;
+	u8  hdcp_status;
 
 	struct hdmi_util_ds_data ds_data;
 	struct completion hpd_int_done;
 	struct completion hpd_off_done;
 	struct work_struct hpd_int_work;
+	struct delayed_work hdcp_cb_work;
 
 	struct work_struct cable_notify_work;
 
 	bool hdcp_feature_on;
 	bool hpd_disabled;
 	bool ds_registered;
+	bool scrambler_enabled;
+	u32 hdcp14_present;
+	bool hdcp1_use_sw_keys;
 	bool audio_ack_enabled;
-	u32 present_hdcp;
+	atomic_t audio_ack_pending;
+	bool hdcp14_sw_keys;
+	bool auth_state;
+	bool custom_edid;
+	u32 enc_lvl;
 
 	u8 spd_vendor_name[9];
 	u8 spd_product_description[17];
@@ -117,16 +186,13 @@ struct hdmi_tx_ctrl {
 	void *downstream_data;
 
 	void *feature_data[HDMI_TX_FEAT_MAX];
-	u32 s3d_mode;
-	atomic_t audio_ack_pending;
-
-	struct cec_ops hdmi_cec_ops;
-	struct cec_cbs hdmi_cec_cbs;
+	struct hdmi_hdcp_ops *hdcp_ops;
+	void *hdcp_data;
+	bool hdcp22_present;
 
 	u8 *edid_buf;
 	u32 edid_buf_size;
-
-	char disp_switch_name[MAX_SWITCH_NAME_SIZE];
+	u32 s3d_mode;
 };
 
 #endif /* __MDSS_HDMI_TX_H__ */

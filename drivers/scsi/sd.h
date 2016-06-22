@@ -12,9 +12,12 @@
  * Time out in seconds for disks and Magneto-opticals (which are slower).
  */
 #define SD_TIMEOUT		(30 * HZ)
-#define SD_DISCARD_TIMEOUT	(30 * HZ)
 #define SD_MOD_TIMEOUT		(75 * HZ)
-#define SD_FLUSH_TIMEOUT	(60 * HZ)
+/*
+ * Flush timeout is a multiplier over the standard device timeout which is
+ * user modifiable via sysfs but initially set to SD_TIMEOUT
+ */
+#define SD_FLUSH_TIMEOUT_MULTIPLIER	2
 #define SD_WRITE_SAME_TIMEOUT	(120 * HZ)
 
 /*
@@ -41,6 +44,8 @@ enum {
 };
 
 enum {
+	SD_DEF_XFER_BLOCKS = 0xffff,
+	SD_MAX_XFER_BLOCKS = 0xffffffff,
 	SD_MAX_WS10_BLOCKS = 0xffff,
 	SD_MAX_WS16_BLOCKS = 0x7fffff,
 };
@@ -61,6 +66,7 @@ struct scsi_disk {
 	struct gendisk	*disk;
 	atomic_t	openers;
 	sector_t	capacity;	/* size in 512-byte sectors */
+	u32		max_xfer_blocks;
 	u32		max_ws_blocks;
 	u32		max_unmap_blocks;
 	u32		unmap_granularity;
@@ -87,6 +93,14 @@ struct scsi_disk {
 	unsigned	lbpvpd : 1;
 	unsigned	ws10 : 1;
 	unsigned	ws16 : 1;
+#ifdef CONFIG_USB_HOST_NOTIFY
+	wait_queue_head_t	delay_wait;
+	struct completion	scanning_done;
+	struct task_struct	*th;
+	int		thread_remove;
+	int		async_end;
+	int		prv_media_present;
+#endif
 };
 #define to_scsi_disk(obj) container_of(obj,struct scsi_disk,dev)
 
@@ -100,6 +114,12 @@ static inline struct scsi_disk *scsi_disk(struct gendisk *disk)
 	sdev_printk(prefix, (sdsk)->device, "[%s] " fmt,		\
 		    (sdsk)->disk->disk_name, ##a) :			\
 	sdev_printk(prefix, (sdsk)->device, fmt, ##a)
+
+#define sd_first_printk(prefix, sdsk, fmt, a...)			\
+	do {								\
+		if ((sdkp)->first_scan)					\
+			sd_printk(prefix, sdsk, fmt, ##a);		\
+	} while (0)
 
 static inline int scsi_medium_access_command(struct scsi_cmnd *scmd)
 {
@@ -155,6 +175,68 @@ enum sd_dif_target_protection_types {
 };
 
 /*
+ * Look up the DIX operation based on whether the command is read or
+ * write and whether dix and dif are enabled.
+ */
+static inline unsigned int sd_prot_op(bool write, bool dix, bool dif)
+{
+	/* Lookup table: bit 2 (write), bit 1 (dix), bit 0 (dif) */
+	const unsigned int ops[] = {	/* wrt dix dif */
+		SCSI_PROT_NORMAL,	/*  0	0   0  */
+		SCSI_PROT_READ_STRIP,	/*  0	0   1  */
+		SCSI_PROT_READ_INSERT,	/*  0	1   0  */
+		SCSI_PROT_READ_PASS,	/*  0	1   1  */
+		SCSI_PROT_NORMAL,	/*  1	0   0  */
+		SCSI_PROT_WRITE_INSERT, /*  1	0   1  */
+		SCSI_PROT_WRITE_STRIP,	/*  1	1   0  */
+		SCSI_PROT_WRITE_PASS,	/*  1	1   1  */
+	};
+
+	return ops[write << 2 | dix << 1 | dif];
+}
+
+/*
+ * Returns a mask of the protection flags that are valid for a given DIX
+ * operation.
+ */
+static inline unsigned int sd_prot_flag_mask(unsigned int prot_op)
+{
+	const unsigned int flag_mask[] = {
+		[SCSI_PROT_NORMAL]		= 0,
+
+		[SCSI_PROT_READ_STRIP]		= SCSI_PROT_TRANSFER_PI |
+						  SCSI_PROT_GUARD_CHECK |
+						  SCSI_PROT_REF_CHECK |
+						  SCSI_PROT_REF_INCREMENT,
+
+		[SCSI_PROT_READ_INSERT]		= SCSI_PROT_REF_INCREMENT |
+						  SCSI_PROT_IP_CHECKSUM,
+
+		[SCSI_PROT_READ_PASS]		= SCSI_PROT_TRANSFER_PI |
+						  SCSI_PROT_GUARD_CHECK |
+						  SCSI_PROT_REF_CHECK |
+						  SCSI_PROT_REF_INCREMENT |
+						  SCSI_PROT_IP_CHECKSUM,
+
+		[SCSI_PROT_WRITE_INSERT]	= SCSI_PROT_TRANSFER_PI |
+						  SCSI_PROT_REF_INCREMENT,
+
+		[SCSI_PROT_WRITE_STRIP]		= SCSI_PROT_GUARD_CHECK |
+						  SCSI_PROT_REF_CHECK |
+						  SCSI_PROT_REF_INCREMENT |
+						  SCSI_PROT_IP_CHECKSUM,
+
+		[SCSI_PROT_WRITE_PASS]		= SCSI_PROT_TRANSFER_PI |
+						  SCSI_PROT_GUARD_CHECK |
+						  SCSI_PROT_REF_CHECK |
+						  SCSI_PROT_REF_INCREMENT |
+						  SCSI_PROT_IP_CHECKSUM,
+	};
+
+	return flag_mask[prot_op];
+}
+
+/*
  * Data Integrity Field tuple.
  */
 struct sd_dif_tuple {
@@ -166,7 +248,7 @@ struct sd_dif_tuple {
 #ifdef CONFIG_BLK_DEV_INTEGRITY
 
 extern void sd_dif_config_host(struct scsi_disk *);
-extern void sd_dif_prepare(struct request *rq, sector_t, unsigned int);
+extern void sd_dif_prepare(struct scsi_cmnd *scmd);
 extern void sd_dif_complete(struct scsi_cmnd *, unsigned int);
 
 #else /* CONFIG_BLK_DEV_INTEGRITY */
@@ -174,7 +256,7 @@ extern void sd_dif_complete(struct scsi_cmnd *, unsigned int);
 static inline void sd_dif_config_host(struct scsi_disk *disk)
 {
 }
-static inline int sd_dif_prepare(struct request *rq, sector_t s, unsigned int a)
+static inline int sd_dif_prepare(struct scsi_cmnd *scmd)
 {
 	return 0;
 }

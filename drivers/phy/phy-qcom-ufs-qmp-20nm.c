@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014, Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,27 +12,16 @@
  *
  */
 
-#include <linux/io.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/time.h>
-#include <linux/clk.h>
-#include <linux/of.h>
-#include <linux/iopoll.h>
-#include <linux/platform_device.h>
-#include <linux/msm-bus.h>
-
-#include <linux/phy/phy-qcom-ufs.h>
 #include "phy-qcom-ufs-qmp-20nm.h"
 
 #define UFS_PHY_NAME "ufs_phy_qmp_20nm"
 
 static
-int ufs_qcom_phy_qmp_20nm_phy_calibrate(struct ufs_qcom_phy *ufs_qcom_phy)
+int ufs_qcom_phy_qmp_20nm_phy_calibrate(struct ufs_qcom_phy *ufs_qcom_phy,
+					bool is_rate_B)
 {
 	struct ufs_qcom_phy_calibration *tbl_A, *tbl_B;
 	int tbl_size_A, tbl_size_B;
-	int rate = UFS_QCOM_LIMIT_HS_RATE;
 	u8 major = ufs_qcom_phy->host_ctrl_rev_major;
 	u16 minor = ufs_qcom_phy->host_ctrl_rev_minor;
 	u16 step = ufs_qcom_phy->host_ctrl_rev_step;
@@ -55,7 +44,7 @@ int ufs_qcom_phy_qmp_20nm_phy_calibrate(struct ufs_qcom_phy *ufs_qcom_phy)
 	tbl_B = phy_cal_table_rate_B;
 
 	err = ufs_qcom_phy_calibrate(ufs_qcom_phy, tbl_A, tbl_size_A,
-						tbl_B, tbl_size_B, rate);
+						tbl_B, tbl_size_B, is_rate_B);
 
 	if (err)
 		dev_err(ufs_qcom_phy->dev, "%s: ufs_qcom_phy_calibrate() failed %d\n",
@@ -158,6 +147,23 @@ void ufs_qcom_phy_qmp_20nm_set_tx_lane_enable(struct ufs_qcom_phy *phy, u32 val)
 	mb();
 }
 
+static
+void ufs_qcom_phy_qmp_20nm_ctrl_rx_linecfg(struct ufs_qcom_phy *phy, bool ctrl)
+{
+	u32 temp;
+
+	temp = readl_relaxed(phy->mmio + UFS_PHY_LINECFG_DISABLE);
+
+	if (ctrl) /* enable RX LineCfg */
+		temp &= ~UFS_PHY_RX_LINECFG_DISABLE_BIT;
+	else /* disable RX LineCfg */
+		temp |= UFS_PHY_RX_LINECFG_DISABLE_BIT;
+
+	writel_relaxed(temp, phy->mmio + UFS_PHY_LINECFG_DISABLE);
+	/* make sure that RX LineCfg config applied before we return */
+	mb();
+}
+
 static inline void ufs_qcom_phy_qmp_20nm_start_serdes(struct ufs_qcom_phy *phy)
 {
 	u32 tmp;
@@ -195,6 +201,7 @@ struct ufs_qcom_phy_specific_ops phy_20nm_ops = {
 	.start_serdes		= ufs_qcom_phy_qmp_20nm_start_serdes,
 	.is_physical_coding_sublayer_ready = ufs_qcom_phy_qmp_20nm_is_pcs_ready,
 	.set_tx_lane_enable	= ufs_qcom_phy_qmp_20nm_set_tx_lane_enable,
+	.ctrl_rx_linecfg	= ufs_qcom_phy_qmp_20nm_ctrl_rx_linecfg,
 	.power_control		= ufs_qcom_phy_qmp_20nm_power_control,
 };
 

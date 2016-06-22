@@ -20,7 +20,6 @@
 #include <linux/sched.h>
 #include <linux/msm_audio_ion.h>
 #include <linux/delay.h>
-#include <linux/ratelimit.h>
 #include <sound/apr_audio-v2.h>
 #include <sound/q6afe-v2.h>
 #include <sound/q6audio-v2.h>
@@ -90,6 +89,7 @@ struct afe_ctl {
 	void *rx_private_data;
 	uint32_t mmap_handle;
 
+	int	topology[AFE_MAX_PORTS];
 	struct cal_type_data *cal_data[MAX_AFE_CAL_TYPES];
 
 	atomic_t mem_map_cal_handles[MAX_AFE_CAL_TYPES];
@@ -127,7 +127,23 @@ bool afe_close_done[2] = {true, true};
 
 static int afe_get_cal_hw_delay(int32_t path,
 				struct audio_cal_hw_delay_entry *entry);
-static void remap_cal_data(struct cal_block_data *cal_block, int cal_index);
+static int remap_cal_data(struct cal_block_data *cal_block, int cal_index);
+
+int afe_get_topology(int port_id)
+{
+	int topology;
+	int port_index = afe_get_port_index(port_id);
+
+	if ((port_index < 0) || (port_index > AFE_MAX_PORTS)) {
+		pr_err("%s: Invalid port index %d\n", __func__, port_index);
+		topology = -EINVAL;
+		goto done;
+	}
+
+	topology = this_afe.topology[port_index];
+done:
+	return topology;
+}
 
 void afe_set_aanc_info(struct aanc_data *q6_aanc_info)
 {
@@ -454,7 +470,7 @@ int afe_q6_interface_prepare(void)
 			0xFFFFFFFF, &this_afe);
 		if (this_afe.apr == NULL) {
 			pr_err("%s: Unable to register AFE\n", __func__);
-			return -ENODEV;
+			ret = -ENODEV;
 		}
 		rtac_set_afe_handle(this_afe.apr);
 	}
@@ -538,7 +554,7 @@ static int afe_send_cal_block(u16 port_id, struct cal_block_data *cal_block)
 	afe_cal.param.payload_address_lsw =
 		lower_32_bits(cal_block->cal_data.paddr);
 	afe_cal.param.payload_address_msw =
-		populate_upper_32_bits(cal_block->cal_data.paddr);
+		upper_32_bits(cal_block->cal_data.paddr);
 	afe_cal.param.mem_map_handle = cal_block->map_data.q6map_handle;
 
 	pr_debug("%s: AFE cal sent for device port = 0x%x, cal size = %zd, cal addr = 0x%pa\n",
@@ -583,7 +599,7 @@ static int afe_send_custom_topology_block(struct cal_block_data *cal_block)
 	afe_cal.payload_addr_lsw =
 		lower_32_bits(cal_block->cal_data.paddr);
 	afe_cal.payload_addr_msw =
-		populate_upper_32_bits(cal_block->cal_data.paddr);
+		upper_32_bits(cal_block->cal_data.paddr);
 	afe_cal.mem_map_handle = cal_block->map_data.q6map_handle;
 
 	pr_debug("%s:cmd_id:0x%x calsize:%zd memmap_hdl:0x%x caladdr:0x%pa",
@@ -622,7 +638,12 @@ static void afe_send_custom_topology(void)
 
 	pr_debug("%s: Sending cal_index cal %d\n", __func__, cal_index);
 
-	remap_cal_data(cal_block, cal_index);
+	ret = remap_cal_data(cal_block, cal_index);
+	if (ret) {
+		pr_err("%s: Remap_cal_data failed for cal %d!\n",
+			__func__, cal_index);
+		goto unlock;
+	}
 	ret = afe_send_custom_topology_block(cal_block);
 	if (ret < 0) {
 		pr_err("%s: No cal sent for cal_index %d! ret %d\n",
@@ -1069,6 +1090,8 @@ static int afe_send_port_topology_id(u16 port_id)
 			__func__, port_id, ret);
 		goto done;
 	}
+
+	this_afe.topology[index] = topology_id;
 done:
 	pr_debug("%s: AFE set topology id 0x%x  enable for port 0x%x ret %d\n",
 			__func__, topology_id, port_id, ret);
@@ -1076,9 +1099,16 @@ done:
 
 }
 
-static void remap_cal_data(struct cal_block_data *cal_block, int cal_index)
+static int remap_cal_data(struct cal_block_data *cal_block, int cal_index)
 {
 	int ret = 0;
+
+	if (cal_block->map_data.ion_client == NULL) {
+		pr_err("%s: No ION allocation for cal index %d!\n",
+			__func__, cal_index);
+		ret = -EINVAL;
+		goto done;
+	}
 
 	if ((cal_block->map_data.map_size > 0) &&
 		(cal_block->map_data.q6map_handle == 0)) {
@@ -1100,7 +1130,7 @@ static void remap_cal_data(struct cal_block_data *cal_block, int cal_index)
 			mem_map_cal_handles[cal_index]);
 	}
 done:
-	return;
+	return ret;
 }
 
 static void send_afe_cal_type(int cal_index, int port_id)
@@ -1124,7 +1154,12 @@ static void send_afe_cal_type(int cal_index, int port_id)
 
 	pr_debug("%s: Sending cal_index cal %d\n", __func__, cal_index);
 
-	remap_cal_data(cal_block, cal_index);
+	ret = remap_cal_data(cal_block, cal_index);
+	if (ret) {
+		pr_err("%s: Remap_cal_data failed for cal %d!\n",
+			__func__, cal_index);
+		goto unlock;
+	}
 	ret = afe_send_cal_block(port_id, cal_block);
 	if (ret < 0)
 		pr_debug("%s: No cal sent for cal_index %d, port_id = 0x%x! ret %d\n",
@@ -1866,6 +1901,7 @@ static int afe_send_cmd_port_start(u16 port_id)
 	if (ret) {
 		pr_err("%s: AFE enable for port 0x%x failed %d\n", __func__,
 		       port_id, ret);
+		WARN_ON(1);
 	} else if (this_afe.task != current) {
 		this_afe.task = current;
 		pr_debug("task_name = %s pid = %d\n",
@@ -2201,6 +2237,7 @@ int afe_port_start(u16 port_id, union afe_port_config *afe_config,
 
 fail_cmd:
 	mutex_unlock(&this_afe.afe_cmd_lock);
+
 	return ret;
 }
 
@@ -2359,6 +2396,7 @@ int afe_open(u16 port_id,
 	case MI2S_TX:
 	case AFE_PORT_ID_QUINARY_MI2S_RX:
 	case AFE_PORT_ID_QUINARY_MI2S_TX:
+	case AFE_PORT_ID_SENARY_MI2S_TX:
 		cfg_type = AFE_PARAM_ID_I2S_CONFIG;
 		break;
 	case HDMI_RX:
@@ -2868,7 +2906,7 @@ int q6afe_audio_client_buf_alloc_contiguous(unsigned int dir,
 	ac->port[dir].buf = buf;
 
 	rc = msm_audio_ion_alloc("afe_client", &buf[0].client,
-				&buf[0].handle, PAGE_ALIGN(bufsz*bufcnt),
+				&buf[0].handle, bufsz*bufcnt,
 				&buf[0].phys, &len,
 				&buf[0].data);
 	if (rc) {
@@ -2918,7 +2956,7 @@ int afe_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz,
 
 	mutex_lock(&this_afe.afe_cmd_lock);
 	ac->mem_map_handle = 0;
-	ret = afe_cmd_memory_map(dma_addr_p, PAGE_ALIGN(dma_buf_sz));
+	ret = afe_cmd_memory_map(dma_addr_p, dma_buf_sz);
 	if (ret < 0) {
 		pr_err("%s: afe_cmd_memory_map failed %d\n",
 			__func__, ret);
@@ -2941,7 +2979,6 @@ int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz)
 	struct afe_service_cmd_shared_mem_map_regions *mregion = NULL;
 	struct  afe_service_shared_map_region_payload *mregion_pl = NULL;
 	int index = 0;
-	static DEFINE_RATELIMIT_STATE(rl, HZ/2, 1);
 
 	pr_debug("%s:\n", __func__);
 
@@ -2950,9 +2987,7 @@ int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz)
 					0xFFFFFFFF, &this_afe);
 		pr_debug("%s: Register AFE\n", __func__);
 		if (this_afe.apr == NULL) {
-			if (__ratelimit(&rl))
-				pr_err("%s: Unable to register AFE\n",
-					__func__);
+			pr_err("%s: Unable to register AFE\n", __func__);
 			ret = -ENODEV;
 			return ret;
 		}
@@ -2989,7 +3024,7 @@ int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz)
 	mregion_pl = (struct afe_service_shared_map_region_payload *)payload;
 
 	mregion_pl->shm_addr_lsw = lower_32_bits(dma_addr_p);
-	mregion_pl->shm_addr_msw = populate_upper_32_bits(dma_addr_p);
+	mregion_pl->shm_addr_msw = upper_32_bits(dma_addr_p);
 	mregion_pl->mem_size_bytes = dma_buf_sz;
 
 	pr_debug("%s: dma_addr_p 0x%pa , size %d\n", __func__,
@@ -2999,9 +3034,8 @@ int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz)
 	this_afe.mmap_handle = 0;
 	ret = apr_send_pkt(this_afe.apr, (uint32_t *) mmap_region_cmd);
 	if (ret < 0) {
-		if (__ratelimit(&rl))
-			pr_err("%s: AFE memory map cmd failed %d\n",
-				__func__, ret);
+		pr_err("%s: AFE memory map cmd failed %d\n",
+		       __func__, ret);
 		ret = -EINVAL;
 		goto fail_cmd;
 	}
@@ -3015,10 +3049,9 @@ int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz)
 		goto fail_cmd;
 	}
 	if (atomic_read(&this_afe.status) > 0) {
-		if (__ratelimit(&rl))
-			pr_err("%s: config cmd failed [%s]\n",
-				__func__, adsp_err_get_err_str(
-				atomic_read(&this_afe.status)));
+		pr_err("%s: config cmd failed [%s]\n",
+			__func__, adsp_err_get_err_str(
+			atomic_read(&this_afe.status)));
 		ret = adsp_err_get_lnx_err_code(
 				atomic_read(&this_afe.status));
 		goto fail_cmd;
@@ -3028,8 +3061,7 @@ int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz)
 	return 0;
 fail_cmd:
 	kfree(mmap_region_cmd);
-	if (__ratelimit(&rl))
-		pr_err("%s: fail_cmd\n", __func__);
+	pr_err("%s: fail_cmd\n", __func__);
 	return ret;
 }
 
@@ -3091,7 +3123,7 @@ int afe_cmd_memory_map_nowait(int port_id, phys_addr_t dma_addr_p,
 	mregion_pl = (struct afe_service_shared_map_region_payload *)payload;
 
 	mregion_pl->shm_addr_lsw = lower_32_bits(dma_addr_p);
-	mregion_pl->shm_addr_msw = populate_upper_32_bits(dma_addr_p);
+	mregion_pl->shm_addr_msw = upper_32_bits(dma_addr_p);
 	mregion_pl->mem_size_bytes = dma_buf_sz;
 
 	ret = afe_apr_send_pkt(mmap_region_cmd, NULL);
@@ -3167,11 +3199,6 @@ int afe_cmd_memory_unmap(u32 mem_map_handle)
 
 	pr_debug("%s: handle 0x%x\n", __func__, mem_map_handle);
 
-	if (!mem_map_handle) {
-		pr_err("%s: mem map handle (null)\n", __func__);
-		return -EINVAL;
-	}
-
 	if (this_afe.apr == NULL) {
 		this_afe.apr = apr_register("ADSP", "AFE", afe_callback,
 					0xFFFFFFFF, &this_afe);
@@ -3211,11 +3238,6 @@ int afe_cmd_memory_unmap_nowait(u32 mem_map_handle)
 	struct afe_service_cmd_shared_mem_unmap_regions mregion;
 
 	pr_debug("%s: handle 0x%x\n", __func__, mem_map_handle);
-
-	if (!mem_map_handle) {
-		pr_err("%s: mem map handle (null)\n", __func__);
-		return -EINVAL;
-	}
 
 	if (this_afe.apr == NULL) {
 		this_afe.apr = apr_register("ADSP", "AFE", afe_callback,
@@ -3383,7 +3405,7 @@ int afe_rt_proxy_port_write(phys_addr_t buf_addr_p,
 	afecmd_wr.hdr.opcode = AFE_PORT_DATA_CMD_RT_PROXY_PORT_WRITE_V2;
 	afecmd_wr.port_id = RT_PROXY_PORT_001_TX;
 	afecmd_wr.buffer_address_lsw = lower_32_bits(buf_addr_p);
-	afecmd_wr.buffer_address_msw = populate_upper_32_bits(buf_addr_p);
+	afecmd_wr.buffer_address_msw = upper_32_bits(buf_addr_p);
 	afecmd_wr.mem_map_handle = mem_map_handle;
 	afecmd_wr.available_bytes = bytes;
 	afecmd_wr.reserved = 0;
@@ -3419,7 +3441,7 @@ int afe_rt_proxy_port_read(phys_addr_t buf_addr_p,
 	afecmd_rd.hdr.opcode = AFE_PORT_DATA_CMD_RT_PROXY_PORT_READ_V2;
 	afecmd_rd.port_id = RT_PROXY_PORT_001_RX;
 	afecmd_rd.buffer_address_lsw = lower_32_bits(buf_addr_p);
-	afecmd_rd.buffer_address_msw = populate_upper_32_bits(buf_addr_p);
+	afecmd_rd.buffer_address_msw = upper_32_bits(buf_addr_p);
 	afecmd_rd.available_bytes = bytes;
 	afecmd_rd.mem_map_handle = mem_map_handle;
 
@@ -3934,6 +3956,7 @@ int afe_close(int port_id)
 	port_index = afe_get_port_index(port_id);
 	if ((port_index >= 0) && (port_index < AFE_MAX_PORTS)) {
 		this_afe.afe_sample_rates[port_index] = 0;
+		this_afe.topology[port_index] = 0;
 	} else {
 		pr_err("%s: port %d\n", __func__, port_index);
 		ret = -EINVAL;
@@ -4135,6 +4158,108 @@ fail_cmd:
 	return ret;
 }
 
+int afe_set_lpass_clk_cfg(int index, struct afe_clk_set *cfg)
+{
+	struct afe_lpass_clk_config_command_v2 clk_cfg;
+	int ret = 0;
+
+	if (!cfg) {
+		pr_err("%s: clock cfg is NULL\n", __func__);
+		ret = -EINVAL;
+		return ret;
+	}
+
+	if (index < 0 || index >= AFE_MAX_PORTS) {
+		pr_err("%s: index[%d] invalid!\n", __func__, index);
+		return -EINVAL;
+	}
+
+	ret = afe_q6_interface_prepare();
+	if (ret != 0) {
+		pr_err("%s: Q6 interface prepare failed %d\n", __func__, ret);
+		return ret;
+	}
+
+	mutex_lock(&this_afe.afe_cmd_lock);
+	clk_cfg.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
+				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
+	clk_cfg.hdr.pkt_size = sizeof(clk_cfg);
+	clk_cfg.hdr.src_port = 0;
+	clk_cfg.hdr.dest_port = 0;
+	clk_cfg.hdr.token = index;
+
+	clk_cfg.hdr.opcode = AFE_SVC_CMD_SET_PARAM;
+	clk_cfg.param.payload_size = sizeof(clk_cfg) - sizeof(struct apr_hdr)
+						- sizeof(clk_cfg.param);
+	clk_cfg.param.payload_address_lsw = 0x00;
+	clk_cfg.param.payload_address_msw = 0x00;
+	clk_cfg.param.mem_map_handle = 0x00;
+	clk_cfg.pdata.module_id = AFE_MODULE_CLOCK_SET;
+	clk_cfg.pdata.param_id = AFE_PARAM_ID_CLOCK_SET;
+	clk_cfg.pdata.param_size =  sizeof(clk_cfg.clk_cfg);
+	clk_cfg.clk_cfg = *cfg;
+
+
+	pr_debug("%s: Minor version =0x%x clk id = %d\n"
+		 "clk freq (Hz) = %d, clk attri = 0x%x\n"
+		 "clk root = 0x%x clk enable = 0x%x\n",
+		 __func__, cfg->clk_set_minor_version,
+		 cfg->clk_id, cfg->clk_freq_in_hz, cfg->clk_attri,
+		 cfg->clk_root, cfg->enable);
+
+	atomic_set(&this_afe.state, 1);
+	atomic_set(&this_afe.status, 0);
+	ret = apr_send_pkt(this_afe.apr, (uint32_t *) &clk_cfg);
+	if (ret < 0) {
+		pr_err("%s: AFE clk cfg failed with ret %d\n",
+		       __func__, ret);
+		ret = -EINVAL;
+		goto fail_cmd;
+	}
+
+	ret = wait_event_timeout(this_afe.wait[index],
+			(atomic_read(&this_afe.state) == 0),
+			msecs_to_jiffies(TIMEOUT_MS));
+	if (!ret) {
+		pr_err("%s: wait_event timeout\n", __func__);
+		ret = -EINVAL;
+		goto fail_cmd;
+	} else {
+		/* set ret to 0 as no timeout happened */
+		ret = 0;
+	}
+	if (atomic_read(&this_afe.status) != 0) {
+		pr_err("%s: config cmd failed\n", __func__);
+		ret = -EINVAL;
+		goto fail_cmd;
+	}
+
+fail_cmd:
+	mutex_unlock(&this_afe.afe_cmd_lock);
+	return ret;
+}
+
+int afe_set_lpass_clock_v2(u16 port_id, struct afe_clk_set *cfg)
+{
+	int index = 0;
+	int ret = 0;
+
+	index = q6audio_get_port_index(port_id);
+	ret = q6audio_is_digital_pcm_interface(port_id);
+	if (ret < 0) {
+		pr_err("%s: q6audio_is_digital_pcm_interface fail %d\n",
+			__func__, ret);
+		return -EINVAL;
+	}
+
+	ret = afe_set_lpass_clk_cfg(index, cfg);
+	if (ret)
+		pr_err("%s: afe_set_lpass_clk_cfg_v2 failed %d\n",
+			__func__, ret);
+
+	return ret;
+}
+
 int afe_set_lpass_internal_digital_codec_clock(u16 port_id,
 			struct afe_digital_clk_cfg *cfg)
 {
@@ -4326,8 +4451,6 @@ int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib_resp)
 		pr_err("%s: Invalid params\n", __func__);
 		goto fail_cmd;
 	}
-	if (this_afe.vi_tx_port != -1)
-		port = this_afe.vi_tx_port;
 	ret = q6audio_validate_port(port);
 	if (ret < 0) {
 		pr_err("%s: invalid port 0x%x ret %d\n", __func__, port, ret);
@@ -4529,7 +4652,6 @@ static int afe_set_cal(int32_t cal_type, size_t data_size,
 {
 	int				ret = 0;
 	int				cal_index;
-	static DEFINE_RATELIMIT_STATE(rl, HZ/2, 1);
 	pr_debug("%s:\n", __func__);
 
 	cal_index = get_cal_type_index(cal_type);
@@ -4543,9 +4665,8 @@ static int afe_set_cal(int32_t cal_type, size_t data_size,
 	ret = cal_utils_set_cal(data_size, data,
 		this_afe.cal_data[cal_index], 0, NULL);
 	if (ret < 0) {
-		if (__ratelimit(&rl))
-			pr_err("%s: cal_utils_set_cal failed, ret = %d, cal type = %d!\n",
-				__func__, ret, cal_type);
+		pr_err("%s: cal_utils_set_cal failed, ret = %d, cal type = %d!\n",
+			__func__, ret, cal_type);
 		ret = -EINVAL;
 		goto done;
 	}
@@ -4736,7 +4857,6 @@ static int afe_map_cal_data(int32_t cal_type,
 {
 	int ret = 0;
 	int cal_index;
-	static DEFINE_RATELIMIT_STATE(rl, HZ/2, 1);
 	pr_debug("%s:\n", __func__);
 
 	cal_index = get_cal_type_index(cal_type);
@@ -4753,10 +4873,9 @@ static int afe_map_cal_data(int32_t cal_type,
 			cal_block->map_data.map_size);
 	atomic_set(&this_afe.mem_map_cal_index, -1);
 	if (ret < 0) {
-		if (__ratelimit(&rl))
-			pr_err("%s: mmap did not work! size = %zd ret %d\n",
-				__func__,
-				cal_block->map_data.map_size, ret);
+		pr_err("%s: mmap did not work! size = %zd ret %d\n",
+			__func__,
+			cal_block->map_data.map_size, ret);
 		pr_debug("%s: mmap did not work! addr = 0x%pa, size = %zd\n",
 			__func__,
 			&cal_block->cal_data.paddr,

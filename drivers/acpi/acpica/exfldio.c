@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2013, Intel Corp.
+ * Copyright (C) 2000 - 2014, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -121,12 +121,6 @@ acpi_ex_setup_region(union acpi_operand_object *obj_desc,
 		if (ACPI_FAILURE(status)) {
 			return_ACPI_STATUS(status);
 		}
-	}
-
-	/* Exit if Address/Length have been disallowed by the host OS */
-
-	if (rgn_desc->common.flags & AOPOBJ_INVALID) {
-		return_ACPI_STATUS(AE_AML_ILLEGAL_ADDRESS);
 	}
 
 	/*
@@ -444,7 +438,6 @@ acpi_ex_field_datum_io(union acpi_operand_object *obj_desc,
 		break;
 
 	case ACPI_TYPE_LOCAL_BANK_FIELD:
-
 		/*
 		 * Ensure that the bank_value is not beyond the capacity of
 		 * the register
@@ -486,7 +479,6 @@ acpi_ex_field_datum_io(union acpi_operand_object *obj_desc,
 		break;
 
 	case ACPI_TYPE_LOCAL_INDEX_FIELD:
-
 		/*
 		 * Ensure that the index_value is not beyond the capacity of
 		 * the register
@@ -1002,7 +994,7 @@ acpi_ex_insert_into_field(union acpi_operand_object *obj_desc,
 						mask, merged_datum,
 						field_offset);
 
-      exit:
+exit:
 	/* Free temporary buffer if we used one */
 
 	if (new_buffer) {

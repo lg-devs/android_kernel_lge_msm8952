@@ -82,21 +82,13 @@ void adreno_drawctxt_dump(struct kgsl_device *device,
 			goto stats;
 		}
 
-		/*
-		 * We may have cmdbatch timer running, which also uses same
-		 * lock, take a lock with software interrupt disabled (bh)
-		 * to avoid spin lock recursion.
-		 */
-		spin_lock_bh(&cmdbatch->lock);
-
-		if (!list_empty(&cmdbatch->synclist)) {
+		if (kgsl_cmdbatch_events_pending(cmdbatch)) {
 			dev_err(device->dev,
 				"  context[%d] (ts=%d) Active sync points:\n",
 				context->id, cmdbatch->timestamp);
 
 			kgsl_dump_syncpoints(device, cmdbatch);
 		}
-		spin_unlock_bh(&cmdbatch->lock);
 	}
 
 stats:
@@ -225,6 +217,24 @@ done:
 	return ret;
 }
 
+static int drawctxt_detach_cmdbatches(struct adreno_context *drawctxt,
+		struct kgsl_cmdbatch **list)
+{
+	int count = 0;
+
+	while (drawctxt->cmdqueue_head != drawctxt->cmdqueue_tail) {
+		struct kgsl_cmdbatch *cmdbatch =
+			drawctxt->cmdqueue[drawctxt->cmdqueue_head];
+
+		drawctxt->cmdqueue_head = (drawctxt->cmdqueue_head + 1) %
+			ADRENO_CONTEXT_CMDQUEUE_SIZE;
+
+		list[count++] = cmdbatch;
+	}
+
+	return count;
+}
+
 /**
  * adreno_drawctxt_invalidate() - Invalidate an adreno draw context
  * @device: Pointer to the KGSL device structure for the GPU
@@ -237,6 +247,8 @@ void adreno_drawctxt_invalidate(struct kgsl_device *device,
 		struct kgsl_context *context)
 {
 	struct adreno_context *drawctxt = ADRENO_CONTEXT(context);
+	struct kgsl_cmdbatch *list[ADRENO_CONTEXT_CMDQUEUE_SIZE];
+	int i, count;
 
 	trace_adreno_drawctxt_invalidate(drawctxt);
 
@@ -256,20 +268,14 @@ void adreno_drawctxt_invalidate(struct kgsl_device *device,
 			drawctxt->timestamp);
 
 	/* Get rid of commands still waiting in the queue */
-	while (drawctxt->cmdqueue_head != drawctxt->cmdqueue_tail) {
-		struct kgsl_cmdbatch *cmdbatch =
-			drawctxt->cmdqueue[drawctxt->cmdqueue_head];
-
-		drawctxt->cmdqueue_head = (drawctxt->cmdqueue_head + 1) %
-			ADRENO_CONTEXT_CMDQUEUE_SIZE;
-
-		kgsl_cancel_events_timestamp(device, &context->events,
-			cmdbatch->timestamp);
-
-		kgsl_cmdbatch_destroy(cmdbatch);
-	}
-
+	count = drawctxt_detach_cmdbatches(drawctxt, list);
 	spin_unlock(&drawctxt->lock);
+
+	for (i = 0; i < count; i++) {
+		kgsl_cancel_events_timestamp(device, &context->events,
+			list[i]->timestamp);
+		kgsl_cmdbatch_destroy(list[i]);
+	}
 
 	/* Make sure all pending events are processed or cancelled */
 	kgsl_flush_event_group(device, &context->events);
@@ -333,7 +339,7 @@ adreno_drawctxt_create(struct kgsl_device_private *dev_priv,
 	/* Check for errors before trying to initialize */
 
 	/* If preemption is not supported, ignore preemption request */
-	if (ADRENO_FEATURE(adreno_dev, ADRENO_PREEMPTION))
+	if (!ADRENO_FEATURE(adreno_dev, ADRENO_PREEMPTION))
 		local &= ~KGSL_CONTEXT_PREEMPT_STYLE_MASK;
 
 	/* We no longer support legacy context switching */
@@ -431,7 +437,8 @@ void adreno_drawctxt_detach(struct kgsl_context *context)
 	struct adreno_device *adreno_dev;
 	struct adreno_context *drawctxt;
 	struct adreno_ringbuffer *rb;
-	int ret;
+	int ret, count, i;
+	struct kgsl_cmdbatch *list[ADRENO_CONTEXT_CMDQUEUE_SIZE];
 
 	if (context == NULL)
 		return;
@@ -456,34 +463,19 @@ void adreno_drawctxt_detach(struct kgsl_context *context)
 	mutex_unlock(&device->mutex);
 
 	spin_lock(&drawctxt->lock);
+	count = drawctxt_detach_cmdbatches(drawctxt, list);
+	spin_unlock(&drawctxt->lock);
 
-	while (drawctxt->cmdqueue_head != drawctxt->cmdqueue_tail) {
-		struct kgsl_cmdbatch *cmdbatch =
-			drawctxt->cmdqueue[drawctxt->cmdqueue_head];
-
-		drawctxt->cmdqueue_head = (drawctxt->cmdqueue_head + 1) %
-			ADRENO_CONTEXT_CMDQUEUE_SIZE;
-
-		spin_unlock(&drawctxt->lock);
-
+	for (i = 0; i < count; i++) {
 		/*
 		 * If the context is deteached while we are waiting for
 		 * the next command in GFT SKIP CMD, print the context
 		 * detached status here.
 		 */
-		adreno_fault_skipcmd_detached(device, drawctxt, cmdbatch);
-
-		/*
-		 * Don't hold the drawctxt mutex while the cmdbatch is being
-		 * destroyed because the cmdbatch destroy takes the device
-		 * mutex and the world falls in on itself
-		 */
-
-		kgsl_cmdbatch_destroy(cmdbatch);
-		spin_lock(&drawctxt->lock);
+		adreno_fault_skipcmd_detached(device, drawctxt, list[i]);
+		kgsl_cmdbatch_destroy(list[i]);
 	}
 
-	spin_unlock(&drawctxt->lock);
 	/*
 	 * internal_timestamp is set in adreno_ringbuffer_addcmds,
 	 * which holds the device mutex.

@@ -230,7 +230,6 @@
 #define CHG_FLAGS_VCP_WA		BIT(0)
 #define BOOST_FLASH_WA			BIT(1)
 #define POWER_STAGE_WA			BIT(2)
-#define	CHG_TERM_CHANGE			BIT(3)
 
 struct qpnp_chg_irq {
 	int		irq;
@@ -2970,32 +2969,20 @@ qpnp_chg_ibatsafe_set(struct qpnp_chg_chip *chip, int safe_current)
 #define QPNP_CHG_ITERM_MIN_MA		100
 #define QPNP_CHG_ITERM_MAX_MA		250
 #define QPNP_CHG_ITERM_STEP_MA		50
-#define QPNP_CHG_ITERM_MIN_MA_V3	80
-#define QPNP_CHG_ITERM_MAX_MA_V3	200
-#define QPNP_CHG_ITERM_STEP_MA_V3		40
 #define QPNP_CHG_ITERM_MASK			0x03
 static int
 qpnp_chg_ibatterm_set(struct qpnp_chg_chip *chip, int term_current)
 {
 	u8 temp;
-	int iterm_min_ma = QPNP_CHG_ITERM_MIN_MA;
-	int iterm_max_ma = QPNP_CHG_ITERM_MAX_MA;
-	int iterm_step_ma = QPNP_CHG_ITERM_STEP_MA;
 
-	if (chip->flags & CHG_TERM_CHANGE) {
-		iterm_min_ma = QPNP_CHG_ITERM_MIN_MA_V3;
-		iterm_max_ma = QPNP_CHG_ITERM_MAX_MA_V3;
-		iterm_step_ma = QPNP_CHG_ITERM_STEP_MA_V3;
-	}
-
-	if (term_current < iterm_min_ma
-			|| term_current > iterm_max_ma) {
+	if (term_current < QPNP_CHG_ITERM_MIN_MA
+			|| term_current > QPNP_CHG_ITERM_MAX_MA) {
 		pr_err("bad mA=%d asked to set\n", term_current);
 		return -EINVAL;
 	}
 
-	temp = (term_current - iterm_min_ma)
-				/ iterm_step_ma;
+	temp = (term_current - QPNP_CHG_ITERM_MIN_MA)
+				/ QPNP_CHG_ITERM_STEP_MA;
 	return qpnp_chg_masked_write(chip,
 			chip->chgr_base + CHGR_IBAT_TERM_CHGR,
 			QPNP_CHG_ITERM_MASK, temp, 1);
@@ -3465,15 +3452,14 @@ qpnp_chg_regulator_boost_enable(struct regulator_dev *rdev)
 			pr_err("failed to write SEC_ACCESS rc=%d\n", rc);
 			return rc;
 		}
-		if (chip->type != SMBBP) {
-			rc = qpnp_chg_masked_write(chip,
-				chip->usb_chgpth_base + COMP_OVR1,
-				0xFF,
-				0x2F, 1);
-			if (rc) {
-				pr_err("failed to write COMP_OVR1 rc=%d\n", rc);
-				return rc;
-			}
+
+		rc = qpnp_chg_masked_write(chip,
+			chip->usb_chgpth_base + COMP_OVR1,
+			0xFF,
+			0x2F, 1);
+		if (rc) {
+			pr_err("failed to write COMP_OVR1 rc=%d\n", rc);
+			return rc;
 		}
 	}
 
@@ -3541,7 +3527,7 @@ qpnp_chg_regulator_boost_disable(struct regulator_dev *rdev)
 			return rc;
 		}
 
-		usleep(2000);
+		usleep_range(2000, 2010);
 
 		rc = qpnp_chg_masked_write(chip,
 			chip->chgr_base + SEC_ACCESS,
@@ -3572,17 +3558,17 @@ qpnp_chg_regulator_boost_disable(struct regulator_dev *rdev)
 			pr_err("failed to write SEC_ACCESS rc=%d\n", rc);
 			return rc;
 		}
-		if (chip->type != SMBBP) {
-			rc = qpnp_chg_masked_write(chip,
-				chip->usb_chgpth_base + COMP_OVR1,
-				0xFF,
-				0x00, 1);
-			if (rc) {
-				pr_err("failed to write COMP_OVR1 rc=%d\n", rc);
-				return rc;
-			}
+
+		rc = qpnp_chg_masked_write(chip,
+			chip->usb_chgpth_base + COMP_OVR1,
+			0xFF,
+			0x00, 1);
+		if (rc) {
+			pr_err("failed to write COMP_OVR1 rc=%d\n", rc);
+			return rc;
 		}
-		usleep(1000);
+
+		usleep_range(1000, 1010);
 
 		qpnp_chg_usb_suspend_enable(chip, 0);
 	}
@@ -4502,31 +4488,28 @@ qpnp_batt_power_set_property(struct power_supply *psy,
 static int
 qpnp_chg_setup_flags(struct qpnp_chg_chip *chip)
 {
-	struct device_node *revid_dev_node;
-	struct pmic_revid_data *revid_data;
-
-	revid_dev_node = of_parse_phandle(chip->spmi->dev.of_node,
-					"qcom,pmic-revid", 0);
-	if (!revid_dev_node) {
-		pr_err("Missing qcom,pmic-revid property\n");
-		return -EINVAL;
-	}
-	revid_data = get_revid_data(revid_dev_node);
-	if (IS_ERR(revid_data)) {
-		pr_err("Couldnt get revid data rc = %ld\n",
-					PTR_ERR(revid_data));
-		return PTR_ERR(revid_data);
-	}
 	if (chip->revision > 0 && chip->type == SMBB)
 		chip->flags |= CHG_FLAGS_VCP_WA;
-	if (chip->type == SMBB) {
+	if (chip->type == SMBB)
 		chip->flags |= BOOST_FLASH_WA;
-		if (revid_data->rev4 == PM8941_V3P0_REV4) {
-			chip->flags |= CHG_TERM_CHANGE;
-		}
-	}
 	if (chip->type == SMBBP) {
+		struct device_node *revid_dev_node;
+		struct pmic_revid_data *revid_data;
+
 		chip->flags |=  BOOST_FLASH_WA;
+
+		revid_dev_node = of_parse_phandle(chip->spmi->dev.of_node,
+						"qcom,pmic-revid", 0);
+		if (!revid_dev_node) {
+			pr_err("Missing qcom,pmic-revid property\n");
+			return -EINVAL;
+		}
+		revid_data = get_revid_data(revid_dev_node);
+		if (IS_ERR(revid_data)) {
+			pr_err("Couldnt get revid data rc = %ld\n",
+						PTR_ERR(revid_data));
+			return PTR_ERR(revid_data);
+		}
 
 		if (revid_data->rev4 < PM8226_V2P1_REV4
 			|| ((revid_data->rev4 == PM8226_V2P1_REV4)

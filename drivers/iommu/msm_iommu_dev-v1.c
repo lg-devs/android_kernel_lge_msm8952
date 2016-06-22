@@ -483,6 +483,8 @@ static int msm_iommu_probe(struct platform_device *pdev)
 					global_client_irq, ret);
 	}
 
+	idr_init(&drvdata->asid_idr);
+
 	ret = of_platform_populate(pdev->dev.of_node, msm_iommu_ctx_match_table,
 				   NULL, &pdev->dev);
 fail:
@@ -506,6 +508,7 @@ static int msm_iommu_remove(struct platform_device *pdev)
 
 	drv = platform_get_drvdata(pdev);
 	if (drv) {
+		idr_destroy(&drv->asid_idr);
 		__put_bus_vote_client(drv);
 		clk_unprepare(drv->clk);
 		clk_unprepare(drv->pclk);
@@ -581,7 +584,7 @@ static int msm_iommu_ctx_parse_dt(struct platform_device *pdev,
 	/* Calculate the context bank number using the base addresses.
 	 * Typically CB0 base address is 0x8000 pages away if the number
 	 * of CBs are <=8. So, assume the offset 0x8000 until mentioned
-	 * explicitely.
+	 * explicitly.
 	 */
 	cb_offset = drvdata->cb_base - drvdata->base;
 	ctx_drvdata->num = ((r->start - rp.start - cb_offset)
@@ -633,6 +636,10 @@ static int msm_iommu_ctx_parse_dt(struct platform_device *pdev,
 	}
 	ctx_drvdata->n_sid_mask = n_sid_mask;
 
+	if (!of_property_read_u32(pdev->dev.of_node, "qcom,prefetch-depth",
+				&(ctx_drvdata->prefetch_depth)))
+		ctx_drvdata->prefetch_depth = 0;
+
 out:
 	return ret;
 }
@@ -659,6 +666,9 @@ static int msm_iommu_ctx_probe(struct platform_device *pdev)
 
 		dev_info(&pdev->dev, "context %s using bank %d\n",
 			 ctx_drvdata->name, ctx_drvdata->num);
+
+		if (strcmp(ctx_drvdata->name, "access_control") == 0)
+			msm_access_control();
 	}
 
 	return ret;

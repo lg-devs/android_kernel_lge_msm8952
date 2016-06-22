@@ -64,6 +64,9 @@
 #define MSM_CAMERA_SUBDEV_OIS          15
 #define MSM_CAMERA_SUBDEV_FLASH        16
 #define MSM_CAMERA_SUBDEV_EXT          17
+#define MSM_CAMERA_SUBDEV_PROXY        18 /* LGE_CHANGE, proxy, 2014-09-16, byungsoo.moon@lge.com */
+#define MSM_CAMERA_SUBDEV_TCS          19 /* LGE_CHANGE, tcs, 2015-01-14, booil.park@lge.com */
+
 
 #define MSM_MAX_CAMERA_SENSORS  5
 
@@ -98,7 +101,9 @@
 #define MSM_CAMERA_MAPPING_CFG  (MSM_CAMERA_EVENT_MIN + 5)
 #define MSM_CAMERA_MAPPING_SES  (MSM_CAMERA_EVENT_MIN + 6)
 #define MSM_CAMERA_MSM_NOTIFY   (MSM_CAMERA_EVENT_MIN + 7)
-#define MSM_CAMERA_EVENT_MAX    (MSM_CAMERA_EVENT_MIN + 8)
+/*LGE_CHANGE, CST, added qcamsvr shutdown event*/
+#define MSM_CAMERA_SHUTDOWN     (MSM_CAMERA_EVENT_MIN + 8)
+#define MSM_CAMERA_EVENT_MAX    (MSM_CAMERA_EVENT_MIN + 9)
 
 /* data.command */
 #define MSM_CAMERA_PRIV_S_CROP		 (V4L2_CID_PRIVATE_BASE + 1)
@@ -203,9 +208,9 @@ struct msm_v4l2_format_data {
 #define MSM_V4L2_PIX_FMT_STATS_BHST v4l2_fourcc('B', 'H', 'S', 'T')
 
 enum smmu_attach_mode {
-	NON_SECURE_MODE,
-	SECURE_MODE,
-	MAX_PROTECTION_MODE,
+	NON_SECURE_MODE = 0x01,
+	SECURE_MODE = 0x02,
+	MAX_PROTECTION_MODE = 0x03,
 };
 
 struct msm_camera_smmu_attach_type {

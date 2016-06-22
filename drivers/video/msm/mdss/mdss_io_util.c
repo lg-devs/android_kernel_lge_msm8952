@@ -134,7 +134,29 @@ void msm_dss_iounmap(struct dss_io_data *io_data)
 	io_data->len = 0;
 } /* msm_dss_iounmap */
 EXPORT_SYMBOL(msm_dss_iounmap);
+#if defined(CONFIG_LGE_MIPI_H1_INCELL_QHD_CMD_PANEL)
+int msm_dss_set_vreg(struct dss_vreg *in_vreg,
+	int num_vreg, int mode)
+{
 
+	int i = 0, rc = 0;
+	struct dss_vreg *curr_vreg = NULL;
+
+	for (i = 0; i < num_vreg; i++) {
+		curr_vreg = &in_vreg[i];
+		rc = regulator_set_mode(curr_vreg->vreg, mode);
+		if (rc) {
+			DEV_ERR("%pS->%s: %s failed to set mode %x. rc=%d\n",
+					__builtin_return_address(0), __func__,
+					curr_vreg->vreg_name,mode, rc);
+			return rc;
+		}
+	}
+
+	return rc;
+}
+EXPORT_SYMBOL(msm_dss_set_vreg);
+#endif
 int msm_dss_config_vreg(struct device *dev, struct dss_vreg *in_vreg,
 	int num_vreg, int config)
 {
@@ -223,7 +245,8 @@ int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
 			}
 			need_sleep = !regulator_is_enabled(in_vreg[i].vreg);
 			if (in_vreg[i].pre_on_sleep && need_sleep)
-				msleep(in_vreg[i].pre_on_sleep);
+				usleep_range(in_vreg[i].pre_on_sleep * 1000,
+					in_vreg[i].pre_on_sleep * 1000);
 			rc = regulator_set_optimum_mode(in_vreg[i].vreg,
 				in_vreg[i].enable_load);
 			if (rc < 0) {
@@ -234,7 +257,8 @@ int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
 			}
 			rc = regulator_enable(in_vreg[i].vreg);
 			if (in_vreg[i].post_on_sleep && need_sleep)
-				msleep(in_vreg[i].post_on_sleep);
+				usleep_range(in_vreg[i].post_on_sleep * 1000,
+					in_vreg[i].post_on_sleep * 1000);
 			if (rc < 0) {
 				DEV_ERR("%pS->%s: %s enable failed\n",
 					__builtin_return_address(0), __func__,
@@ -245,12 +269,14 @@ int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
 	} else {
 		for (i = num_vreg-1; i >= 0; i--) {
 			if (in_vreg[i].pre_off_sleep)
-				msleep(in_vreg[i].pre_off_sleep);
+				usleep_range(in_vreg[i].pre_off_sleep * 1000,
+					in_vreg[i].pre_off_sleep * 1000);
 			regulator_set_optimum_mode(in_vreg[i].vreg,
 				in_vreg[i].disable_load);
 			regulator_disable(in_vreg[i].vreg);
 			if (in_vreg[i].post_off_sleep)
-				msleep(in_vreg[i].post_off_sleep);
+				usleep_range(in_vreg[i].post_off_sleep * 1000,
+					in_vreg[i].post_off_sleep * 1000);
 		}
 	}
 	return rc;
@@ -261,12 +287,14 @@ disable_vreg:
 vreg_set_opt_mode_fail:
 	for (i--; i >= 0; i--) {
 		if (in_vreg[i].pre_off_sleep)
-			msleep(in_vreg[i].pre_off_sleep);
+			usleep_range(in_vreg[i].pre_off_sleep * 1000,
+				in_vreg[i].pre_off_sleep * 1000);
 		regulator_set_optimum_mode(in_vreg[i].vreg,
 			in_vreg[i].disable_load);
 		regulator_disable(in_vreg[i].vreg);
 		if (in_vreg[i].post_off_sleep)
-			msleep(in_vreg[i].post_off_sleep);
+			usleep_range(in_vreg[i].post_off_sleep * 1000,
+				in_vreg[i].post_off_sleep * 1000);
 	}
 
 	return rc;

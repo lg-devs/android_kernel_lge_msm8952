@@ -1,0 +1,89 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/dts-v1/;
+
+#include "msm8952-b3_tmo_us.dtsi"
+
+/ {
+	model = "Qualcomm Technologies, Inc. MSM8952 MTP";
+	compatible = "qcom,msm8952-mtp", "qcom,msm8952", "qcom,mtp", "lge,msm8952-p1v_att_us";
+	qcom,board-id= <0x008 0>;
+	qcom,board-id= <0x108 0>;
+	qcom,board-id= <0x208 0>;
+	qcom,board-id= <0x308 0>; /* rev_a */
+};
+
+&spmi_bus {
+	qcom,pm8950@0 {
+		pm8950_mpps: mpps {
+			mpp@a300 {
+				/* MPP2 - PA_THERM config */
+				reg = <0xa100 0x100>;
+				qcom,pin-num = <2>;
+				qcom,mode = <4>; /* AIN input */
+				qcom,invert = <1>; /* Enable MPP */
+				qcom,ain-route = <1>; /* AMUX 6 */
+				qcom,master-en = <1>;
+				qcom,src-sel = <0>; /* Function constant */
+			};
+		};
+	};
+};
+
+// disable spi6 for cap sensor for rev a,b
+&soc {
+	spi_6: spi@7af6000 { /* BLSP2 QUP2 */
+		status = "disabled";
+	};
+};
+
+/* ATMF04 Cap sensor Pinmux setting for rev_a, rev_b1 */
+// use atmf04_int_pin 21
+// disable i2c_2
+// rollback i2c_5 clk-freq of secondary capsensor
+// disable secondary capsensor of i2c_5
+
+&soc {
+	tlmm_pinmux: pinctrl@1000000 {
+		/* ATMF04 Cap sensor for rev_a, rev_b1 */
+		atmf04_int_pin {
+			//revision = "rev_a...rev_b1";
+			qcom,pins = <&gp 21>;
+		};
+	};
+};
+
+&soc {
+	i2c_2: i2c@78b6000 { /* BLSP1 QUP2 */
+		//revision = "rev_a...rev_b1";
+		status = "disabled";
+	};
+
+	i2c_5: i2c@7af5000 { /* BLSP2 QUP1 */
+		//revision = "rev_a...rev_b1";
+		qcom,clk-freq-out = <400000>; // rollback I2C clk-freq to native
+	};
+
+	i2c_6: i2c@7af6000 { /* BLSP2 QUP2 */
+		//revision = "rev_a...rev_b1";
+		status = "ok";
+	};
+
+	i2c@7af5000 { // i2c_5
+		adsemicon_atmf04@5a {
+			//revision = "rev_a...rev_b1";
+			status = "disabled";
+		};
+	};
+};

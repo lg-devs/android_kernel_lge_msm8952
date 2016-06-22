@@ -50,9 +50,6 @@
 #include <linux/clk/msm-clk.h>
 
 #include <linux/msm-bus.h>
-#include <mach/msm_iomap.h>
-#include <mach/msm_xo.h>
-#include <mach/rpm-regulator.h>
 
 #include "ehci.h"
 
@@ -99,7 +96,6 @@ struct msm_hsic_hcd {
 	atomic_t		pm_usage_cnt;
 	uint32_t		bus_perf_client;
 	uint32_t		wakeup_int_cnt;
-	enum usb_vdd_type	vdd_type;
 
 	struct work_struct	bus_vote_w;
 	bool			bus_vote;
@@ -354,18 +350,7 @@ static void dump_hsic_regs(struct usb_hcd *hcd)
 
 #define HSIC_DBG1_REG		0x38
 
-static int vdd_val[VDD_TYPE_MAX][VDD_VAL_MAX] = {
-		{   /* VDD_CX CORNER Voting */
-			[VDD_NONE]	= RPM_VREG_CORNER_NONE,
-			[VDD_MIN]	= RPM_VREG_CORNER_NOMINAL,
-			[VDD_MAX]	= RPM_VREG_CORNER_HIGH,
-		},
-		{   /* VDD_CX Voltage Voting */
-			[VDD_NONE]	= USB_PHY_VDD_DIG_VOL_NONE,
-			[VDD_MIN]	= USB_PHY_VDD_DIG_VOL_MIN,
-			[VDD_MAX]	= USB_PHY_VDD_DIG_VOL_MAX,
-		},
-};
+static int vdd_val[VDD_VAL_MAX];
 
 static int msm_hsic_init_vddcx(struct msm_hsic_hcd *mehci, int init)
 {
@@ -375,17 +360,11 @@ static int msm_hsic_init_vddcx(struct msm_hsic_hcd *mehci, int init)
 	int len = 0;
 
 	if (!mehci->hsic_vddcx) {
-		mehci->vdd_type = VDDCX_CORNER;
 		mehci->hsic_vddcx = devm_regulator_get(mehci->dev,
 			"hsic_vdd_dig");
 		if (IS_ERR(mehci->hsic_vddcx)) {
-			mehci->hsic_vddcx = devm_regulator_get(mehci->dev,
-				"HSIC_VDDCX");
-			if (IS_ERR(mehci->hsic_vddcx)) {
-				dev_err(mehci->dev, "unable to get hsic vddcx\n");
-				return PTR_ERR(mehci->hsic_vddcx);
-			}
-			mehci->vdd_type = VDDCX;
+			dev_err(mehci->dev, "unable to get hsic vddcx\n");
+			return PTR_ERR(mehci->hsic_vddcx);
 		}
 
 		if (mehci->dev->of_node) {
@@ -396,18 +375,23 @@ static int msm_hsic_init_vddcx(struct msm_hsic_hcd *mehci, int init)
 				of_property_read_u32_array(mehci->dev->of_node,
 						"hsic,vdd-voltage-level",
 						tmp, len/sizeof(*tmp));
-				vdd_val[mehci->vdd_type][VDD_NONE] = tmp[0];
-				vdd_val[mehci->vdd_type][VDD_MIN] = tmp[1];
-				vdd_val[mehci->vdd_type][VDD_MAX] = tmp[2];
+				vdd_val[VDD_NONE] = tmp[0];
+				vdd_val[VDD_MIN] = tmp[1];
+				vdd_val[VDD_MAX] = tmp[2];
 			} else {
-				dev_dbg(mehci->dev, "Use default vdd config\n");
+				dev_err(mehci->dev, "fail vdd voltage level\n");
+				return -ENODEV;
 			}
+		} else {
+			dev_err(mehci->dev, "device tree not enabled\n");
+			return -ENODEV;
 		}
+
 	}
 
-	none_vol = vdd_val[mehci->vdd_type][VDD_NONE];
-	min_vol = vdd_val[mehci->vdd_type][VDD_MIN];
-	max_vol = vdd_val[mehci->vdd_type][VDD_MAX];
+	none_vol = vdd_val[VDD_NONE];
+	min_vol = vdd_val[VDD_MIN];
+	max_vol = vdd_val[VDD_MAX];
 
 	if (!init)
 		goto disable_reg;
@@ -658,6 +642,8 @@ static void msm_hsic_clk_reset(struct msm_hsic_hcd *mehci)
 	}
 }
 
+#define IOMEM(x)        ((void __force __iomem *)(x))
+#define MSM_TLMM_BASE                   IOMEM(0xFA017000)
 #define HSIC_STROBE_GPIO_PAD_CTL	(MSM_TLMM_BASE+0x20C0)
 #define HSIC_DATA_GPIO_PAD_CTL		(MSM_TLMM_BASE+0x20C4)
 #define HSIC_CAL_PAD_CTL       (MSM_TLMM_BASE+0x20C8)
@@ -895,8 +881,8 @@ static int msm_hsic_suspend(struct msm_hsic_hcd *mehci)
 	if (!IS_ERR(mehci->inactivity_clk))
 		clk_disable_unprepare(mehci->inactivity_clk);
 
-	none_vol = vdd_val[mehci->vdd_type][VDD_NONE];
-	max_vol = vdd_val[mehci->vdd_type][VDD_MAX];
+	none_vol = vdd_val[VDD_NONE];
+	max_vol = vdd_val[VDD_MAX];
 
 	ret = regulator_set_voltage(mehci->hsic_vddcx, none_vol, max_vol);
 	if (ret < 0)
@@ -973,8 +959,8 @@ static int msm_hsic_resume(struct msm_hsic_hcd *mehci)
 		queue_work(ehci_wq, &mehci->bus_vote_w);
 	}
 
-	min_vol = vdd_val[mehci->vdd_type][VDD_MIN];
-	max_vol = vdd_val[mehci->vdd_type][VDD_MAX];
+	min_vol = vdd_val[VDD_MIN];
+	max_vol = vdd_val[VDD_MAX];
 
 	ret = regulator_set_voltage(mehci->hsic_vddcx, min_vol, max_vol);
 	if (ret < 0)
@@ -1076,7 +1062,7 @@ static int msm_hsic_reset_done(struct usb_hcd *hcd)
 	ehci_writel(ehci, ehci_readl(ehci, status_reg) & ~(PORT_RWC_BITS |
 					PORT_RESET), status_reg);
 
-	ret = handshake(ehci, status_reg, PORT_RESET, 0, 1 * 1000);
+	ret = ehci_handshake(ehci, status_reg, PORT_RESET, 0, 1 * 1000);
 
 	if (ret)
 		pr_err("reset handshake failed in %s\n", __func__);
@@ -1219,7 +1205,7 @@ static void ehci_hsic_reset_sof_bug_handler(struct usb_hcd *hcd, u32 val)
 	cmd = ehci_readl(ehci, &ehci->regs->command);
 	cmd &= ~CMD_RUN;
 	ehci_writel(ehci, cmd, &ehci->regs->command);
-	ret = handshake(ehci, &ehci->regs->status, STS_HALT,
+	ret = ehci_handshake(ehci, &ehci->regs->status, STS_HALT,
 			STS_HALT, 16 * 125);
 	if (ret) {
 		pr_err("halt handshake fatal error\n");
@@ -1252,7 +1238,7 @@ retry:
 	if (!mehci->reset_again)
 		goto done;
 
-	if (handshake(ehci, status_reg, PORT_RESET, 0, 10 * 1000)) {
+	if (ehci_handshake(ehci, status_reg, PORT_RESET, 0, 10 * 1000)) {
 		pr_err("reset handshake fatal error\n");
 		dbg_log_event(NULL, "RESET: fatal", retries);
 		goto fail;
@@ -1411,7 +1397,7 @@ resume_again:
 		} else {
 			dbg_log_event(NULL, "FPR: Tightloop", 0);
 			/* do the resume in a tight loop */
-			handshake(ehci, &ehci->regs->port_status[0],
+			ehci_handshake(ehci, &ehci->regs->port_status[0],
 				PORT_RESUME, 0, 22 * 1000);
 			ehci_writel(ehci, ehci_readl(ehci,
 				&ehci->regs->command) | CMD_RUN,
@@ -1536,7 +1522,7 @@ static struct hc_driver msm_hsic_driver = {
 	 * generic hardware linkage
 	 */
 	.irq			= msm_hsic_irq,
-	.flags			= HCD_USB2 | HCD_MEMORY | HCD_RT_OLD_ENUM,
+	.flags			= HCD_USB2 | HCD_MEMORY,
 
 	.reset			= ehci_hsic_reset,
 	.start			= ehci_run,
@@ -1572,7 +1558,6 @@ static struct hc_driver msm_hsic_driver = {
 	.bus_suspend		= ehci_hsic_bus_suspend,
 	.bus_resume		= ehci_hsic_bus_resume,
 
-	.log_urb		= dbg_log_event,
 	.dump_regs		= dump_hsic_regs,
 
 	.set_autosuspend_delay = ehci_msm_set_autosuspend_delay,

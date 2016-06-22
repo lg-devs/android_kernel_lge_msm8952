@@ -54,19 +54,19 @@ enum msm_vidc_debugfs_event {
 
 extern int msm_vidc_debug;
 extern int msm_vidc_debug_out;
-extern int msm_fw_debug;
-extern int msm_fw_debug_mode;
-extern int msm_fw_low_power_mode;
+extern int msm_vidc_fw_debug;
+extern int msm_vidc_fw_debug_mode;
+extern int msm_vidc_fw_low_power_mode;
 extern int msm_vidc_hw_rsp_timeout;
-extern u32 msm_fw_coverage;
-extern int msm_vidc_reset_clock_control;
-extern int msm_vidc_regulator_scaling;
+extern int msm_vidc_fw_coverage;
 extern int msm_vidc_vpe_csc_601_to_709;
 extern int msm_vidc_dec_dcvs_mode;
 extern int msm_vidc_enc_dcvs_mode;
 extern int msm_vidc_sys_idle_indicator;
-extern u32 msm_vidc_firmware_unload_delay;
+extern int msm_vidc_firmware_unload_delay;
 extern int msm_vidc_thermal_mitigation_disabled;
+extern int msm_vidc_bitrate_clock_scaling;
+extern int msm_vidc_debug_timeout;
 
 #define VIDC_MSG_PRIO2STRING(__level) ({ \
 	char *__str; \
@@ -148,9 +148,9 @@ static inline void toc(struct msm_vidc_inst *i, enum profiling_points p)
 		!i->debug.pdata[p].sampling) {
 		do_gettimeofday(&__ddl_tv);
 		i->debug.pdata[p].stop = (__ddl_tv.tv_sec * 1000)
-		+ (__ddl_tv.tv_usec / 1000);
-		i->debug.pdata[p].cumulative +=
-		(i->debug.pdata[p].stop - i->debug.pdata[p].start);
+			+ (__ddl_tv.tv_usec / 1000);
+		i->debug.pdata[p].cumulative += i->debug.pdata[p].stop -
+			i->debug.pdata[p].start;
 		i->debug.pdata[p].sampling = true;
 	}
 }
@@ -159,14 +159,15 @@ static inline void show_stats(struct msm_vidc_inst *i)
 {
 	int x;
 	for (x = 0; x < MAX_PROFILING_POINTS; x++) {
-		if ((i->debug.pdata[x].name[0])  &&
-			(msm_vidc_debug & VIDC_PROF)) {
+		if (i->debug.pdata[x].name[0] &&
+				(msm_vidc_debug & VIDC_PROF)) {
 			if (i->debug.samples) {
 				dprintk(VIDC_PROF, "%s averaged %d ms/sample\n",
-					i->debug.pdata[x].name,
-					i->debug.pdata[x].cumulative /
-					i->debug.samples);
+						i->debug.pdata[x].name,
+						i->debug.pdata[x].cumulative /
+						i->debug.samples);
 			}
+
 			dprintk(VIDC_PROF, "%s Samples: %d\n",
 					i->debug.pdata[x].name,
 					i->debug.samples);

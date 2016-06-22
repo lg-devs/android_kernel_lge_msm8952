@@ -8,6 +8,8 @@
  *	Rewritten. Old one was good in 2.2, but in 2.3 it was immoral. --ANK (990903)
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/export.h>
 #include <linux/kernel_stat.h>
 #include <linux/interrupt.h>
@@ -23,11 +25,11 @@
 #include <linux/smp.h>
 #include <linux/smpboot.h>
 #include <linux/tick.h>
+#include <linux/irq.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
 
-#include <asm/irq.h>
 /*
    - No shared variables, all the data are CPU local.
    - If a softirq needs serialization, let it serialize itself
@@ -55,7 +57,7 @@ static struct softirq_action softirq_vec[NR_SOFTIRQS] __cacheline_aligned_in_smp
 
 DEFINE_PER_CPU(struct task_struct *, ksoftirqd);
 
-char *softirq_to_name[NR_SOFTIRQS] = {
+const char * const softirq_to_name[NR_SOFTIRQS] = {
 	"HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "BLOCK_IOPOLL",
 	"TASKLET", "SCHED", "HRTIMER", "RCU"
 };
@@ -90,7 +92,7 @@ static void wakeup_softirqd(void)
  * where hardirqs are disabled legitimately:
  */
 #ifdef CONFIG_TRACE_IRQFLAGS
-static void __local_bh_disable(unsigned long ip, unsigned int cnt)
+void __local_bh_disable_ip(unsigned long ip, unsigned int cnt)
 {
 	unsigned long flags;
 
@@ -98,47 +100,33 @@ static void __local_bh_disable(unsigned long ip, unsigned int cnt)
 
 	raw_local_irq_save(flags);
 	/*
-	 * The preempt tracer hooks into add_preempt_count and will break
+	 * The preempt tracer hooks into preempt_count_add and will break
 	 * lockdep because it calls back into lockdep after SOFTIRQ_OFFSET
 	 * is set and before current->softirq_enabled is cleared.
 	 * We must manually increment preempt_count here and manually
 	 * call the trace_preempt_off later.
 	 */
-	preempt_count() += cnt;
+	__preempt_count_add(cnt);
 	/*
 	 * Were softirqs turned off above:
 	 */
-	if (softirq_count() == cnt)
+	if (softirq_count() == (cnt & SOFTIRQ_MASK))
 		trace_softirqs_off(ip);
 	raw_local_irq_restore(flags);
 
 	if (preempt_count() == cnt)
 		trace_preempt_off(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
 }
-#else /* !CONFIG_TRACE_IRQFLAGS */
-static inline void __local_bh_disable(unsigned long ip, unsigned int cnt)
-{
-	add_preempt_count(cnt);
-	barrier();
-}
+EXPORT_SYMBOL(__local_bh_disable_ip);
 #endif /* CONFIG_TRACE_IRQFLAGS */
-
-void local_bh_disable(void)
-{
-	__local_bh_disable((unsigned long)__builtin_return_address(0),
-				SOFTIRQ_DISABLE_OFFSET);
-}
-
-EXPORT_SYMBOL(local_bh_disable);
 
 static void __local_bh_enable(unsigned int cnt)
 {
-	WARN_ON_ONCE(in_irq());
 	WARN_ON_ONCE(!irqs_disabled());
 
-	if (softirq_count() == cnt)
-		trace_softirqs_on((unsigned long)__builtin_return_address(0));
-	sub_preempt_count(cnt);
+	if (softirq_count() == (cnt & SOFTIRQ_MASK))
+		trace_softirqs_on(_RET_IP_);
+	preempt_count_sub(cnt);
 }
 
 /*
@@ -148,12 +136,12 @@ static void __local_bh_enable(unsigned int cnt)
  */
 void _local_bh_enable(void)
 {
+	WARN_ON_ONCE(in_irq());
 	__local_bh_enable(SOFTIRQ_DISABLE_OFFSET);
 }
-
 EXPORT_SYMBOL(_local_bh_enable);
 
-static inline void _local_bh_enable_ip(unsigned long ip)
+void __local_bh_enable_ip(unsigned long ip, unsigned int cnt)
 {
 	WARN_ON_ONCE(in_irq() || irqs_disabled());
 #ifdef CONFIG_TRACE_IRQFLAGS
@@ -167,30 +155,24 @@ static inline void _local_bh_enable_ip(unsigned long ip)
 	/*
 	 * Keep preemption disabled until we are done with
 	 * softirq processing:
- 	 */
-	sub_preempt_count(SOFTIRQ_DISABLE_OFFSET - 1);
+	 */
+	preempt_count_sub(cnt - 1);
 
-	if (unlikely(!in_interrupt() && local_softirq_pending()))
+	if (unlikely(!in_interrupt() && local_softirq_pending())) {
+		/*
+		 * Run softirq if any pending. And do it in its own stack
+		 * as we may be calling this deep in a task call stack already.
+		 */
 		do_softirq();
+	}
 
-	dec_preempt_count();
+	preempt_count_dec();
 #ifdef CONFIG_TRACE_IRQFLAGS
 	local_irq_enable();
 #endif
 	preempt_check_resched();
 }
-
-void local_bh_enable(void)
-{
-	_local_bh_enable_ip((unsigned long)__builtin_return_address(0));
-}
-EXPORT_SYMBOL(local_bh_enable);
-
-void local_bh_enable_ip(unsigned long ip)
-{
-	_local_bh_enable_ip(ip);
-}
-EXPORT_SYMBOL(local_bh_enable_ip);
+EXPORT_SYMBOL(__local_bh_enable_ip);
 
 /*
  * We restart softirq processing for at most MAX_SOFTIRQ_RESTART times,
@@ -208,14 +190,48 @@ EXPORT_SYMBOL(local_bh_enable_ip);
 #define MAX_SOFTIRQ_TIME  msecs_to_jiffies(2)
 #define MAX_SOFTIRQ_RESTART 10
 
-asmlinkage void __do_softirq(void)
+#ifdef CONFIG_TRACE_IRQFLAGS
+/*
+ * When we run softirqs from irq_exit() and thus on the hardirq stack we need
+ * to keep the lockdep irq context tracking as tight as possible in order to
+ * not miss-qualify lock contexts and miss possible deadlocks.
+ */
+
+static inline bool lockdep_softirq_start(void)
 {
-	struct softirq_action *h;
-	__u32 pending;
+	bool in_hardirq = false;
+
+	if (trace_hardirq_context(current)) {
+		in_hardirq = true;
+		trace_hardirq_exit();
+	}
+
+	lockdep_softirq_enter();
+
+	return in_hardirq;
+}
+
+static inline void lockdep_softirq_end(bool in_hardirq)
+{
+	lockdep_softirq_exit();
+
+	if (in_hardirq)
+		trace_hardirq_enter();
+}
+#else
+static inline bool lockdep_softirq_start(void) { return false; }
+static inline void lockdep_softirq_end(bool in_hardirq) { }
+#endif
+
+asmlinkage __visible void __do_softirq(void)
+{
 	unsigned long end = jiffies + MAX_SOFTIRQ_TIME;
-	int cpu;
 	unsigned long old_flags = current->flags;
 	int max_restart = MAX_SOFTIRQ_RESTART;
+	struct softirq_action *h;
+	bool in_hardirq;
+	__u32 pending;
+	int softirq_bit;
 
 	/*
 	 * Mask out PF_MEMALLOC s current task context is borrowed for the
@@ -227,11 +243,9 @@ asmlinkage void __do_softirq(void)
 	pending = local_softirq_pending();
 	account_irq_enter_time(current);
 
-	__local_bh_disable((unsigned long)__builtin_return_address(0),
-				SOFTIRQ_OFFSET);
-	lockdep_softirq_enter();
+	__local_bh_disable_ip(_RET_IP_, SOFTIRQ_OFFSET);
+	in_hardirq = lockdep_softirq_start();
 
-	cpu = smp_processor_id();
 restart:
 	/* Reset the pending bitmask before enabling irqs */
 	set_softirq_pending(0);
@@ -240,31 +254,31 @@ restart:
 
 	h = softirq_vec;
 
-	do {
-		if (pending & 1) {
-			unsigned int vec_nr = h - softirq_vec;
-			int prev_count = preempt_count();
+	while ((softirq_bit = ffs(pending))) {
+		unsigned int vec_nr;
+		int prev_count;
 
-			kstat_incr_softirqs_this_cpu(vec_nr);
+		h += softirq_bit - 1;
 
-			trace_softirq_entry(vec_nr);
-			h->action(h);
-			trace_softirq_exit(vec_nr);
-			if (unlikely(prev_count != preempt_count())) {
-				printk(KERN_ERR "huh, entered softirq %u %s %p"
-				       "with preempt_count %08x,"
-				       " exited with %08x?\n", vec_nr,
-				       softirq_to_name[vec_nr], h->action,
-				       prev_count, preempt_count());
-				preempt_count() = prev_count;
-			}
+		vec_nr = h - softirq_vec;
+		prev_count = preempt_count();
 
-			rcu_bh_qs(cpu);
+		kstat_incr_softirqs_this_cpu(vec_nr);
+
+		trace_softirq_entry(vec_nr);
+		h->action(h);
+		trace_softirq_exit(vec_nr);
+		if (unlikely(prev_count != preempt_count())) {
+			pr_err("huh, entered softirq %u %s %p with preempt_count %08x, exited with %08x?\n",
+			       vec_nr, softirq_to_name[vec_nr], h->action,
+			       prev_count, preempt_count());
+			preempt_count_set(prev_count);
 		}
 		h++;
-		pending >>= 1;
-	} while (pending);
+		pending >>= softirq_bit;
+	}
 
+	rcu_bh_qs();
 	local_irq_disable();
 
 	pending = local_softirq_pending();
@@ -276,16 +290,14 @@ restart:
 		wakeup_softirqd();
 	}
 
-	lockdep_softirq_exit();
-
+	lockdep_softirq_end(in_hardirq);
 	account_irq_exit_time(current);
 	__local_bh_enable(SOFTIRQ_OFFSET);
+	WARN_ON_ONCE(in_interrupt());
 	tsk_restore_flags(current, old_flags, PF_MEMALLOC);
 }
 
-#ifndef __ARCH_HAS_DO_SOFTIRQ
-
-asmlinkage void do_softirq(void)
+asmlinkage __visible void do_softirq(void)
 {
 	__u32 pending;
 	unsigned long flags;
@@ -298,12 +310,10 @@ asmlinkage void do_softirq(void)
 	pending = local_softirq_pending();
 
 	if (pending)
-		__do_softirq();
+		do_softirq_own_stack();
 
 	local_irq_restore(flags);
 }
-
-#endif
 
 /*
  * Enter an interrupt context.
@@ -317,7 +327,7 @@ void irq_enter(void)
 		 * here, as softirq will be serviced on return from interrupt.
 		 */
 		local_bh_disable();
-		tick_check_idle();
+		tick_irq_enter();
 		_local_bh_enable();
 	}
 
@@ -327,15 +337,21 @@ void irq_enter(void)
 static inline void invoke_softirq(void)
 {
 	if (!force_irqthreads) {
+#ifdef CONFIG_HAVE_IRQ_EXIT_ON_IRQ_STACK
 		/*
 		 * We can safely execute softirq on the current stack if
 		 * it is the irq stack, because it should be near empty
-		 * at this stage. But we have no way to know if the arch
-		 * calls irq_exit() on the irq stack. So call softirq
-		 * in its own stack to prevent from any overrun on top
-		 * of a potentially deep task stack.
+		 * at this stage.
 		 */
-		do_softirq();
+		__do_softirq();
+#else
+		/*
+		 * Otherwise, irq_exit() is called on the task stack that can
+		 * be potentially deep already. So call softirq in its own stack
+		 * to prevent from any overrun.
+		 */
+		do_softirq_own_stack();
+#endif
 	} else {
 		wakeup_softirqd();
 	}
@@ -366,13 +382,13 @@ void irq_exit(void)
 #endif
 
 	account_irq_exit_time(current);
-	trace_hardirq_exit();
-	sub_preempt_count(HARDIRQ_OFFSET);
+	preempt_count_sub(HARDIRQ_OFFSET);
 	if (!in_interrupt() && local_softirq_pending())
 		invoke_softirq();
 
 	tick_irq_exit();
 	rcu_irq_exit();
+	trace_hardirq_exit(); /* must be last! */
 }
 
 /*
@@ -418,8 +434,7 @@ void open_softirq(int nr, void (*action)(struct softirq_action *))
 /*
  * Tasklets
  */
-struct tasklet_head
-{
+struct tasklet_head {
 	struct tasklet_struct *head;
 	struct tasklet_struct **tail;
 };
@@ -438,7 +453,6 @@ void __tasklet_schedule(struct tasklet_struct *t)
 	raise_softirq_irqoff(TASKLET_SOFTIRQ);
 	local_irq_restore(flags);
 }
-
 EXPORT_SYMBOL(__tasklet_schedule);
 
 void __tasklet_hi_schedule(struct tasklet_struct *t)
@@ -452,7 +466,6 @@ void __tasklet_hi_schedule(struct tasklet_struct *t)
 	raise_softirq_irqoff(HI_SOFTIRQ);
 	local_irq_restore(flags);
 }
-
 EXPORT_SYMBOL(__tasklet_hi_schedule);
 
 void __tasklet_hi_schedule_first(struct tasklet_struct *t)
@@ -463,7 +476,6 @@ void __tasklet_hi_schedule_first(struct tasklet_struct *t)
 	__this_cpu_write(tasklet_hi_vec.head, t);
 	__raise_softirq_irqoff(HI_SOFTIRQ);
 }
-
 EXPORT_SYMBOL(__tasklet_hi_schedule_first);
 
 static void tasklet_action(struct softirq_action *a)
@@ -473,7 +485,7 @@ static void tasklet_action(struct softirq_action *a)
 	local_irq_disable();
 	list = __this_cpu_read(tasklet_vec.head);
 	__this_cpu_write(tasklet_vec.head, NULL);
-	__this_cpu_write(tasklet_vec.tail, &__get_cpu_var(tasklet_vec).head);
+	__this_cpu_write(tasklet_vec.tail, this_cpu_ptr(&tasklet_vec.head));
 	local_irq_enable();
 
 	while (list) {
@@ -483,7 +495,8 @@ static void tasklet_action(struct softirq_action *a)
 
 		if (tasklet_trylock(t)) {
 			if (!atomic_read(&t->count)) {
-				if (!test_and_clear_bit(TASKLET_STATE_SCHED, &t->state))
+				if (!test_and_clear_bit(TASKLET_STATE_SCHED,
+							&t->state))
 					BUG();
 				t->func(t->data);
 				tasklet_unlock(t);
@@ -508,7 +521,7 @@ static void tasklet_hi_action(struct softirq_action *a)
 	local_irq_disable();
 	list = __this_cpu_read(tasklet_hi_vec.head);
 	__this_cpu_write(tasklet_hi_vec.head, NULL);
-	__this_cpu_write(tasklet_hi_vec.tail, &__get_cpu_var(tasklet_hi_vec).head);
+	__this_cpu_write(tasklet_hi_vec.tail, this_cpu_ptr(&tasklet_hi_vec.head));
 	local_irq_enable();
 
 	while (list) {
@@ -518,7 +531,8 @@ static void tasklet_hi_action(struct softirq_action *a)
 
 		if (tasklet_trylock(t)) {
 			if (!atomic_read(&t->count)) {
-				if (!test_and_clear_bit(TASKLET_STATE_SCHED, &t->state))
+				if (!test_and_clear_bit(TASKLET_STATE_SCHED,
+							&t->state))
 					BUG();
 				t->func(t->data);
 				tasklet_unlock(t);
@@ -536,7 +550,6 @@ static void tasklet_hi_action(struct softirq_action *a)
 	}
 }
 
-
 void tasklet_init(struct tasklet_struct *t,
 		  void (*func)(unsigned long), unsigned long data)
 {
@@ -546,13 +559,12 @@ void tasklet_init(struct tasklet_struct *t,
 	t->func = func;
 	t->data = data;
 }
-
 EXPORT_SYMBOL(tasklet_init);
 
 void tasklet_kill(struct tasklet_struct *t)
 {
 	if (in_interrupt())
-		printk("Attempt to kill tasklet from interrupt\n");
+		pr_notice("Attempt to kill tasklet from interrupt\n");
 
 	while (test_and_set_bit(TASKLET_STATE_SCHED, &t->state)) {
 		do {
@@ -562,7 +574,6 @@ void tasklet_kill(struct tasklet_struct *t)
 	tasklet_unlock_wait(t);
 	clear_bit(TASKLET_STATE_SCHED, &t->state);
 }
-
 EXPORT_SYMBOL(tasklet_kill);
 
 /*
@@ -640,6 +651,10 @@ static void run_ksoftirqd(unsigned int cpu)
 {
 	local_irq_disable();
 	if (local_softirq_pending()) {
+		/*
+		 * We can safely run softirq on inline stack, as we are not deep
+		 * in the task stack here.
+		 */
 		__do_softirq();
 		local_irq_enable();
 		cond_resched();
@@ -712,9 +727,8 @@ static void takeover_tasklets(unsigned int cpu)
 }
 #endif /* CONFIG_HOTPLUG_CPU */
 
-static int __cpuinit cpu_callback(struct notifier_block *nfb,
-				  unsigned long action,
-				  void *hcpu)
+static int cpu_callback(struct notifier_block *nfb, unsigned long action,
+			void *hcpu)
 {
 	switch (action) {
 #ifdef CONFIG_HOTPLUG_CPU
@@ -727,7 +741,7 @@ static int __cpuinit cpu_callback(struct notifier_block *nfb,
 	return NOTIFY_OK;
 }
 
-static struct notifier_block __cpuinitdata cpu_nfb = {
+static struct notifier_block cpu_nfb = {
 	.notifier_call = cpu_callback
 };
 
@@ -766,4 +780,9 @@ int __init __weak arch_probe_nr_irqs(void)
 int __init __weak arch_early_irq_init(void)
 {
 	return 0;
+}
+
+unsigned int __weak arch_dynirq_lower_bound(unsigned int from)
+{
+	return from;
 }

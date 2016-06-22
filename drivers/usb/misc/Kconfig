@@ -128,7 +128,6 @@ config USB_IDMOUSE
 
 config USB_FTDI_ELAN
 	tristate "Elan PCMCIA CardBus Adapter USB Client"
-	default M
 	help
 	  ELAN's Uxxx series of adapters are USB to PCMCIA CardBus adapters.
 	  Currently only the U132 adapter is available.
@@ -201,19 +200,17 @@ config USB_TEST
 	  including sample test device firmware and "how to use it".
 
 config USB_EHSET_TEST_FIXTURE
-	tristate "USB EHSET Test Fixture Driver"
-	depends on USB && USB_EHCI_EHSET
-	default n
-	help
-	  Say Y here if you want to use EHSET Test Fixture device for host
-	  compliance testing.
+        tristate "USB EHSET Test Fixture driver"
+        help
+	  Say Y here if you want to support the special test fixture device
+	  used for the USB-IF Embedded Host High-Speed Electrical Test procedure.
 
-	  This driver initiates test modes on the downstream port to which the
-	  test fixture is attached.
+	  When the test fixture is connected, it can enumerate as one of several
+	  VID/PID pairs. This driver then initiates a corresponding test mode on
+	  the downstream port to which the test fixture is attached.
 
-	  See <http://www.usb.org/developers/onthego/EHSET_v1.01.pdf>
-	  for more information.
-
+	  See <http://www.usb.org/developers/onthego/EHSET_v1.01.pdf> for more
+	  information.
 
 config USB_ISIGHTFW
 	tristate "iSight firmware loading support"
@@ -248,47 +245,15 @@ config USB_EZUSB_FX2
 config USB_HSIC_USB3503
        tristate "USB3503 HSIC to USB20 Driver"
        depends on I2C
+       select REGMAP_I2C
        help
          This option enables support for SMSC USB3503 HSIC to USB 2.0 Driver.
 
-config USB_QCOM_DIAG_BRIDGE
-	tristate "USB Qualcomm diagnostic bridge driver"
-	depends on USB
+config USB_LINK_LAYER_TEST
+	tristate "USB Link Layer Test driver"
 	help
-	  Say Y here if you have a Qualcomm modem device connected via USB that
-	  will be bridged in kernel space. This driver communicates with the
-	  diagnostic interface and allows for bridging with the diag forwarding
-	  driver.
+	  This driver is for generating specific traffic for Super Speed Link
+	  Layer Test Device. Say Y only when you want to conduct USB Super Speed
+	  Link Layer Test for host controllers.
 
-	  To compile this driver as a module, choose M here: the
-	  module will be called diag_bridge.  If unsure, choose N.
-
-config USB_QCOM_MDM_BRIDGE
-	tristate "USB Qualcomm modem bridge driver for DUN and RMNET"
-	depends on USB
-	help
-	  Say Y here if you have a Qualcomm modem device connected via USB that
-	  will be bridged in kernel space. This driver works as a bridge to pass
-	  control and data packets between the modem and peripheral usb gadget
-	  driver for dial up network and RMNET.
-	  To compile this driver as a module, choose M here: the module
-	  will be called mdm_bridge. If unsure, choose N.
-
-config USB_QCOM_KS_BRIDGE
-	tristate "USB Qualcomm kick start bridge"
-	depends on USB
-	help
-	  Say Y here if you have a Qualcomm modem device connected via USB that
-	  will be bridged in kernel space. This driver works as a bridge to pass
-	  boot images, ram-dumps and efs sync
-	  To compile this driver as a module, choose M here: the module
-	  will be called ks_bridge. If unsure, choose N.
-
-config USB_QCOM_IPC_BRIDGE
-	tristate "USB Qualcomm IPC bridge bridge"
-	depends on USB
-	help
-	  Say Y here if you have a Qualcomm modem device connected via USB that
-	  will be bridged in kernel space. This driver works as a transport
-	  layer for IPC router module that enables communication between
-	  APPS processor and MODEM processor.
+source "drivers/usb/misc/anx7418/Kconfig"

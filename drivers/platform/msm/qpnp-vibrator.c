@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -147,9 +147,9 @@ static int qpnp_vib_set(struct qpnp_vib *vib, int on)
 	u8 val;
 
 	if (on) {
-		if (vib->mode != QPNP_VIB_MANUAL)
+		if (vib->mode != QPNP_VIB_MANUAL) {
 			pwm_enable(vib->pwm_info.pwm_dev);
-		else {
+		} else {
 			val = vib->reg_en_ctl;
 			val |= QPNP_VIB_EN;
 			rc = qpnp_vib_write_u8(vib, &val,
@@ -159,9 +159,9 @@ static int qpnp_vib_set(struct qpnp_vib *vib, int on)
 			vib->reg_en_ctl = val;
 		}
 	} else {
-		if (vib->mode != QPNP_VIB_MANUAL)
+		if (vib->mode != QPNP_VIB_MANUAL) {
 			pwm_disable(vib->pwm_info.pwm_dev);
-		else {
+		} else {
 			val = vib->reg_en_ctl;
 			val &= ~QPNP_VIB_EN;
 			rc = qpnp_vib_write_u8(vib, &val,
@@ -183,9 +183,9 @@ static void qpnp_vib_enable(struct timed_output_dev *dev, int value)
 	mutex_lock(&vib->lock);
 	hrtimer_cancel(&vib->vib_timer);
 
-	if (value == 0)
+	if (value == 0) {
 		vib->state = 0;
-	else {
+	} else {
 		value = (value > vib->timeout ?
 				 vib->timeout : value);
 		vib->state = 1;
@@ -211,6 +211,7 @@ static int qpnp_vib_get_time(struct timed_output_dev *dev)
 
 	if (hrtimer_active(&vib->vib_timer)) {
 		ktime_t r = hrtimer_get_remaining(&vib->vib_timer);
+
 		return (int)ktime_to_us(r);
 	} else
 		return 0;
@@ -279,15 +280,15 @@ static int qpnp_vib_parse_dt(struct qpnp_vib *vib)
 	vib->mode = QPNP_VIB_MANUAL;
 	rc = of_property_read_string(spmi->dev.of_node, "qcom,mode", &mode);
 	if (!rc) {
-		if (strcmp(mode, "manual") == 0)
+		if (strcmp(mode, "manual") == 0) {
 			vib->mode = QPNP_VIB_MANUAL;
-		else if (strcmp(mode, "dtest1") == 0)
+		} else if (strcmp(mode, "dtest1") == 0) {
 			vib->mode = QPNP_VIB_DTEST1;
-		else if (strcmp(mode, "dtest2") == 0)
+		} else if (strcmp(mode, "dtest2") == 0) {
 			vib->mode = QPNP_VIB_DTEST2;
-		else if (strcmp(mode, "dtest3") == 0)
+		} else if (strcmp(mode, "dtest3") == 0) {
 			vib->mode = QPNP_VIB_DTEST3;
-		else {
+		} else {
 			dev_err(&spmi->dev, "Invalid mode\n");
 			return -EINVAL;
 		}

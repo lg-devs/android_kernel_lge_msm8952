@@ -32,6 +32,7 @@
 #include <linux/ipc_router_xprt.h>
 #include <linux/kref.h>
 #include <soc/qcom/subsystem_notif.h>
+#include <soc/qcom/subsystem_restart.h>
 
 #include <asm/byteorder.h>
 
@@ -48,6 +49,7 @@ enum {
 static int msm_ipc_router_debug_mask;
 module_param_named(debug_mask, msm_ipc_router_debug_mask,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+#define MODULE_NAME "ipc_router"
 
 #define IPC_RTR_INFO_PAGES 6
 
@@ -180,7 +182,7 @@ static DEFINE_MUTEX(log_ctx_list_lock_lha0);
 static LIST_HEAD(log_ctx_list);
 static DEFINE_MUTEX(ipc_router_init_lock);
 static bool is_ipc_router_inited;
-static int msm_ipc_router_init(void);
+static int ipc_router_core_init(void);
 #define IPC_ROUTER_INIT_TIMEOUT (10 * HZ)
 
 static uint32_t next_port_id;
@@ -192,6 +194,15 @@ static void *ipc_router_get_log_ctx(char *sub_name);
 static int process_resume_tx_msg(union rr_control_msg *msg,
 				 struct rr_packet *pkt);
 static void ipc_router_reset_conn(struct msm_ipc_router_remote_port *rport_ptr);
+
+struct pil_vote_info {
+	void *pil_handle;
+	struct work_struct load_work;
+	struct work_struct unload_work;
+};
+
+#define PIL_SUBSYSTEM_NAME_LEN 32
+static char default_peripheral[PIL_SUBSYSTEM_NAME_LEN];
 
 enum {
 	DOWN,
@@ -519,6 +530,7 @@ struct rr_packet *clone_pkt(struct rr_packet *pkt)
 		return NULL;
 	}
 	skb_queue_head_init(pkt_fragment_q);
+	kref_init(&cloned_pkt->ref);
 
 	skb_queue_walk(pkt->pkt_fragment_q, temp_skb) {
 		cloned_skb = skb_clone(temp_skb, GFP_KERNEL);
@@ -574,6 +586,7 @@ struct rr_packet *create_pkt(struct sk_buff_head *data)
 		}
 		skb_queue_head_init(pkt->pkt_fragment_q);
 	}
+	kref_init(&pkt->ref);
 	return pkt;
 }
 
@@ -676,7 +689,7 @@ static void *msm_ipc_router_skb_to_buf(struct sk_buff_head *skb_head,
 
 	temp = skb_peek(skb_head);
 	buf_len = len;
-	buf = kmalloc(buf_len, GFP_KERNEL);
+	buf = kmalloc(buf_len, GFP_NOFS);
 	if (!buf) {
 		IPC_RTR_ERR("%s: cannot allocate buf\n", __func__);
 		return NULL;
@@ -1091,8 +1104,9 @@ static int post_pkt_to_port(struct msm_ipc_port *port_ptr,
 	struct rr_packet *temp_pkt = pkt;
 	void (*notify)(unsigned event, void *oob_data,
 		       size_t oob_data_len, void *priv);
-	void (*data_ready)(struct sock *sk, int bytes) = NULL;
+	void (*data_ready)(struct sock *sk) = NULL;
 	struct sock *sk;
+	uint32_t pkt_type;
 
 	if (unlikely(!port_ptr || !pkt))
 		return -EINVAL;
@@ -1113,6 +1127,7 @@ static int post_pkt_to_port(struct msm_ipc_port *port_ptr,
 	list_add_tail(&temp_pkt->list, &port_ptr->port_rx_q);
 	wake_up(&port_ptr->port_rx_wait_q);
 	notify = port_ptr->notify;
+	pkt_type = temp_pkt->hdr.type;
 	sk = (struct sock *)port_ptr->endpoint;
 	if (sk) {
 		read_lock(&sk->sk_callback_lock);
@@ -1121,9 +1136,9 @@ static int post_pkt_to_port(struct msm_ipc_port *port_ptr,
 	}
 	mutex_unlock(&port_ptr->port_rx_q_lock_lhc3);
 	if (notify)
-		notify(pkt->hdr.type, NULL, 0, port_ptr->priv);
+		notify(pkt_type, NULL, 0, port_ptr->priv);
 	else if (sk && data_ready)
-		data_ready(sk, pkt->hdr.size);
+		data_ready(sk);
 
 	return 0;
 }
@@ -3339,7 +3354,7 @@ struct msm_ipc_port *msm_ipc_router_create_port(
 	struct msm_ipc_port *port_ptr;
 	int ret;
 
-	ret = msm_ipc_router_init();
+	ret = ipc_router_core_init();
 	if (ret < 0) {
 		IPC_RTR_ERR("%s: Error %d initializing IPC Router\n",
 			    __func__, ret);
@@ -3522,6 +3537,96 @@ int msm_ipc_router_close(void)
 	}
 	up_write(&xprt_info_list_lock_lha5);
 	return 0;
+}
+
+/**
+ * pil_vote_load_worker() - Process vote to load the modem
+ *
+ * @work: Work item to process
+ *
+ * This function is called to process votes to load the modem that have been
+ * queued by msm_ipc_load_default_node().
+ */
+static void pil_vote_load_worker(struct work_struct *work)
+{
+	struct pil_vote_info *vote_info;
+
+	vote_info = container_of(work, struct pil_vote_info, load_work);
+	if (strlen(default_peripheral)) {
+		vote_info->pil_handle = subsystem_get(default_peripheral);
+		if (IS_ERR(vote_info->pil_handle)) {
+			IPC_RTR_ERR("%s: Failed to load %s\n",
+				    __func__, default_peripheral);
+			vote_info->pil_handle = NULL;
+		}
+	} else {
+		vote_info->pil_handle = NULL;
+	}
+}
+
+/**
+ * pil_vote_unload_worker() - Process vote to unload the modem
+ *
+ * @work: Work item to process
+ *
+ * This function is called to process votes to unload the modem that have been
+ * queued by msm_ipc_unload_default_node().
+ */
+static void pil_vote_unload_worker(struct work_struct *work)
+{
+	struct pil_vote_info *vote_info;
+
+	vote_info = container_of(work, struct pil_vote_info, unload_work);
+
+	if (vote_info->pil_handle) {
+		subsystem_put(vote_info->pil_handle);
+		vote_info->pil_handle = NULL;
+	}
+	kfree(vote_info);
+}
+
+/**
+ * msm_ipc_load_default_node() - Queue a vote to load the modem.
+ *
+ * @return: PIL vote info structure on success, NULL on failure.
+ *
+ * This function places a work item that loads the modem on the
+ * single-threaded workqueue used for processing PIL votes to load
+ * or unload the modem.
+ */
+void *msm_ipc_load_default_node(void)
+{
+	struct pil_vote_info *vote_info;
+
+	vote_info = kmalloc(sizeof(*vote_info), GFP_KERNEL);
+	if (!vote_info)
+		return vote_info;
+
+	INIT_WORK(&vote_info->load_work, pil_vote_load_worker);
+	queue_work(msm_ipc_router_workqueue, &vote_info->load_work);
+
+	return vote_info;
+}
+
+/**
+ * msm_ipc_unload_default_node() - Queue a vote to unload the modem.
+ *
+ * @pil_vote: PIL vote info structure, containing the PIL handle
+ * and work structure.
+ *
+ * This function places a work item that unloads the modem on the
+ * single-threaded workqueue used for processing PIL votes to load
+ * or unload the modem.
+ */
+void msm_ipc_unload_default_node(void *pil_vote)
+{
+	struct pil_vote_info *vote_info;
+
+	if (pil_vote) {
+		vote_info = (struct pil_vote_info *)pil_vote;
+		INIT_WORK(&vote_info->unload_work, pil_vote_unload_worker);
+		queue_work(msm_ipc_router_workqueue, &vote_info->unload_work);
+	}
 }
 
 #if defined(CONFIG_DEBUG_FS)
@@ -3715,6 +3820,7 @@ static void debugfs_init(void) {}
  */
 static void *ipc_router_create_log_ctx(char *name)
 {
+#ifdef CONFIG_IPC_LOGGING
 	struct ipc_rtr_log_ctx *sub_log_ctx;
 
 	sub_log_ctx = kmalloc(sizeof(struct ipc_rtr_log_ctx),
@@ -3734,6 +3840,9 @@ static void *ipc_router_create_log_ctx(char *name)
 	INIT_LIST_HEAD(&sub_log_ctx->list);
 	list_add_tail(&sub_log_ctx->list, &log_ctx_list);
 	return sub_log_ctx->log_ctx;
+#else
+	return NULL;
+#endif
 }
 
 static void ipc_router_log_ctx_init(void)
@@ -3889,7 +3998,7 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 	struct rr_packet *pkt;
 	int ret;
 
-	ret = msm_ipc_router_init();
+	ret = ipc_router_core_init();
 	if (ret < 0) {
 		IPC_RTR_ERR("%s: Error %d initializing IPC Router\n",
 			    __func__, ret);
@@ -3945,9 +4054,75 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 	queue_work(xprt_info->workqueue, &xprt_info->read_data);
 }
 
-static int msm_ipc_router_init(void)
+/**
+ * parse_devicetree() - parse device tree binding
+ *
+ * @node: pointer to device tree node
+ *
+ * @return: 0 on success, -ENODEV on failure.
+ */
+static int parse_devicetree(struct device_node *node)
 {
-	int i, ret;
+	char *key;
+	const char *peripheral = NULL;
+
+	key = "qcom,default-peripheral";
+	peripheral = of_get_property(node, key, NULL);
+	if (peripheral)
+		strlcpy(default_peripheral, peripheral, PIL_SUBSYSTEM_NAME_LEN);
+
+	return 0;
+}
+
+/**
+ * ipc_router_probe() - Probe the IPC Router
+ *
+ * @pdev: Platform device corresponding to IPC Router.
+ *
+ * @return: 0 on success, standard Linux error codes on error.
+ *
+ * This function is called when the underlying device tree driver registers
+ * a platform device, mapped to IPC Router.
+ */
+static int ipc_router_probe(struct platform_device *pdev)
+{
+	int ret = 0;
+
+	if (pdev && pdev->dev.of_node) {
+		ret = parse_devicetree(pdev->dev.of_node);
+		if (ret)
+			IPC_RTR_ERR("%s: Failed to parse device tree\n",
+				    __func__);
+	}
+	return ret;
+}
+
+static struct of_device_id ipc_router_match_table[] = {
+	{ .compatible = "qcom,ipc_router" },
+	{},
+};
+
+static struct platform_driver ipc_router_driver = {
+	.probe = ipc_router_probe,
+	.driver = {
+		.name = MODULE_NAME,
+		.owner = THIS_MODULE,
+		.of_match_table = ipc_router_match_table,
+	 },
+};
+
+/**
+ * ipc_router_core_init() - Initialize all IPC Router core data structures
+ *
+ * Return: 0 on Success or Standard error code otherwise.
+ *
+ * This function only initializes all the core data structures to the IPC Router
+ * module. The remaining initialization is done inside msm_ipc_router_init().
+ */
+static int ipc_router_core_init(void)
+{
+	int i;
+	int ret;
 	struct msm_ipc_routing_table_entry *rt_entry;
 
 	mutex_lock(&ipc_router_init_lock);
@@ -3973,23 +4148,41 @@ static int msm_ipc_router_init(void)
 	rt_entry = create_routing_table_entry(IPC_ROUTER_NID_LOCAL, NULL);
 	kref_put(&rt_entry->ref, ipc_router_release_rtentry);
 
-	ret = msm_ipc_router_init_sockets();
-	if (ret < 0)
-		IPC_RTR_ERR("%s: Init sockets failed\n", __func__);
-
-	ret = msm_ipc_router_security_init();
-	if (ret < 0)
-		IPC_RTR_ERR("%s: Security Init failed\n", __func__);
-
 	msm_ipc_router_workqueue =
 		create_singlethread_workqueue("msm_ipc_router");
 	if (!msm_ipc_router_workqueue) {
 		mutex_unlock(&ipc_router_init_lock);
 		return -ENOMEM;
 	}
-	is_ipc_router_inited = true;
-	ipc_router_log_ctx_init();
+
+	ret = msm_ipc_router_security_init();
+	if (ret < 0)
+		IPC_RTR_ERR("%s: Security Init failed\n", __func__);
+	else
+		is_ipc_router_inited = true;
 	mutex_unlock(&ipc_router_init_lock);
+
+	return ret;
+}
+
+static int msm_ipc_router_init(void)
+{
+	int ret;
+
+	ret = ipc_router_core_init();
+	if (ret < 0)
+		return ret;
+
+	ret = platform_driver_register(&ipc_router_driver);
+	if (ret)
+		IPC_RTR_ERR(
+		"%s: ipc_router_driver register failed %d\n", __func__, ret);
+
+	ret = msm_ipc_router_init_sockets();
+	if (ret < 0)
+		IPC_RTR_ERR("%s: Init sockets failed\n", __func__);
+
+	ipc_router_log_ctx_init();
 	return ret;
 }
 

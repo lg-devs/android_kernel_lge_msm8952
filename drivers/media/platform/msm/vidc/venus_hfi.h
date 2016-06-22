@@ -17,9 +17,9 @@
 #include <linux/clk.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
+#include <linux/pm_qos.h>
 #include <linux/spinlock.h>
-#include <linux/msm_iommu_domains.h>
-#include <soc/qcom/ocmem.h>
+#include "vmem/vmem.h"
 #include "vidc_hfi_api.h"
 #include "vidc_hfi_helper.h"
 #include "vidc_hfi_api.h"
@@ -47,7 +47,7 @@
 #define VIDC_IFACEQ_DFLT_QHDR				0x01010000
 
 #define VIDC_MAX_NAME_LENGTH 64
-
+#define VIDC_MAX_PC_SKIP_COUNT 10
 struct hfi_queue_table_header {
 	u32 qtbl_version;
 	u32 qtbl_size;
@@ -102,6 +102,12 @@ struct hfi_mem_map {
 #define QUEUE_SIZE (VIDC_IFACEQ_TABLE_SIZE + \
 	(VIDC_IFACEQ_QUEUE_SIZE * VIDC_IFACEQ_NUMQ))
 
+#define ALIGNED_QDSS_SIZE ALIGN(QDSS_SIZE, SZ_4K)
+#define ALIGNED_SFR_SIZE ALIGN(SFR_SIZE, SZ_4K)
+#define ALIGNED_QUEUE_SIZE ALIGN(QUEUE_SIZE, SZ_4K)
+#define SHARED_QSIZE ALIGN(ALIGNED_SFR_SIZE + ALIGNED_QUEUE_SIZE + \
+			ALIGNED_QDSS_SIZE, SZ_1M)
+
 enum vidc_hw_reg {
 	VIDC_HWREG_CTRL_STATUS =  0x1,
 	VIDC_HWREG_QTBL_INFO =  0x2,
@@ -113,19 +119,6 @@ enum vidc_hw_reg {
 	VIDC_HWREG_VHI_SOFTINTSTATUS =  0x8,
 	VIDC_HWREG_VHI_SOFTINTCLR =  0x9,
 	VIDC_HWREG_HVI_SOFTINTEN =  0xA,
-};
-
-enum bus_index {
-	BUS_IDX_ENC_OCMEM,
-	BUS_IDX_DEC_OCMEM,
-	BUS_IDX_ENC_DDR,
-	BUS_IDX_DEC_DDR,
-	BUS_IDX_MAX
-};
-
-enum clock_state {
-	DISABLED_UNPREPARED,
-	ENABLED_PREPARED,
 };
 
 struct vidc_mem_addr {
@@ -140,8 +133,66 @@ struct vidc_iface_q_info {
 	struct vidc_mem_addr q_array;
 };
 
-/* Internal data used in vidc_hal not exposed to msm_vidc*/
+/*
+ * These are helper macros to iterate over various lists within
+ * venus_hfi_device->res.  The intention is to cut down on a lot of boiler-plate
+ * code
+ */
 
+/* Read as "for each 'thing' in a set of 'thingies'" */
+#define venus_hfi_for_each_thing(__device, __thing, __thingy) \
+	venus_hfi_for_each_thing_continue(__device, __thing, __thingy, 0)
+
+#define venus_hfi_for_each_thing_reverse(__device, __thing, __thingy) \
+	venus_hfi_for_each_thing_reverse_continue(__device, __thing, __thingy, \
+			(__device)->res->__thingy##_set.count - 1)
+
+/* TODO: the __from parameter technically not required since we can figure it
+ * out with some pointer magic (i.e. __thing - __thing##_tbl[0]).  If this macro
+ * sees extensive use, probably worth cleaning it up but for now omitting it
+ * since it introduces unneccessary complexity.
+ */
+#define venus_hfi_for_each_thing_continue(__device, __thing, __thingy, __from) \
+	for (__thing = &(__device)->res->\
+			__thingy##_set.__thingy##_tbl[__from]; \
+		__thing < &(__device)->res->__thingy##_set.__thingy##_tbl[0] + \
+			((__device)->res->__thingy##_set.count - __from); \
+		++__thing)
+
+#define venus_hfi_for_each_thing_reverse_continue(__device, __thing, __thingy, \
+		__from) \
+	for (__thing = &(__device)->res->\
+			__thingy##_set.__thingy##_tbl[__from]; \
+		__thing >= &(__device)->res->__thingy##_set.__thingy##_tbl[0]; \
+		--__thing)
+
+/* Regular set helpers */
+#define venus_hfi_for_each_regulator(__device, __rinfo) \
+	venus_hfi_for_each_thing(__device, __rinfo, regulator)
+
+#define venus_hfi_for_each_regulator_reverse(__device, __rinfo) \
+	venus_hfi_for_each_thing_reverse(__device, __rinfo, regulator)
+
+#define venus_hfi_for_each_regulator_reverse_continue(__device, __rinfo, \
+		__from) \
+	venus_hfi_for_each_thing_reverse_continue(__device, __rinfo, \
+			regulator, __from)
+
+/* Clock set helpers */
+#define venus_hfi_for_each_clock(__device, __cinfo) \
+	venus_hfi_for_each_thing(__device, __cinfo, clock)
+
+#define venus_hfi_for_each_clock_reverse(__device, __cinfo) \
+	venus_hfi_for_each_thing_reverse(__device, __cinfo, clock)
+
+/* Bus set helpers */
+#define venus_hfi_for_each_bus(__device, __binfo) \
+	venus_hfi_for_each_thing(__device, __binfo, bus)
+#define venus_hfi_for_each_bus_reverse(__device, __binfo) \
+	venus_hfi_for_each_thing_reverse(__device, __binfo, bus)
+
+
+/* Internal data used in vidc_hal not exposed to msm_vidc*/
 struct hal_data {
 	u32 irq;
 	phys_addr_t firmware_base;
@@ -149,20 +200,16 @@ struct hal_data {
 	u32 register_size;
 };
 
-struct venus_bus_info {
-	u32 ddr_handle[MSM_VIDC_MAX_DEVICES];
-	u32 ocmem_handle[MSM_VIDC_MAX_DEVICES];
-};
-
-struct on_chip_mem {
-	struct ocmem_buf *buf;
-	struct notifier_block vidc_ocmem_nb;
-	void *handle;
+struct imem {
+	enum imem_type type;
+	union {
+		phys_addr_t vmem;
+	};
 };
 
 struct venus_resources {
 	struct msm_vidc_fw fw;
-	struct on_chip_mem ocmem;
+	struct imem imem;
 };
 
 enum venus_hfi_state {
@@ -175,19 +222,14 @@ struct venus_hfi_device {
 	struct list_head sess_head;
 	u32 intr_status;
 	u32 device_id;
-	unsigned long clk_freq;
+	u32 clk_load;
+	u32 codecs_enabled;
 	u32 last_packet_type;
-	struct {
-		struct vidc_bus_vote_data *vote_data;
-		u32 vote_data_count;
-	} bus_load;
-	enum clock_state clk_state;
+	unsigned long clk_bitrate;
+	unsigned long scaled_rate;
+	struct msm_vidc_gov_data bus_vote;
 	bool power_enabled;
-	struct mutex read_lock;
-	struct mutex write_lock;
-	struct mutex resource_lock;
-	struct mutex session_lock;
-	struct mutex clock_lock;
+	struct mutex lock;
 	msm_vidc_callback callback;
 	struct vidc_mem_addr iface_q_table;
 	struct vidc_mem_addr qdss;
@@ -205,9 +247,13 @@ struct venus_hfi_device {
 	enum venus_hfi_state state;
 	struct hfi_packetization_ops *pkt_ops;
 	enum hfi_packetization_type packetization_type;
+	struct msm_vidc_cb_info *response_pkt;
+	struct pm_qos_request qos;
+	unsigned int skip_pc_count;
 };
 
 void venus_hfi_delete_device(void *device);
+
 int venus_hfi_initialize(struct hfi_device *hdev, u32 device_id,
 		struct msm_vidc_platform_resources *res,
 		hfi_cmd_response_callback callback);

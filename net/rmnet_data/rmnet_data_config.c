@@ -818,8 +818,7 @@ int rmnet_associate_network_device(struct net_device *dev)
 		return RMNET_CONFIG_INVALID_REQUEST;
 	}
 
-	config = (struct rmnet_phys_ep_conf_s *)
-		 kmalloc(sizeof(struct rmnet_phys_ep_conf_s), GFP_ATOMIC);
+	config = kmalloc(sizeof(*config), GFP_ATOMIC);
 
 	if (!config)
 		return RMNET_CONFIG_NOMEM;
@@ -1103,7 +1102,6 @@ static void _rmnet_free_vnd_later(struct work_struct *work)
 	int i;
 	struct rmnet_free_vnd_work *fwork;
 	fwork = container_of(work, struct rmnet_free_vnd_work, work);
-
 	for (i = 0; i < fwork->count; i++)
 		rmnet_free_vnd(fwork->vnd_id[i]);
 	kfree(fwork);
@@ -1133,8 +1131,7 @@ static void rmnet_force_unassociate_device(struct net_device *dev)
 	}
 
 	trace_rmnet_unregister_cb_clear_vnds(dev);
-	vnd_work = (struct rmnet_free_vnd_work *)
-		kmalloc(sizeof(struct rmnet_free_vnd_work), GFP_KERNEL);
+	vnd_work = kmalloc(sizeof(*vnd_work), GFP_KERNEL);
 	if (!vnd_work) {
 		LOGH("%s", "Out of Memory");
 		return;
@@ -1143,8 +1140,8 @@ static void rmnet_force_unassociate_device(struct net_device *dev)
 	vnd_work->count = 0;
 
 	/* Check the VNDs for offending mappings */
-	for (i = 0, j = 0; i < RMNET_DATA_MAX_VND &&
-				j < RMNET_DATA_MAX_VND; i++) {
+	for (i = 0, j = 0; i < RMNET_DATA_MAX_VND
+			   && j < RMNET_DATA_MAX_VND; i++) {
 		vndev = rmnet_vnd_get_by_id(i);
 		if (!vndev) {
 			LOGL("VND %d not in use; skipping", i);
@@ -1176,7 +1173,6 @@ static void rmnet_force_unassociate_device(struct net_device *dev)
 		kfree(vnd_work);
 	}
 
-
 	/* Clear the mappings on the phys ep */
 	trace_rmnet_unregister_cb_clear_lepcs(dev);
 	rmnet_unset_logical_endpoint_config(dev, RMNET_LOCAL_LOGICAL_ENDPOINT);
@@ -1197,7 +1193,7 @@ static void rmnet_force_unassociate_device(struct net_device *dev)
 int rmnet_config_notify_cb(struct notifier_block *nb,
 				  unsigned long event, void *data)
 {
-	struct net_device *dev = (struct net_device *)data;
+	struct net_device *dev = netdev_notifier_info_to_dev(data);
 
 	if (!dev)
 		BUG();
@@ -1208,10 +1204,8 @@ int rmnet_config_notify_cb(struct notifier_block *nb,
 	case NETDEV_UNREGISTER_FINAL:
 	case NETDEV_UNREGISTER:
 		trace_rmnet_unregister_cb_entry(dev);
-		if (_rmnet_is_physical_endpoint_associated(dev)) {
-			LOGH("Kernel is trying to unregister %s", dev->name);
-			rmnet_force_unassociate_device(dev);
-		}
+		LOGH("Kernel is trying to unregister %s", dev->name);
+		rmnet_force_unassociate_device(dev);
 		trace_rmnet_unregister_cb_exit(dev);
 		break;
 

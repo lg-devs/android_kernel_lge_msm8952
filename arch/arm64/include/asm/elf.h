@@ -23,6 +23,7 @@
  */
 #include <asm/ptrace.h>
 #include <asm/user.h>
+#include <asm/fpsimd.h>
 
 typedef unsigned long elf_greg_t;
 
@@ -125,8 +126,7 @@ typedef struct user_fpsimd_state elf_fpregset_t;
  * the loader.  We need to make sure that it is out of the way of the program
  * that it will "exec", and that there is sufficient room for the brk.
  */
-extern unsigned long randomize_et_dyn(unsigned long base);
-#define ELF_ET_DYN_BASE	(randomize_et_dyn(2 * TASK_SIZE_64 / 3))
+#define ELF_ET_DYN_BASE	(2 * TASK_SIZE_64 / 3)
 
 /*
  * When the program starts, a1 contains a pointer to a function to be
@@ -169,7 +169,7 @@ extern unsigned long arch_randomize_brk(struct mm_struct *mm);
 #define COMPAT_ELF_PLATFORM		("v8l")
 #endif
 
-#define COMPAT_ELF_ET_DYN_BASE		(randomize_et_dyn(2 * TASK_SIZE_32 / 3))
+#define COMPAT_ELF_ET_DYN_BASE		(2 * TASK_SIZE_32 / 3)
 
 /* AArch32 registers. */
 #define COMPAT_ELF_NGREG		18
@@ -182,7 +182,13 @@ typedef compat_elf_greg_t		compat_elf_gregset_t[COMPAT_ELF_NGREG];
 					 ((x)->e_flags & EF_ARM_EABI_MASK))
 
 #define compat_start_thread		compat_start_thread
-#define COMPAT_SET_PERSONALITY(ex)	set_thread_flag(TIF_32BIT);
+#define COMPAT_SET_PERSONALITY(ex)					\
+do {									\
+	if (current->mm)						\
+		fpsimd_enable_trap();					\
+	set_thread_flag(TIF_32BIT);					\
+} while (0)
+
 #define COMPAT_ARCH_DLINFO
 extern int aarch32_setup_vectors_page(struct linux_binprm *bprm,
 				      int uses_interp);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014 Qualcomm Atheros, Inc.
+ * Copyright (c) 2012-2015 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -24,6 +24,7 @@
 #include "wil6210.h"
 #include "wmi.h"
 #include "txrx.h"
+#include "pmc.h"
 
 /* Nasty hack. Better have per device instances */
 static u32 mem_addr;
@@ -61,7 +62,7 @@ static void wil_print_vring(struct seq_file *s, struct wil6210_priv *wil,
 	seq_printf(s, "  swhead = %d\n", vring->swhead);
 	seq_printf(s, "  hwtail = [0x%08x] -> ", vring->hwtail);
 	if (x) {
-		v = ioread32(x);
+		v = readl(x);
 		seq_printf(s, "0x%08x = %d\n", v, v);
 	} else {
 		seq_puts(s, "???\n");
@@ -121,12 +122,20 @@ static int wil_vring_debugfs_show(struct seq_file *s, void *data)
 
 			snprintf(name, sizeof(name), "tx_%2d", i);
 
-			seq_printf(s,
-				"\n%pM CID %d TID %d BACK([%d] %d TU A%s) [%3d|%3d] idle %s\n",
-				wil->sta[cid].addr, cid, tid,
-				txdata->agg_wsize, txdata->agg_timeout,
-				txdata->agg_amsdu ? "+" : "-",
-				used, avail, sidle);
+			if (cid < WIL6210_MAX_CID)
+				seq_printf(s,
+					   "\n%pM CID %d TID %d 1x%s BACK([%u] %u TU A%s) [%3d|%3d] idle %s\n",
+					   wil->sta[cid].addr, cid, tid,
+					   txdata->dot1x_open ? "+" : "-",
+					   txdata->agg_wsize,
+					   txdata->agg_timeout,
+					   txdata->agg_amsdu ? "+" : "-",
+					   used, avail, sidle);
+			else
+				seq_printf(s,
+					   "\nBroadcast 1x%s [%3d|%3d] idle %s\n",
+					   txdata->dot1x_open ? "+" : "-",
+					   used, avail, sidle);
 
 			wil_print_vring(s, wil, name, vring, '_', 'H');
 		}
@@ -259,7 +268,7 @@ static const struct file_operations fops_mbox = {
 
 static int wil_debugfs_iomem_x32_set(void *data, u64 val)
 {
-	iowrite32(val, (void __iomem *)data);
+	writel(val, (void __iomem *)data);
 	wmb(); /* make sure write propagated to HW */
 
 	return 0;
@@ -267,7 +276,7 @@ static int wil_debugfs_iomem_x32_set(void *data, u64 val)
 
 static int wil_debugfs_iomem_x32_get(void *data, u64 *val)
 {
-	*val = ioread32((void __iomem *)data);
+	*val = readl((void __iomem *)data);
 
 	return 0;
 }
@@ -297,7 +306,7 @@ static int wil_debugfs_ulong_get(void *data, u64 *val)
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(wil_fops_ulong, wil_debugfs_ulong_get,
-			wil_debugfs_ulong_set, "%llu\n");
+			wil_debugfs_ulong_set, "0x%llx\n");
 
 static struct dentry *wil_debugfs_create_ulong(const char *name, umode_t mode,
 					       struct dentry *parent,
@@ -468,7 +477,7 @@ static int wil_memread_debugfs_show(struct seq_file *s, void *data)
 	void __iomem *a = wmi_buffer(wil, cpu_to_le32(mem_addr));
 
 	if (a)
-		seq_printf(s, "[0x%08x] = 0x%08x\n", mem_addr, ioread32(a));
+		seq_printf(s, "[0x%08x] = 0x%08x\n", mem_addr, readl(a));
 	else
 		seq_printf(s, "[0x%08x] = INVALID\n", mem_addr);
 
@@ -626,7 +635,7 @@ static ssize_t wil_write_back(struct file *file, const char __user *buf,
 	struct wil6210_priv *wil = file->private_data;
 	int rc;
 	char *kbuf = kmalloc(len + 1, GFP_KERNEL);
-	char cmd[8];
+	char cmd[9];
 	int p1, p2, p3;
 
 	if (!kbuf)
@@ -696,6 +705,89 @@ static const struct file_operations fops_back = {
 	.open  = simple_open,
 };
 
+/* pmc control, write:
+ * - "alloc <num descriptors> <descriptor_size>" to allocate PMC
+ * - "free" to release memory allocated for PMC
+ */
+static ssize_t wil_write_pmccfg(struct file *file, const char __user *buf,
+				size_t len, loff_t *ppos)
+{
+	struct wil6210_priv *wil = file->private_data;
+	int rc;
+	char *kbuf = kmalloc(len + 1, GFP_KERNEL);
+	char cmd[9];
+	int num_descs, desc_size;
+
+	if (!kbuf)
+		return -ENOMEM;
+
+	rc = simple_write_to_buffer(kbuf, len, ppos, buf, len);
+	if (rc != len) {
+		kfree(kbuf);
+		return rc >= 0 ? -EIO : rc;
+	}
+
+	kbuf[len] = '\0';
+	rc = sscanf(kbuf, "%8s %d %d", cmd, &num_descs, &desc_size);
+	kfree(kbuf);
+
+	if (rc < 0)
+		return rc;
+
+	if (rc < 1) {
+		wil_err(wil, "pmccfg: no params given\n");
+		return -EINVAL;
+	}
+
+	if (0 == strcmp(cmd, "alloc")) {
+		if (rc != 3) {
+			wil_err(wil, "pmccfg: alloc requires 2 params\n");
+			return -EINVAL;
+		}
+		wil_pmc_alloc(wil, num_descs, desc_size);
+	} else if (0 == strcmp(cmd, "free")) {
+		if (rc != 1) {
+			wil_err(wil, "pmccfg: free does not have any params\n");
+			return -EINVAL;
+		}
+		wil_pmc_free(wil, true);
+	} else {
+		wil_err(wil, "pmccfg: Unrecognized command \"%s\"\n", cmd);
+		return -EINVAL;
+	}
+
+	return len;
+}
+
+static ssize_t wil_read_pmccfg(struct file *file, char __user *user_buf,
+			       size_t count, loff_t *ppos)
+{
+	struct wil6210_priv *wil = file->private_data;
+	char text[256];
+	char help[] = "pmc control, write:\n"
+	" - \"alloc <num descriptors> <descriptor_size>\" to allocate pmc\n"
+	" - \"free\" to free memory allocated for pmc\n";
+
+	sprintf(text, "Last command status: %d\n\n%s",
+		wil_pmc_last_cmd_status(wil),
+		help);
+
+	return simple_read_from_buffer(user_buf, count, ppos, text,
+				       strlen(text) + 1);
+}
+
+static const struct file_operations fops_pmccfg = {
+	.read = wil_read_pmccfg,
+	.write = wil_write_pmccfg,
+	.open  = simple_open,
+};
+
+static const struct file_operations fops_pmcdata = {
+	.open		= simple_open,
+	.read		= wil_pmc_read,
+	.llseek		= wil_pmc_llseek,
+};
+
 /*---tx_mgmt---*/
 /* Write mgmt frame to this file to send it */
 static ssize_t wil_write_file_txmgmt(struct file *file, const char __user *buf,
@@ -704,6 +796,7 @@ static ssize_t wil_write_file_txmgmt(struct file *file, const char __user *buf,
 	struct wil6210_priv *wil = file->private_data;
 	struct wiphy *wiphy = wil_to_wiphy(wil);
 	struct wireless_dev *wdev = wil_to_wdev(wil);
+	struct cfg80211_mgmt_tx_params params;
 	int rc;
 	void *frame = kmalloc(len, GFP_KERNEL);
 
@@ -715,8 +808,11 @@ static ssize_t wil_write_file_txmgmt(struct file *file, const char __user *buf,
 		return -EIO;
 	}
 
-	rc = wil_cfg80211_mgmt_tx(wiphy, wdev, wdev->preset_chandef.chan,
-				true, 0, frame, len, true, false, NULL);
+	params.buf = frame;
+	params.len = len;
+	params.chan = wdev->preset_chandef.chan;
+
+	rc = wil_cfg80211_mgmt_tx(wiphy, wdev, &params, NULL);
 
 	kfree(frame);
 	wil_info(wil, "%s() -> %d\n", __func__, rc);
@@ -1060,7 +1156,7 @@ static int wil_freq_debugfs_show(struct seq_file *s, void *data)
 {
 	struct wil6210_priv *wil = s->private;
 	struct wireless_dev *wdev = wil_to_wdev(wil);
-	u16 freq = wdev->channel ? wdev->channel->center_freq : 0;
+	u16 freq = wdev->chandef.chan ? wdev->chandef.chan->center_freq : 0;
 
 	seq_printf(s, "Freq = %d\n", freq);
 
@@ -1101,8 +1197,7 @@ static int wil_link_debugfs_show(struct seq_file *s, void *data)
 			status = "connected";
 			break;
 		}
-		seq_printf(s, "[%d] %pM %s%s\n", i, p->addr, status,
-			   (p->data_port_open ? " data_port_open" : ""));
+		seq_printf(s, "[%d] %pM %s\n", i, p->addr, status);
 
 		if (p->status == wil_sta_connected) {
 			rc = wil_cid_fill_sinfo(wil, i, &sinfo);
@@ -1249,6 +1344,7 @@ static void wil_print_rxtid(struct seq_file *s, struct wil_tid_ampdu_rx *r)
 {
 	int i;
 	u16 index = ((r->head_seq_num - r->ssn) & 0xfff) % r->buf_size;
+	unsigned long long drop_dup = r->drop_dup, drop_old = r->drop_old;
 
 	seq_printf(s, "([%2d] %3d TU) 0x%03x [", r->buf_size, r->timeout,
 		   r->head_seq_num);
@@ -1258,14 +1354,17 @@ static void wil_print_rxtid(struct seq_file *s, struct wil_tid_ampdu_rx *r)
 		else
 			seq_printf(s, "%c", r->reorder_buf[i] ? '*' : '_');
 	}
-	seq_printf(s, "] last drop 0x%03x\n", r->ssn_last_drop);
+	seq_printf(s,
+		   "] total %llu drop %llu (dup %llu + old %llu) last 0x%03x\n",
+		   r->total, drop_dup + drop_old, drop_dup, drop_old,
+		   r->ssn_last_drop);
 }
 
 static int wil_sta_debugfs_show(struct seq_file *s, void *data)
 __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 {
 	struct wil6210_priv *wil = s->private;
-	int i, tid;
+	int i, tid, mcs;
 
 	for (i = 0; i < ARRAY_SIZE(wil->sta); i++) {
 		struct wil_sta_info *p = &wil->sta[i];
@@ -1282,8 +1381,7 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 			status = "connected";
 			break;
 		}
-		seq_printf(s, "[%d] %pM %s%s\n", i, p->addr, status,
-			   (p->data_port_open ? " data_port_open" : ""));
+		seq_printf(s, "[%d] %pM %s\n", i, p->addr, status);
 
 		if (p->status == wil_sta_connected) {
 			spin_lock_bh(&p->tid_rx_lock);
@@ -1296,6 +1394,18 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 				}
 			}
 			spin_unlock_bh(&p->tid_rx_lock);
+			seq_printf(s,
+				   "Rx invalid frame: non-data %lu, short %lu, large %lu\n",
+				   p->stats.rx_non_data_frame,
+				   p->stats.rx_short_frame,
+				   p->stats.rx_large_frame);
+
+			seq_puts(s, "Rx/MCS:");
+			for (mcs = 0; mcs < ARRAY_SIZE(p->stats.rx_per_mcs);
+			     mcs++)
+				seq_printf(s, " %lld",
+					   p->stats.rx_per_mcs[mcs]);
+			seq_puts(s, "\n");
 		}
 	}
 
@@ -1353,6 +1463,8 @@ static const struct {
 	{"tx_mgmt",		  S_IWUSR,	&fops_txmgmt},
 	{"wmi_send",		  S_IWUSR,	&fops_wmi},
 	{"back",	S_IRUGO | S_IWUSR,	&fops_back},
+	{"pmccfg",	S_IRUGO | S_IWUSR,	&fops_pmccfg},
+	{"pmcdata",	S_IRUGO,		&fops_pmcdata},
 	{"temp",	S_IRUGO,		&fops_temp},
 	{"freq",	S_IRUGO,		&fops_freq},
 	{"link",	S_IRUGO,		&fops_link},
@@ -1401,6 +1513,7 @@ static const struct dbg_off dbg_wil_off[] = {
 	WIL_FIELD(fw_version,	S_IRUGO,		doff_u32),
 	WIL_FIELD(hw_version,	S_IRUGO,		doff_x32),
 	WIL_FIELD(recovery_count, S_IRUGO,		doff_u32),
+	WIL_FIELD(ap_isolate,	S_IRUGO,		doff_u32),
 	{},
 };
 
@@ -1429,6 +1542,8 @@ int wil6210_debugfs_init(struct wil6210_priv *wil)
 	if (IS_ERR_OR_NULL(dbg))
 		return -ENODEV;
 
+	wil_pmc_init(wil);
+
 	wil6210_debugfs_init_files(wil, dbg);
 	wil6210_debugfs_init_isr(wil, dbg);
 	wil6210_debugfs_init_blobs(wil, dbg);
@@ -1448,4 +1563,9 @@ void wil6210_debugfs_remove(struct wil6210_priv *wil)
 {
 	debugfs_remove_recursive(wil->debug);
 	wil->debug = NULL;
+
+	/* free pmc memory without sending command to fw, as it will
+	 * be reset on the way down anyway
+	 */
+	wil_pmc_free(wil, false);
 }

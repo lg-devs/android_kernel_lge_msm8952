@@ -100,18 +100,6 @@ void blk_queue_lld_busy(struct request_queue *q, lld_busy_fn *fn)
 EXPORT_SYMBOL_GPL(blk_queue_lld_busy);
 
 /**
- * blk_urgent_request() - Set an urgent_request handler function for queue
- * @q:		queue
- * @fn:		handler for urgent requests
- *
- */
-void blk_urgent_request(struct request_queue *q, request_fn_proc *fn)
-{
-	q->urgent_request_fn = fn;
-}
-EXPORT_SYMBOL(blk_urgent_request);
-
-/**
  * blk_set_default_limits - reset limits to default values
  * @lim:  the queue_limits structure to reset
  *
@@ -125,6 +113,7 @@ void blk_set_default_limits(struct queue_limits *lim)
 	lim->seg_boundary_mask = BLK_SEG_BOUNDARY_MASK;
 	lim->max_segment_size = BLK_MAX_SEGMENT_SIZE;
 	lim->max_sectors = lim->max_hw_sectors = BLK_SAFE_MAX_SECTORS;
+	lim->chunk_sectors = 0;
 	lim->max_write_same_sectors = 0;
 	lim->max_discard_sectors = 0;
 	lim->discard_granularity = 0;
@@ -208,17 +197,17 @@ EXPORT_SYMBOL(blk_queue_make_request);
 /**
  * blk_queue_bounce_limit - set bounce buffer limit for queue
  * @q: the request queue for the device
- * @dma_mask: the maximum address the device can handle
+ * @max_addr: the maximum address the device can handle
  *
  * Description:
  *    Different hardware can have different requirements as to what pages
  *    it can do I/O directly to. A low level driver can call
  *    blk_queue_bounce_limit to have lower memory pages allocated as bounce
- *    buffers for doing I/O to pages residing above @dma_mask.
+ *    buffers for doing I/O to pages residing above @max_addr.
  **/
-void blk_queue_bounce_limit(struct request_queue *q, u64 dma_mask)
+void blk_queue_bounce_limit(struct request_queue *q, u64 max_addr)
 {
-	unsigned long b_pfn = dma_mask >> PAGE_SHIFT;
+	unsigned long b_pfn = max_addr >> PAGE_SHIFT;
 	int dma = 0;
 
 	q->bounce_gfp = GFP_NOIO;
@@ -287,6 +276,26 @@ void blk_queue_max_hw_sectors(struct request_queue *q, unsigned int max_hw_secto
 	blk_limits_max_hw_sectors(&q->limits, max_hw_sectors);
 }
 EXPORT_SYMBOL(blk_queue_max_hw_sectors);
+
+/**
+ * blk_queue_chunk_sectors - set size of the chunk for this queue
+ * @q:  the request queue for the device
+ * @chunk_sectors:  chunk sectors in the usual 512b unit
+ *
+ * Description:
+ *    If a driver doesn't want IOs to cross a given chunk size, it can set
+ *    this limit and prevent merging across chunks. Note that the chunk size
+ *    must currently be a power-of-2 in sectors. Also note that the block
+ *    layer must accept a page worth of data at any offset. So if the
+ *    crossing of chunks is a hard limitation in the driver, it must still be
+ *    prepared to split single page bios.
+ **/
+void blk_queue_chunk_sectors(struct request_queue *q, unsigned int chunk_sectors)
+{
+	BUG_ON(!is_power_of_2(chunk_sectors));
+	q->limits.chunk_sectors = chunk_sectors;
+}
+EXPORT_SYMBOL(blk_queue_chunk_sectors);
 
 /**
  * blk_queue_max_discard_sectors - set max sectors for a single discard
@@ -604,6 +613,10 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 		ret = -1;
 	}
 
+	t->raid_partial_stripes_expensive =
+		max(t->raid_partial_stripes_expensive,
+		    b->raid_partial_stripes_expensive);
+
 	/* Find lowest common alignment_offset */
 	t->alignment_offset = lcm(t->alignment_offset, alignment)
 		% max(t->physical_block_size, t->io_min);
@@ -818,20 +831,24 @@ EXPORT_SYMBOL(blk_queue_update_dma_alignment);
 /**
  * blk_queue_flush - configure queue's cache flush capability
  * @q:		the request queue for the device
- * @flush:	0, REQ_FLUSH or REQ_FLUSH | REQ_FUA
+ * @flush:	0, REQ_FLUSH or REQ_FLUSH | REQ_FUA | REQ_BARRIER
  *
  * Tell block layer cache flush capability of @q.  If it supports
  * flushing, REQ_FLUSH should be set.  If it supports bypassing
- * write cache for individual writes, REQ_FUA should be set.
+ * write cache for individual writes, REQ_FUA should be set. If cache
+ * barrier is supported set REQ_BARRIER.
  */
 void blk_queue_flush(struct request_queue *q, unsigned int flush)
 {
-	WARN_ON_ONCE(flush & ~(REQ_FLUSH | REQ_FUA));
+	WARN_ON_ONCE(flush & ~(REQ_FLUSH | REQ_FUA | REQ_BARRIER));
 
-	if (WARN_ON_ONCE(!(flush & REQ_FLUSH) && (flush & REQ_FUA)))
+	if (WARN_ON_ONCE(!(flush & REQ_FLUSH) && ((flush & REQ_FUA) ||
+			(flush & REQ_BARRIER)))) {
 		flush &= ~REQ_FUA;
+		flush &= ~REQ_BARRIER;
+	}
 
-	q->flush_flags = flush & (REQ_FLUSH | REQ_FUA);
+	q->flush_flags = flush & (REQ_FLUSH | REQ_FUA | REQ_BARRIER);
 }
 EXPORT_SYMBOL_GPL(blk_queue_flush);
 

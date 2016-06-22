@@ -43,17 +43,14 @@ TRACE_EVENT(irq_handler_entry,
 	TP_STRUCT__entry(
 		__field(	int,	irq		)
 		__string(	name,	action->name	)
-		__field(void*,	handler)
 	),
 
 	TP_fast_assign(
 		__entry->irq = irq;
 		__assign_str(name, action->name);
-		__entry->handler = action->handler;
 	),
 
-	TP_printk("irq=%d name=%s handler=%pf",
-		 __entry->irq, __get_str(name), __entry->handler)
+	TP_printk("irq=%d name=%s", __entry->irq, __get_str(name))
 );
 
 /**
@@ -110,7 +107,7 @@ DECLARE_EVENT_CLASS(softirq,
  * @vec_nr:  softirq vector number
  *
  * When used in combination with the softirq_exit tracepoint
- * we can determine the softirq handler runtine.
+ * we can determine the softirq handler routine.
  */
 DEFINE_EVENT(softirq, softirq_entry,
 
@@ -124,7 +121,7 @@ DEFINE_EVENT(softirq, softirq_entry,
  * @vec_nr:  softirq vector number
  *
  * When used in combination with the softirq_entry tracepoint
- * we can determine the softirq handler runtine.
+ * we can determine the softirq handler routine.
  */
 DEFINE_EVENT(softirq, softirq_exit,
 

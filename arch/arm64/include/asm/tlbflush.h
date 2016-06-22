@@ -78,87 +78,65 @@ static inline void flush_tlb_all(void)
 	isb();
 }
 
-static inline bool msm8994_needs_tlbi_wa(void)
-{
-#ifdef CONFIG_ARCH_MSM8994_V1_TLBI_WA
-	extern int msm8994_req_tlbi_wa;
-	return msm8994_req_tlbi_wa;
-#else
-	return false;
-#endif
-}
-
 static inline void flush_tlb_mm(struct mm_struct *mm)
 {
-	if (msm8994_needs_tlbi_wa()) {
-		dsb(ishst);
-		asm("tlbi	vmalle1is");
-		dsb(ish);
-		isb();
-	} else {
-		unsigned long asid = (unsigned long)ASID(mm) << 48;
+#ifdef CONFIG_ARCH_MSM8994_V1_TLBI_WA
+	dsb();
+	asm("tlbi	vmalle1is");
+	dsb();
+	isb();
+#else
+	unsigned long asid = (unsigned long)ASID(mm) << 48;
 
-		dsb(ishst);
-		asm("tlbi	aside1is, %0" : : "r" (asid));
-		dsb(ish);
-	}
+	dsb(ishst);
+	asm("tlbi	aside1is, %0" : : "r" (asid));
+	dsb(ish);
+#endif
 }
 
 static inline void flush_tlb_page(struct vm_area_struct *vma,
 				  unsigned long uaddr)
 {
-	if (msm8994_needs_tlbi_wa()) {
-		dsb(ishst);
-		asm("tlbi	vmalle1is");
-		dsb(ish);
-		isb();
-	} else {
-		unsigned long addr = uaddr >> 12 |
-			((unsigned long)ASID(vma->vm_mm) << 48);
+#ifdef CONFIG_ARCH_MSM8994_V1_TLBI_WA
+	dsb();
+	asm("tlbi	vmalle1is");
+	dsb();
+	isb();
+#else
+	unsigned long addr = uaddr >> 12 |
+		((unsigned long)ASID(vma->vm_mm) << 48);
 
-		dsb(ishst);
-		asm("tlbi	vae1is, %0" : : "r" (addr));
-		dsb(ish);
-	}
+	dsb(ishst);
+	asm("tlbi	vae1is, %0" : : "r" (addr));
+	dsb(ish);
+#endif
 }
 
 static inline void __flush_tlb_range(struct vm_area_struct *vma,
 				     unsigned long start, unsigned long end)
 {
-	if (msm8994_needs_tlbi_wa()) {
-		asm("tlbi	vmalle1is");
-		dsb(sy);
-		isb();
-	} else {
-		unsigned long asid = (unsigned long)ASID(vma->vm_mm) << 48;
-		unsigned long addr;
-		start = asid | (start >> 12);
-		end = asid | (end >> 12);
+	unsigned long asid = (unsigned long)ASID(vma->vm_mm) << 48;
+	unsigned long addr;
+	start = asid | (start >> 12);
+	end = asid | (end >> 12);
 
-		dsb(ishst);
-		for (addr = start; addr < end; addr += 1 << (PAGE_SHIFT - 12))
-			asm("tlbi vae1is, %0" : : "r"(addr));
-		dsb(ish);
-	}
+	dsb(ishst);
+	for (addr = start; addr < end; addr += 1 << (PAGE_SHIFT - 12))
+		asm("tlbi vae1is, %0" : : "r"(addr));
+	dsb(ish);
 }
 
 static inline void __flush_tlb_kernel_range(unsigned long start, unsigned long end)
 {
-	if (msm8994_needs_tlbi_wa()) {
-		asm("tlbi	vmalle1is");
-		dsb(sy);
-		isb();
-	} else {
-		unsigned long addr;
-		start >>= 12;
-		end >>= 12;
+	unsigned long addr;
+	start >>= 12;
+	end >>= 12;
 
-		dsb(ishst);
-		for (addr = start; addr < end; addr += 1 << (PAGE_SHIFT - 12))
-			asm("tlbi vaae1is, %0" : : "r"(addr));
-		dsb(ish);
-		isb();
-	}
+	dsb(ishst);
+	for (addr = start; addr < end; addr += 1 << (PAGE_SHIFT - 12))
+		asm("tlbi vaae1is, %0" : : "r"(addr));
+	dsb(ish);
+	isb();
 }
 
 /*
@@ -184,6 +162,19 @@ static inline void flush_tlb_kernel_range(unsigned long start, unsigned long end
 		flush_tlb_all();
 }
 
+/*
+ * Used to invalidate the TLB (walk caches) corresponding to intermediate page
+ * table levels (pgd/pud/pmd).
+ */
+static inline void __flush_tlb_pgtable(struct mm_struct *mm,
+				       unsigned long uaddr)
+{
+	unsigned long addr = uaddr >> 12 | ((unsigned long)ASID(mm) << 48);
+
+	dsb(ishst);
+	asm("tlbi	vae1is, %0" : : "r" (addr));
+	dsb(ish);
+}
 /*
  * On AArch64, the cache coherency is handled via the set_pte_at() function.
  */

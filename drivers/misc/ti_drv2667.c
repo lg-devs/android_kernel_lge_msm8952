@@ -462,10 +462,8 @@ static int drv2667_probe(struct i2c_client *client,
 	if (client->dev.of_node) {
 		pdata = devm_kzalloc(&client->dev,
 			sizeof(struct drv2667_pdata), GFP_KERNEL);
-		if (!pdata) {
-			dev_err(&client->dev, "unable to allocate pdata\n");
+		if (!pdata)
 			return -ENOMEM;
-		}
 		/* parse DT */
 		rc = drv2667_parse_dt(&client->dev, pdata);
 		if (rc) {
@@ -482,10 +480,8 @@ static int drv2667_probe(struct i2c_client *client,
 
 	data = devm_kzalloc(&client->dev, sizeof(struct drv2667_data),
 					GFP_KERNEL);
-	if (!data) {
-		dev_err(&client->dev, "unable to allocate memory\n");
+	if (!data)
 		return -ENOMEM;
-	}
 
 	i2c_set_clientdata(client, data);
 
@@ -661,7 +657,7 @@ MODULE_DEVICE_TABLE(i2c, drv2667_id_table);
 
 #ifdef CONFIG_OF
 static const struct of_device_id drv2667_of_id_table[] = {
-	{.compatible = "ti, drv2667"},
+	{.compatible = "ti,drv2667"},
 	{ },
 };
 #else

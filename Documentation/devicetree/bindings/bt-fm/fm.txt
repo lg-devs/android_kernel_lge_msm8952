@@ -1,4 +1,4 @@
-Qualcomm radio iris device
+Qti radio iris device
 
 -FM RX playback with no RDS
 
@@ -26,4 +26,3 @@ Example:
 	qcom,iris-fm {
 		compatible = "qcom,iris_fm";
 	};
-

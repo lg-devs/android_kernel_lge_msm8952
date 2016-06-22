@@ -25,13 +25,17 @@
 #include <linux/debugfs.h>
 #include <linux/spmi.h>
 #include <linux/of_irq.h>
+#ifdef CONFIG_WAKELOCK
 #include <linux/wakelock.h>
+#endif
 #include <linux/interrupt.h>
 #include <linux/completion.h>
 #include <linux/hwmon-sysfs.h>
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/platform_device.h>
+#ifdef CONFIG_WAKELOCK
 #include <linux/wakelock.h>
+#endif
 
 /* QPNP IADC register definition */
 #define QPNP_IADC_REVISION1				0x0
@@ -810,7 +814,7 @@ static int32_t qpnp_iadc_configure(struct qpnp_iadc_chip *iadc,
 	}
 
 	if (!iadc->iadc_poll_eoc)
-		INIT_COMPLETION(iadc->adc->adc_rslt_completion);
+		reinit_completion(&iadc->adc->adc_rslt_completion);
 
 	rc = qpnp_iadc_enable(iadc, true);
 	if (rc)

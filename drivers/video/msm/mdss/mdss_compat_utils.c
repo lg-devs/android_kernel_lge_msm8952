@@ -50,6 +50,13 @@
 #define MSMFB_BUFFER_SYNC32  _IOW(MSMFB_IOCTL_MAGIC, 162, struct mdp_buf_sync32)
 #define MSMFB_OVERLAY_PREPARE32		_IOWR(MSMFB_IOCTL_MAGIC, 169, \
 						struct mdp_overlay_list32)
+#define MSMFB_ATOMIC_COMMIT32	_IOWR(MDP_IOCTL_MAGIC, 128, compat_caddr_t)
+
+#define MSMFB_ASYNC_POSITION_UPDATE_32 _IOWR(MDP_IOCTL_MAGIC, 129, \
+		struct mdp_position_update32)
+
+static int __copy_layer_pp_info_params(struct mdp_input_layer *layer,
+				struct mdp_input_layer32 *layer32);
 
 static unsigned int __do_compat_ioctl_nr(unsigned int cmd32)
 {
@@ -95,6 +102,12 @@ static unsigned int __do_compat_ioctl_nr(unsigned int cmd32)
 	case MSMFB_OVERLAY_PREPARE32:
 		cmd = MSMFB_OVERLAY_PREPARE;
 		break;
+	case MSMFB_ATOMIC_COMMIT32:
+		cmd = MSMFB_ATOMIC_COMMIT;
+		break;
+	case MSMFB_ASYNC_POSITION_UPDATE_32:
+		cmd = MSMFB_ASYNC_POSITION_UPDATE;
+		break;
 	default:
 		cmd = cmd32;
 		break;
@@ -103,8 +116,362 @@ static unsigned int __do_compat_ioctl_nr(unsigned int cmd32)
 	return cmd;
 }
 
+static void  __copy_atomic_commit_struct(struct mdp_layer_commit  *commit,
+	struct mdp_layer_commit32 *commit32)
+{
+	commit->version = commit32->version;
+	commit->commit_v1.flags = commit32->commit_v1.flags;
+	commit->commit_v1.input_layer_cnt =
+		commit32->commit_v1.input_layer_cnt;
+	commit->commit_v1.left_roi = commit32->commit_v1.left_roi;
+	commit->commit_v1.right_roi = commit32->commit_v1.right_roi;
+	memcpy(&commit->commit_v1.reserved, &commit32->commit_v1.reserved,
+		sizeof(commit32->commit_v1.reserved));
+}
+
+static struct mdp_input_layer32 *__create_layer_list32(
+	struct mdp_layer_commit32 *commit32,
+	u32 layer_count)
+{
+	u32 buffer_size32;
+	struct mdp_input_layer32 *layer_list32;
+	int ret;
+
+	buffer_size32 = sizeof(struct mdp_input_layer32) * layer_count;
+
+	layer_list32 = kmalloc(buffer_size32, GFP_KERNEL);
+	if (!layer_list32) {
+		pr_err("unable to allocate memory for layers32\n");
+		layer_list32 = ERR_PTR(-ENOMEM);
+		goto end;
+	}
+
+	ret = copy_from_user(layer_list32,
+			compat_ptr(commit32->commit_v1.input_layers),
+			sizeof(struct mdp_input_layer32) * layer_count);
+	if (ret) {
+		pr_err("layer list32 copy from user failed, ptr %p\n",
+			compat_ptr(commit32->commit_v1.input_layers));
+		kfree(layer_list32);
+		ret = -EFAULT;
+		layer_list32 = ERR_PTR(ret);
+	}
+
+end:
+	return layer_list32;
+}
+
+static int __copy_scale_params(struct mdp_input_layer *layer,
+	struct mdp_input_layer32 *layer32)
+{
+	struct mdp_scale_data *scale;
+	int ret;
+
+	if (!(layer->flags & MDP_LAYER_ENABLE_PIXEL_EXT))
+		return 0;
+
+	scale = kmalloc(sizeof(struct mdp_scale_data), GFP_KERNEL);
+	if (!scale) {
+		pr_err("unable to allocate memory for scale param\n");
+		ret = -ENOMEM;
+		goto end;
+	}
+
+	/* scale structure size is same for compat and 64bit version */
+	ret = copy_from_user(scale, compat_ptr(layer32->scale),
+			sizeof(struct mdp_scale_data));
+	if (ret) {
+		kfree(scale);
+		pr_err("scale param copy from user failed, ptr %p\n",
+			compat_ptr(layer32->scale));
+		ret = -EFAULT;
+	} else {
+		layer->scale = scale;
+	}
+end:
+	return ret;
+}
+
+static struct mdp_input_layer *__create_layer_list(
+	struct mdp_layer_commit *commit,
+	struct mdp_input_layer32 *layer_list32,
+	u32 layer_count)
+{
+	int i, ret;
+	u32 buffer_size;
+	struct mdp_input_layer *layer, *layer_list;
+	struct mdp_input_layer32 *layer32;
+
+	buffer_size = sizeof(struct mdp_input_layer) * layer_count;
+
+	layer_list = kmalloc(buffer_size, GFP_KERNEL);
+	if (!layer_list) {
+		pr_err("unable to allocate memory for layers32\n");
+		layer_list = ERR_PTR(-ENOMEM);
+		goto end;
+	}
+
+	commit->commit_v1.input_layers = layer_list;
+
+	for (i = 0; i < layer_count; i++) {
+		layer = &layer_list[i];
+		layer32 = &layer_list32[i];
+
+		layer->flags = layer32->flags;
+		layer->pipe_ndx = layer32->pipe_ndx;
+		layer->horz_deci = layer32->horz_deci;
+		layer->vert_deci = layer32->vert_deci;
+		layer->z_order = layer32->z_order;
+		layer->transp_mask = layer32->transp_mask;
+		layer->bg_color = layer32->bg_color;
+		layer->blend_op = layer32->blend_op;
+		layer->src_rect = layer32->src_rect;
+		layer->dst_rect = layer32->dst_rect;
+		layer->buffer = layer32->buffer;
+		memcpy(&layer->reserved, &layer32->reserved,
+			sizeof(layer->reserved));
+
+		layer->scale = NULL;
+		ret = __copy_scale_params(layer, layer32);
+		if (ret)
+			break;
+
+		layer->pp_info = NULL;
+		ret = __copy_layer_pp_info_params(layer, layer32);
+		if (ret)
+			break;
+	}
+
+	if (ret) {
+		for (i--; i >= 0; i--) {
+			kfree(layer_list[i].scale);
+			mdss_mdp_free_layer_pp_info(&layer_list[i]);
+		}
+		kfree(layer_list);
+		layer_list = ERR_PTR(ret);
+	}
+
+end:
+	return layer_list;
+}
+
+static int __copy_to_user_atomic_commit(struct mdp_layer_commit  *commit,
+	struct mdp_layer_commit32 *commit32,
+	struct mdp_input_layer32 *layer_list32,
+	unsigned long argp, u32 layer_count)
+{
+	int i, ret;
+	struct mdp_input_layer *layer_list;
+
+	layer_list = commit->commit_v1.input_layers;
+
+	for (i = 0; i < layer_count; i++)
+		layer_list32[i].error_code = layer_list[i].error_code;
+
+	ret = copy_to_user(compat_ptr(commit32->commit_v1.input_layers),
+		layer_list32,
+		sizeof(struct mdp_input_layer32) * layer_count);
+	if (ret)
+		goto end;
+
+	ret = copy_to_user(compat_ptr(commit32->commit_v1.output_layer),
+		commit->commit_v1.output_layer,
+		sizeof(struct mdp_output_layer));
+	if (ret)
+		goto end;
+
+	commit32->commit_v1.release_fence =
+		commit->commit_v1.release_fence;
+	commit32->commit_v1.retire_fence =
+		commit->commit_v1.retire_fence;
+
+	ret = copy_to_user((void __user *)argp, commit32,
+		sizeof(struct mdp_layer_commit32));
+
+end:
+	return ret;
+}
+
+static int __compat_atomic_commit(struct fb_info *info, unsigned int cmd,
+			 unsigned long argp, struct file *file)
+{
+	int ret, i;
+	struct mdp_layer_commit  commit;
+	struct mdp_layer_commit32 commit32;
+	u32 layer_count;
+	struct mdp_input_layer *layer_list = NULL, *layer;
+	struct mdp_input_layer32 *layer_list32 = NULL;
+	struct mdp_output_layer *output_layer = NULL;
+
+	/* copy top level memory from 32 bit structure to kernel memory */
+	ret = copy_from_user(&commit32, (void __user *)argp,
+		sizeof(struct mdp_layer_commit32));
+	if (ret) {
+		pr_err("%s:copy_from_user failed, ptr %p\n", __func__,
+			(void __user *)argp);
+		ret = -EFAULT;
+		return ret;
+	}
+	__copy_atomic_commit_struct(&commit, &commit32);
+
+	if (commit32.commit_v1.output_layer) {
+		int buffer_size = sizeof(struct mdp_output_layer);
+		output_layer = kzalloc(buffer_size, GFP_KERNEL);
+		if (!output_layer) {
+			pr_err("fail to allocate output layer\n");
+			return -ENOMEM;
+		}
+		ret = copy_from_user(output_layer,
+				compat_ptr(commit32.commit_v1.output_layer),
+				buffer_size);
+		if (ret) {
+			pr_err("fail to copy output layer from user, ptr %p\n",
+				compat_ptr(commit32.commit_v1.output_layer));
+			ret = -EFAULT;
+			goto layer_list_err;
+		}
+
+		commit.commit_v1.output_layer = output_layer;
+	}
+
+	layer_count = commit32.commit_v1.input_layer_cnt;
+	if (layer_count > MAX_LAYER_COUNT) {
+		ret = -EINVAL;
+		goto layer_list_err;
+	} else if (layer_count) {
+		/*
+		 * allocate memory for layer list in 32bit domain and copy it
+		 * from user
+		 */
+		layer_list32 = __create_layer_list32(&commit32, layer_count);
+		if (IS_ERR_OR_NULL(layer_list32)) {
+			ret = PTR_ERR(layer_list32);
+			goto layer_list_err;
+		}
+
+		/*
+		 * allocate memory for layer list in kernel memory domain and
+		 * copy layer info from 32bit structures to kernel memory
+		 */
+		layer_list = __create_layer_list(&commit, layer_list32,
+			layer_count);
+		if (IS_ERR_OR_NULL(layer_list)) {
+			ret = PTR_ERR(layer_list);
+			goto layer_list_err;
+		}
+	}
+
+	ret = mdss_fb_atomic_commit(info, &commit, file);
+	if (ret)
+		pr_err("atomic commit failed ret:%d\n", ret);
+
+	if (layer_count)
+		__copy_to_user_atomic_commit(&commit, &commit32, layer_list32,
+			argp, layer_count);
+
+	for (i = 0; i < layer_count; i++) {
+		kfree(layer[i].scale);
+		mdss_mdp_free_layer_pp_info(&layer[i]);
+	}
+	kfree(layer_list);
+layer_list_err:
+	kfree(layer_list32);
+	kfree(output_layer);
+	return ret;
+}
+
+static int __copy_to_user_async_position_update(
+		struct mdp_position_update *update_pos,
+		struct mdp_position_update32 *update_pos32,
+		unsigned long argp, u32 layer_cnt)
+{
+	int ret;
+
+	ret = copy_to_user(update_pos32->input_layers,
+			update_pos->input_layers,
+			sizeof(struct mdp_async_layer) * layer_cnt);
+	if (ret)
+		goto end;
+
+	ret = copy_to_user((void __user *) argp, update_pos32,
+			sizeof(struct mdp_position_update32));
+
+end:
+	return ret;
+}
+
+static struct mdp_async_layer *__create_async_layer_list(
+	struct mdp_position_update32 *update_pos32, u32 layer_cnt)
+{
+	u32 buffer_size;
+	struct mdp_async_layer *layer_list;
+	int ret;
+
+	buffer_size = sizeof(struct mdp_async_layer) * layer_cnt;
+
+	layer_list = kmalloc(buffer_size, GFP_KERNEL);
+	if (!layer_list) {
+		layer_list = ERR_PTR(-ENOMEM);
+		goto end;
+	}
+
+	ret = copy_from_user(layer_list,
+			update_pos32->input_layers, buffer_size);
+	if (ret) {
+		pr_err("layer list32 copy from user failed\n");
+		kfree(layer_list);
+		layer_list = ERR_PTR(ret);
+	}
+
+end:
+	return layer_list;
+}
+
+static int __compat_async_position_update(struct fb_info *info,
+		unsigned int cmd, unsigned long argp)
+{
+	struct mdp_position_update update_pos;
+	struct mdp_position_update32 update_pos32;
+	struct mdp_async_layer *layer_list = NULL;
+	u32 layer_cnt, ret;
+
+	/* copy top level memory from 32 bit structure to kernel memory */
+	ret = copy_from_user(&update_pos32, (void __user *)argp,
+		sizeof(struct mdp_position_update32));
+	if (ret) {
+		pr_err("%s:copy_from_user failed\n", __func__);
+		return ret;
+	}
+
+	update_pos.input_layer_cnt = update_pos32.input_layer_cnt;
+	layer_cnt = update_pos32.input_layer_cnt;
+	if (!layer_cnt) {
+		pr_err("no async layer to update\n");
+		return -EINVAL;
+	}
+
+	layer_list = __create_async_layer_list(&update_pos32,
+		layer_cnt);
+	if (IS_ERR_OR_NULL(layer_list))
+		return PTR_ERR(layer_list);
+
+	update_pos.input_layers = layer_list;
+
+	ret = mdss_fb_async_position_update(info, &update_pos);
+	if (ret)
+		pr_err("async position update failed ret:%d\n", ret);
+
+	ret = __copy_to_user_async_position_update(&update_pos, &update_pos32,
+			argp, layer_cnt);
+	if (ret)
+		pr_err("copy to user of async update position failed\n");
+
+	kfree(layer_list);
+	return ret;
+}
+
 static int mdss_fb_compat_buf_sync(struct fb_info *info, unsigned int cmd,
-			 unsigned long arg)
+			 unsigned long arg, struct file *file)
 {
 	struct mdp_buf_sync32 __user *buf_sync32;
 	struct mdp_buf_sync __user *buf_sync;
@@ -131,7 +498,7 @@ static int mdss_fb_compat_buf_sync(struct fb_info *info, unsigned int cmd,
 	    put_user(compat_ptr(data), &buf_sync->retire_fen_fd))
 		return -EFAULT;
 
-	ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) buf_sync);
+	ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) buf_sync, file);
 	if (ret) {
 		pr_err("%s: failed %d\n", __func__, ret);
 		return ret;
@@ -216,7 +583,7 @@ static int __from_user_fb_image(struct fb_image __user *image,
 }
 
 static int mdss_fb_compat_cursor(struct fb_info *info, unsigned int cmd,
-			unsigned long arg)
+			unsigned long arg, struct file *file)
 {
 	struct fb_cursor32 __user *cursor32;
 	struct fb_cursor __user *cursor;
@@ -244,11 +611,12 @@ static int mdss_fb_compat_cursor(struct fb_info *info, unsigned int cmd,
 	if (__from_user_fb_image(&cursor->image, &cursor32->image))
 		return -EFAULT;
 
-	ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) cursor);
+	ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) cursor, file);
 	return ret;
 }
 
-static int mdss_fb_compat_set_lut(struct fb_info *info, unsigned long arg)
+static int mdss_fb_compat_set_lut(struct fb_info *info, unsigned long arg,
+	struct file *file)
 {
 	struct fb_cmap_user __user *cmap;
 	struct fb_cmap32 __user *cmap32;
@@ -271,7 +639,7 @@ static int mdss_fb_compat_set_lut(struct fb_info *info, unsigned long arg)
 	    put_user(compat_ptr(data), &cmap->transp))
 		return -EFAULT;
 
-	ret = mdss_fb_do_ioctl(info, MSMFB_SET_LUT, (unsigned long) cmap);
+	ret = mdss_fb_do_ioctl(info, MSMFB_SET_LUT, (unsigned long) cmap, file);
 	if (!ret)
 		pr_debug("%s: compat ioctl successful\n", __func__);
 
@@ -464,54 +832,197 @@ static int __to_user_pcc_coeff(
 	return 0;
 }
 
+static int __from_user_pcc_coeff_v17(
+			struct mdp_pcc_cfg_data32 __user *pcc_cfg32,
+			struct mdp_pcc_cfg_data __user *pcc_cfg)
+{
+	struct mdp_pcc_data_v1_7_32 pcc_cfg_payload32;
+	struct mdp_pcc_data_v1_7 pcc_cfg_payload;
+
+	if (copy_from_user(&pcc_cfg_payload32,
+			   compat_ptr(pcc_cfg32->cfg_payload),
+			   sizeof(struct mdp_pcc_data_v1_7_32))) {
+		pr_err("failed to copy payload for pcc from user\n");
+		return -EFAULT;
+	}
+
+	pcc_cfg_payload.r.b = pcc_cfg_payload32.r.b;
+	pcc_cfg_payload.r.g = pcc_cfg_payload32.r.g;
+	pcc_cfg_payload.r.c = pcc_cfg_payload32.r.c;
+	pcc_cfg_payload.r.r = pcc_cfg_payload32.r.r;
+	pcc_cfg_payload.r.gb = pcc_cfg_payload32.r.gb;
+	pcc_cfg_payload.r.rb = pcc_cfg_payload32.r.rb;
+	pcc_cfg_payload.r.rg = pcc_cfg_payload32.r.rg;
+	pcc_cfg_payload.r.rgb = pcc_cfg_payload32.r.rgb;
+
+	pcc_cfg_payload.g.b = pcc_cfg_payload32.g.b;
+	pcc_cfg_payload.g.g = pcc_cfg_payload32.g.g;
+	pcc_cfg_payload.g.c = pcc_cfg_payload32.g.c;
+	pcc_cfg_payload.g.r = pcc_cfg_payload32.g.r;
+	pcc_cfg_payload.g.gb = pcc_cfg_payload32.g.gb;
+	pcc_cfg_payload.g.rb = pcc_cfg_payload32.g.rb;
+	pcc_cfg_payload.g.rg = pcc_cfg_payload32.g.rg;
+	pcc_cfg_payload.g.rgb = pcc_cfg_payload32.g.rgb;
+
+	pcc_cfg_payload.b.b = pcc_cfg_payload32.b.b;
+	pcc_cfg_payload.b.g = pcc_cfg_payload32.b.g;
+	pcc_cfg_payload.b.c = pcc_cfg_payload32.b.c;
+	pcc_cfg_payload.b.r = pcc_cfg_payload32.b.r;
+	pcc_cfg_payload.b.gb = pcc_cfg_payload32.b.gb;
+	pcc_cfg_payload.b.rb = pcc_cfg_payload32.b.rb;
+	pcc_cfg_payload.b.rg = pcc_cfg_payload32.b.rg;
+	pcc_cfg_payload.b.rgb = pcc_cfg_payload32.b.rgb;
+
+	if (copy_to_user(pcc_cfg->cfg_payload, &pcc_cfg_payload,
+			 sizeof(pcc_cfg_payload))) {
+		pr_err("failed to copy payload for pcc to user\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
 static int __from_user_pcc_cfg_data(
 			struct mdp_pcc_cfg_data32 __user *pcc_cfg32,
 			struct mdp_pcc_cfg_data __user *pcc_cfg)
 {
+	u32 version;
+
 	if (copy_in_user(&pcc_cfg->block,
 			&pcc_cfg32->block,
 			sizeof(uint32_t)) ||
 	    copy_in_user(&pcc_cfg->ops,
 			&pcc_cfg32->ops,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&pcc_cfg->version,
+			&pcc_cfg32->version,
 			sizeof(uint32_t)))
 		return -EFAULT;
 
-	if (__from_user_pcc_coeff(
-			compat_ptr((uintptr_t)&pcc_cfg32->r),
-			&pcc_cfg->r) ||
-	    __from_user_pcc_coeff(
-			compat_ptr((uintptr_t)&pcc_cfg32->g),
-			&pcc_cfg->g) ||
-	    __from_user_pcc_coeff(
-			compat_ptr((uintptr_t)&pcc_cfg32->b),
-			&pcc_cfg->b))
+	if (copy_from_user(&version, &pcc_cfg32->version, sizeof(u32))) {
+		pr_err("failed to copy version for pcc\n");
 		return -EFAULT;
+	}
+
+	switch (version) {
+	case mdp_pcc_v1_7:
+		if (__from_user_pcc_coeff_v17(pcc_cfg32, pcc_cfg)) {
+			pr_err("failed to copy pcc v17 data\n");
+			return -EFAULT;
+		}
+		break;
+	default:
+		pr_debug("pcc version %d not supported use legacy\n", version);
+		if (__from_user_pcc_coeff(
+				compat_ptr((uintptr_t)&pcc_cfg32->r),
+				&pcc_cfg->r) ||
+		    __from_user_pcc_coeff(
+				compat_ptr((uintptr_t)&pcc_cfg32->g),
+				&pcc_cfg->g) ||
+		    __from_user_pcc_coeff(
+				compat_ptr((uintptr_t)&pcc_cfg32->b),
+				&pcc_cfg->b))
+			return -EFAULT;
+		break;
+	}
+	return 0;
+}
+
+static int __to_user_pcc_coeff_v1_7(
+			struct mdp_pcc_cfg_data32 __user *pcc_cfg32,
+			struct mdp_pcc_cfg_data __user *pcc_cfg)
+{
+	struct mdp_pcc_data_v1_7_32 pcc_cfg_payload32;
+	struct mdp_pcc_data_v1_7 pcc_cfg_payload;
+
+	if (copy_from_user(&pcc_cfg_payload,
+			   pcc_cfg->cfg_payload,
+			   sizeof(struct mdp_pcc_data_v1_7))) {
+		pr_err("failed to copy payload for pcc from user\n");
+		return -EFAULT;
+	}
+
+	pcc_cfg_payload32.r.b = pcc_cfg_payload.r.b;
+	pcc_cfg_payload32.r.g = pcc_cfg_payload.r.g;
+	pcc_cfg_payload32.r.c = pcc_cfg_payload.r.c;
+	pcc_cfg_payload32.r.r = pcc_cfg_payload.r.r;
+	pcc_cfg_payload32.r.gb = pcc_cfg_payload.r.gb;
+	pcc_cfg_payload32.r.rb = pcc_cfg_payload.r.rb;
+	pcc_cfg_payload32.r.rg = pcc_cfg_payload.r.rg;
+	pcc_cfg_payload32.r.rgb = pcc_cfg_payload.r.rgb;
+
+	pcc_cfg_payload32.g.b = pcc_cfg_payload.g.b;
+	pcc_cfg_payload32.g.g = pcc_cfg_payload.g.g;
+	pcc_cfg_payload32.g.c = pcc_cfg_payload.g.c;
+	pcc_cfg_payload32.g.r = pcc_cfg_payload.g.r;
+	pcc_cfg_payload32.g.gb = pcc_cfg_payload.g.gb;
+	pcc_cfg_payload32.g.rb = pcc_cfg_payload.g.rb;
+	pcc_cfg_payload32.g.rg = pcc_cfg_payload.g.rg;
+	pcc_cfg_payload32.g.rgb = pcc_cfg_payload.g.rgb;
+
+	pcc_cfg_payload32.b.b = pcc_cfg_payload.b.b;
+	pcc_cfg_payload32.b.g = pcc_cfg_payload.b.g;
+	pcc_cfg_payload32.b.c = pcc_cfg_payload.b.c;
+	pcc_cfg_payload32.b.r = pcc_cfg_payload.b.r;
+	pcc_cfg_payload32.b.gb = pcc_cfg_payload.b.gb;
+	pcc_cfg_payload32.b.rb = pcc_cfg_payload.b.rb;
+	pcc_cfg_payload32.b.rg = pcc_cfg_payload.b.rg;
+	pcc_cfg_payload32.b.rgb = pcc_cfg_payload.b.rgb;
+
+	if (copy_to_user(compat_ptr(pcc_cfg32->cfg_payload),
+			 &pcc_cfg_payload32,
+			 sizeof(pcc_cfg_payload32))) {
+		pr_err("failed to copy payload for pcc to user\n");
+		return -EFAULT;
+	}
 
 	return 0;
 }
+
 
 static int __to_user_pcc_cfg_data(
 			struct mdp_pcc_cfg_data32 __user *pcc_cfg32,
 			struct mdp_pcc_cfg_data __user *pcc_cfg)
 {
-	if (copy_in_user(&pcc_cfg32->block,
-			&pcc_cfg->block,
-			sizeof(uint32_t)) ||
-	    copy_in_user(&pcc_cfg32->ops,
-			&pcc_cfg->ops,
-			sizeof(uint32_t)))
-		return -EFAULT;
+	u32 version;
+	u32 ops;
 
-	if (__to_user_pcc_coeff(
-			compat_ptr((uintptr_t)&pcc_cfg32->r),
-			&pcc_cfg->r) ||
-	    __to_user_pcc_coeff(
-			compat_ptr((uintptr_t)&pcc_cfg32->g),
-			&pcc_cfg->g) ||
-	    __to_user_pcc_coeff(
-			compat_ptr((uintptr_t)&pcc_cfg32->b),
-			&pcc_cfg->b))
+	if (copy_from_user(&ops, &pcc_cfg->ops, sizeof(u32))) {
+		pr_err("failed to copy op for pcc\n");
 		return -EFAULT;
+	}
+
+	if (!(ops & MDP_PP_OPS_READ)) {
+		pr_debug("Read op is not set. Skipping compat copyback\n");
+		return 0;
+	}
+
+	if (copy_from_user(&version, &pcc_cfg->version, sizeof(u32))) {
+		pr_err("failed to copy version for pcc\n");
+		return -EFAULT;
+	}
+
+	switch (version) {
+	case mdp_pcc_v1_7:
+		if (__to_user_pcc_coeff_v1_7(pcc_cfg32, pcc_cfg)) {
+			pr_err("failed to copy pcc v1_7 data\n");
+			return -EFAULT;
+		}
+		break;
+	default:
+		pr_debug("version invalid, fallback to legacy\n");
+
+		if (__to_user_pcc_coeff(
+				compat_ptr((uintptr_t)&pcc_cfg32->r),
+				&pcc_cfg->r) ||
+		    __to_user_pcc_coeff(
+				compat_ptr((uintptr_t)&pcc_cfg32->g),
+				&pcc_cfg->g) ||
+		    __to_user_pcc_coeff(
+				compat_ptr((uintptr_t)&pcc_cfg32->b),
+				&pcc_cfg->b))
+			return -EFAULT;
+		break;
+	}
 
 	return 0;
 }
@@ -603,11 +1114,38 @@ static int __to_user_csc_cfg_data(
 	return 0;
 }
 
+static int __from_user_igc_lut_data_v17(
+		struct mdp_igc_lut_data32 __user *igc_lut32,
+		struct mdp_igc_lut_data __user *igc_lut)
+{
+	struct mdp_igc_lut_data_v1_7_32 igc_cfg_payload_32;
+	struct mdp_igc_lut_data_v1_7 igc_cfg_payload;
+
+	if (copy_from_user(&igc_cfg_payload_32,
+			   compat_ptr(igc_lut32->cfg_payload),
+			   sizeof(igc_cfg_payload_32))) {
+		pr_err("failed to copy payload from user for igc\n");
+		return -EFAULT;
+	}
+	igc_cfg_payload.c0_c1_data = compat_ptr(igc_cfg_payload_32.c0_c1_data);
+	igc_cfg_payload.c2_data = compat_ptr(igc_cfg_payload_32.c2_data);
+	igc_cfg_payload.len = igc_cfg_payload_32.len;
+	igc_cfg_payload.table_fmt = igc_cfg_payload_32.table_fmt;
+	if (copy_to_user(igc_lut->cfg_payload, &igc_cfg_payload,
+			 sizeof(igc_cfg_payload))) {
+		pr_err("failed to copy payload to user for igc\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
 static int __from_user_igc_lut_data(
 		struct mdp_igc_lut_data32 __user *igc_lut32,
 		struct mdp_igc_lut_data __user *igc_lut)
 {
 	uint32_t data;
+	uint32_t version = mdp_igc_vmax;
+	int ret = 0;
 
 	if (copy_in_user(&igc_lut->block,
 			&igc_lut32->block,
@@ -617,16 +1155,35 @@ static int __from_user_igc_lut_data(
 			sizeof(uint32_t)) ||
 	    copy_in_user(&igc_lut->ops,
 			&igc_lut32->ops,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&igc_lut->version,
+			&igc_lut32->version,
 			sizeof(uint32_t)))
 		return -EFAULT;
 
-	if (get_user(data, &igc_lut32->c0_c1_data) ||
-	    put_user(compat_ptr(data), &igc_lut->c0_c1_data) ||
-	    get_user(data, &igc_lut32->c2_data) ||
-	    put_user(compat_ptr(data), &igc_lut->c2_data))
+	if (get_user(version, &igc_lut32->version)) {
+		pr_err("failed to copy the version for IGC\n");
 		return -EFAULT;
+	}
 
-	return 0;
+	switch (version) {
+	case mdp_igc_v1_7:
+		ret = __from_user_igc_lut_data_v17(igc_lut32, igc_lut);
+		if (ret)
+			pr_err("failed to copy payload for igc version %d ret %d\n",
+				version, ret);
+		break;
+	default:
+		pr_debug("version not supported fallback to legacy %d\n",
+			 version);
+		if (get_user(data, &igc_lut32->c0_c1_data) ||
+		    put_user(compat_ptr(data), &igc_lut->c0_c1_data) ||
+		    get_user(data, &igc_lut32->c2_data) ||
+		    put_user(compat_ptr(data), &igc_lut->c2_data))
+			return -EFAULT;
+		break;
+	}
+	return ret;
 }
 
 static int __to_user_igc_lut_data(
@@ -691,7 +1248,32 @@ static int __to_user_ar_gc_lut_data(
 	return 0;
 }
 
-static int __from_user_pgc_lut_data(
+
+static int __from_user_pgc_lut_data_v1_7(
+			struct mdp_pgc_lut_data32 __user *pgc_lut32,
+			struct mdp_pgc_lut_data __user *pgc_lut)
+{
+	struct mdp_pgc_lut_data_v1_7_32 pgc_cfg_payload_32;
+	struct mdp_pgc_lut_data_v1_7 pgc_cfg_payload;
+	if (copy_from_user(&pgc_cfg_payload_32,
+			   compat_ptr(pgc_lut32->cfg_payload),
+			   sizeof(pgc_cfg_payload_32))) {
+		pr_err("failed to copy from user the pgc32 payload\n");
+		return -EFAULT;
+	}
+	pgc_cfg_payload.c0_data = compat_ptr(pgc_cfg_payload_32.c0_data);
+	pgc_cfg_payload.c1_data = compat_ptr(pgc_cfg_payload_32.c1_data);
+	pgc_cfg_payload.c2_data = compat_ptr(pgc_cfg_payload_32.c2_data);
+	pgc_cfg_payload.len = pgc_cfg_payload_32.len;
+	if (copy_to_user(pgc_lut->cfg_payload, &pgc_cfg_payload,
+			 sizeof(pgc_cfg_payload))) {
+		pr_err("failed to copy to user pgc payload\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
+static int __from_user_pgc_lut_data_legacy(
 			struct mdp_pgc_lut_data32 __user *pgc_lut32,
 			struct mdp_pgc_lut_data __user *pgc_lut)
 {
@@ -704,23 +1286,6 @@ static int __from_user_pgc_lut_data(
 	uint8_t num_r_stages, num_g_stages, num_b_stages;
 	int i;
 
-	if (copy_in_user(&pgc_lut->block,
-			&pgc_lut32->block,
-			sizeof(uint32_t)) ||
-	    copy_in_user(&pgc_lut->flags,
-			&pgc_lut32->flags,
-			sizeof(uint32_t)) ||
-	    copy_in_user(&pgc_lut->num_r_stages,
-			&pgc_lut32->num_r_stages,
-			sizeof(uint8_t)) ||
-	    copy_in_user(&pgc_lut->num_g_stages,
-			&pgc_lut32->num_g_stages,
-			sizeof(uint8_t)) ||
-	    copy_in_user(&pgc_lut->num_b_stages,
-			&pgc_lut32->num_b_stages,
-			sizeof(uint8_t)))
-		return -EFAULT;
-
 	if (copy_from_user(&num_r_stages,
 			&pgc_lut32->num_r_stages,
 			sizeof(uint8_t)) ||
@@ -731,6 +1296,14 @@ static int __from_user_pgc_lut_data(
 			&pgc_lut32->num_b_stages,
 			sizeof(uint8_t)))
 		return -EFAULT;
+
+	if (num_r_stages > GC_LUT_SEGMENTS || num_b_stages > GC_LUT_SEGMENTS
+	    || num_r_stages > GC_LUT_SEGMENTS || !num_r_stages || !num_b_stages
+	    || !num_g_stages) {
+		pr_err("invalid number of stages r_stages %d b_stages %d g_stages %d\n",
+		       num_r_stages, num_b_stages, num_r_stages);
+		return -EFAULT;
+	}
 
 	r_data_temp32 = compat_ptr((uintptr_t)pgc_lut32->r_data);
 	r_data_temp = pgc_lut->r_data;
@@ -761,8 +1334,55 @@ static int __from_user_pgc_lut_data(
 				&b_data_temp[i]))
 			return -EFAULT;
 	}
-
 	return 0;
+}
+
+static int __from_user_pgc_lut_data(
+			struct mdp_pgc_lut_data32 __user *pgc_lut32,
+			struct mdp_pgc_lut_data __user *pgc_lut)
+{
+	u32 version = mdp_pgc_vmax;
+	int ret = 0;
+
+	if (copy_in_user(&pgc_lut->block,
+			&pgc_lut32->block,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&pgc_lut->flags,
+			&pgc_lut32->flags,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&pgc_lut->num_r_stages,
+			&pgc_lut32->num_r_stages,
+			sizeof(uint8_t)) ||
+	    copy_in_user(&pgc_lut->num_g_stages,
+			&pgc_lut32->num_g_stages,
+			sizeof(uint8_t)) ||
+	    copy_in_user(&pgc_lut->num_b_stages,
+			&pgc_lut32->num_b_stages,
+			sizeof(uint8_t)) ||
+	    copy_in_user(&pgc_lut->version,
+			&pgc_lut32->version,
+			sizeof(uint32_t)))
+		return -EFAULT;
+	if (copy_from_user(&version, &pgc_lut32->version, sizeof(u32))) {
+		pr_err("version copying failed\n");
+		return -EFAULT;
+	}
+	switch (version) {
+	case mdp_pgc_v1_7:
+		ret = __from_user_pgc_lut_data_v1_7(pgc_lut32, pgc_lut);
+		if (ret)
+			pr_err("failed to copy pgc v17\n");
+		break;
+	default:
+		pr_debug("version %d not supported fallback to legacy\n",
+			 version);
+		ret = __from_user_pgc_lut_data_legacy(pgc_lut32, pgc_lut);
+		if (ret)
+			pr_err("copy from user pgc lut legacy failed ret %d\n",
+				ret);
+		break;
+	}
+	return ret;
 }
 
 static int __to_user_pgc_lut_data(
@@ -836,14 +1456,48 @@ static int __to_user_pgc_lut_data(
 	return 0;
 }
 
+static int __from_user_hist_lut_data_v1_7(
+			struct mdp_hist_lut_data32 __user *hist_lut32,
+			struct mdp_hist_lut_data __user *hist_lut)
+{
+	struct mdp_hist_lut_data_v1_7_32 hist_lut_cfg_payload32;
+	struct mdp_hist_lut_data_v1_7 hist_lut_cfg_payload;
+
+	if (copy_from_user(&hist_lut_cfg_payload32,
+			compat_ptr(hist_lut32->cfg_payload),
+			sizeof(hist_lut_cfg_payload32))) {
+		pr_err("failed to copy the Hist Lut payload from userspace\n");
+		return -EFAULT;
+	}
+
+	hist_lut_cfg_payload.len = hist_lut_cfg_payload32.len;
+	hist_lut_cfg_payload.data = compat_ptr(hist_lut_cfg_payload32.data);
+
+	if (copy_to_user(hist_lut->cfg_payload,
+			&hist_lut_cfg_payload,
+			sizeof(hist_lut_cfg_payload))) {
+		pr_err("Failed to copy to user hist lut cfg payload\n");
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
 static int __from_user_hist_lut_data(
 			struct mdp_hist_lut_data32 __user *hist_lut32,
 			struct mdp_hist_lut_data __user *hist_lut)
 {
+	uint32_t version = 0;
 	uint32_t data;
 
 	if (copy_in_user(&hist_lut->block,
 			&hist_lut32->block,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&hist_lut->version,
+			&hist_lut32->version,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&hist_lut->hist_lut_first,
+			&hist_lut32->hist_lut_first,
 			sizeof(uint32_t)) ||
 	    copy_in_user(&hist_lut->ops,
 			&hist_lut32->ops,
@@ -853,9 +1507,28 @@ static int __from_user_hist_lut_data(
 			sizeof(uint32_t)))
 		return -EFAULT;
 
-	if (get_user(data, &hist_lut32->data) ||
-	    put_user(compat_ptr(data), &hist_lut->data))
+	if (copy_from_user(&version,
+			&hist_lut32->version,
+			sizeof(uint32_t))) {
+		pr_err("failed to copy the version info\n");
 		return -EFAULT;
+	}
+
+	switch (version) {
+	case mdp_hist_lut_v1_7:
+		if (__from_user_hist_lut_data_v1_7(hist_lut32, hist_lut)) {
+			pr_err("failed to get hist lut data for version %d\n",
+				version);
+			return -EFAULT;
+		}
+		break;
+	default:
+		pr_debug("version invalid, fallback to legacy\n");
+		if (get_user(data, &hist_lut32->data) ||
+		    put_user(compat_ptr(data), &hist_lut->data))
+			return -EFAULT;
+		break;
+	}
 
 	return 0;
 }
@@ -1321,19 +1994,169 @@ static int __to_user_pa_v2_data(
 	return 0;
 }
 
+static inline void __from_user_pa_mem_col_data_v1_7(
+			struct mdp_pa_mem_col_data_v1_7_32 *mem_col_data32,
+			struct mdp_pa_mem_col_data_v1_7 *mem_col_data)
+{
+	mem_col_data->color_adjust_p0 = mem_col_data32->color_adjust_p0;
+	mem_col_data->color_adjust_p1 = mem_col_data32->color_adjust_p1;
+	mem_col_data->color_adjust_p2 = mem_col_data32->color_adjust_p2;
+	mem_col_data->blend_gain = mem_col_data32->blend_gain;
+	mem_col_data->sat_hold = mem_col_data32->sat_hold;
+	mem_col_data->val_hold = mem_col_data32->val_hold;
+	mem_col_data->hue_region = mem_col_data32->hue_region;
+	mem_col_data->sat_region = mem_col_data32->sat_region;
+	mem_col_data->val_region = mem_col_data32->val_region;
+}
+
+
+static int __from_user_pa_data_v1_7(
+			struct mdp_pa_v2_cfg_data32 __user *pa_v2_cfg32,
+			struct mdp_pa_v2_cfg_data __user *pa_v2_cfg)
+{
+	struct mdp_pa_data_v1_7_32 pa_cfg_payload32;
+	struct mdp_pa_data_v1_7 pa_cfg_payload;
+
+	if (copy_from_user(&pa_cfg_payload32,
+			compat_ptr(pa_v2_cfg32->cfg_payload),
+			sizeof(pa_cfg_payload32))) {
+		pr_err("failed to copy the PA payload from userspace\n");
+		return -EFAULT;
+	}
+
+	pa_cfg_payload.mode = pa_cfg_payload32.mode;
+	pa_cfg_payload.global_hue_adj = pa_cfg_payload32.global_hue_adj;
+	pa_cfg_payload.global_sat_adj = pa_cfg_payload32.global_sat_adj;
+	pa_cfg_payload.global_val_adj = pa_cfg_payload32.global_val_adj;
+	pa_cfg_payload.global_cont_adj = pa_cfg_payload32.global_cont_adj;
+
+	__from_user_pa_mem_col_data_v1_7(&pa_cfg_payload32.skin_cfg,
+					&pa_cfg_payload.skin_cfg);
+	__from_user_pa_mem_col_data_v1_7(&pa_cfg_payload32.sky_cfg,
+					&pa_cfg_payload.sky_cfg);
+	__from_user_pa_mem_col_data_v1_7(&pa_cfg_payload32.fol_cfg,
+					&pa_cfg_payload.fol_cfg);
+
+	pa_cfg_payload.six_zone_thresh = pa_cfg_payload32.six_zone_thresh;
+	pa_cfg_payload.six_zone_adj_p0 = pa_cfg_payload32.six_zone_adj_p0;
+	pa_cfg_payload.six_zone_adj_p1 = pa_cfg_payload32.six_zone_adj_p1;
+	pa_cfg_payload.six_zone_sat_hold = pa_cfg_payload32.six_zone_sat_hold;
+	pa_cfg_payload.six_zone_val_hold = pa_cfg_payload32.six_zone_val_hold;
+	pa_cfg_payload.six_zone_len = pa_cfg_payload32.six_zone_len;
+
+	pa_cfg_payload.six_zone_curve_p0 =
+		compat_ptr(pa_cfg_payload32.six_zone_curve_p0);
+	pa_cfg_payload.six_zone_curve_p1 =
+		compat_ptr(pa_cfg_payload32.six_zone_curve_p1);
+
+	if (copy_to_user(pa_v2_cfg->cfg_payload, &pa_cfg_payload,
+			sizeof(pa_cfg_payload))) {
+		pr_err("Failed to copy to user pa cfg payload\n");
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
 static int __from_user_pa_v2_cfg_data(
 			struct mdp_pa_v2_cfg_data32 __user *pa_v2_cfg32,
 			struct mdp_pa_v2_cfg_data __user *pa_v2_cfg)
 {
+	uint32_t version;
+
 	if (copy_in_user(&pa_v2_cfg->block,
 			&pa_v2_cfg32->block,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&pa_v2_cfg->version,
+			&pa_v2_cfg32->version,
+			sizeof(uint32_t)) ||
+	    copy_in_user(&pa_v2_cfg->flags,
+			&pa_v2_cfg32->flags,
 			sizeof(uint32_t)))
 		return -EFAULT;
 
-	if (__from_user_pa_v2_data(
-			compat_ptr((uintptr_t)&pa_v2_cfg32->pa_v2_data),
-			&pa_v2_cfg->pa_v2_data))
+	if (copy_from_user(&version,
+			&pa_v2_cfg32->version,
+			sizeof(uint32_t))) {
+		pr_err("failed to copy the version info\n");
 		return -EFAULT;
+	}
+
+	switch (version) {
+	case mdp_pa_v1_7:
+		if (__from_user_pa_data_v1_7(pa_v2_cfg32, pa_v2_cfg)) {
+			pr_err("failed to get pa data for version %d\n",
+				version);
+			return -EFAULT;
+		}
+		break;
+	default:
+		pr_debug("version invalid, fallback to legacy\n");
+		if (__from_user_pa_v2_data(
+				compat_ptr((uintptr_t)&pa_v2_cfg32->pa_v2_data),
+				&pa_v2_cfg->pa_v2_data))
+			return -EFAULT;
+		break;
+	}
+
+	return 0;
+}
+
+static inline void __to_user_pa_mem_col_data_v1_7(
+			struct mdp_pa_mem_col_data_v1_7_32 *mem_col_data32,
+			struct mdp_pa_mem_col_data_v1_7 *mem_col_data)
+{
+	mem_col_data32->color_adjust_p0 = mem_col_data->color_adjust_p0;
+	mem_col_data32->color_adjust_p1 = mem_col_data->color_adjust_p1;
+	mem_col_data32->color_adjust_p2 = mem_col_data->color_adjust_p2;
+	mem_col_data32->blend_gain = mem_col_data->blend_gain;
+	mem_col_data32->sat_hold = mem_col_data->sat_hold;
+	mem_col_data32->val_hold = mem_col_data->val_hold;
+	mem_col_data32->hue_region = mem_col_data->hue_region;
+	mem_col_data32->sat_region = mem_col_data->sat_region;
+	mem_col_data32->val_region = mem_col_data->val_region;
+}
+
+static int __to_user_pa_data_v1_7(
+			struct mdp_pa_v2_cfg_data32 __user *pa_v2_cfg32,
+			struct mdp_pa_v2_cfg_data __user *pa_v2_cfg)
+{
+	struct mdp_pa_data_v1_7_32 pa_cfg_payload32;
+	struct mdp_pa_data_v1_7 pa_cfg_payload;
+
+	if (copy_from_user(&pa_cfg_payload,
+			pa_v2_cfg->cfg_payload,
+			sizeof(pa_cfg_payload))) {
+		pr_err("failed to copy the PA payload from userspace\n");
+		return -EFAULT;
+	}
+
+	pa_cfg_payload32.mode = pa_cfg_payload.mode;
+	pa_cfg_payload32.global_hue_adj = pa_cfg_payload.global_hue_adj;
+	pa_cfg_payload32.global_sat_adj = pa_cfg_payload.global_sat_adj;
+	pa_cfg_payload32.global_val_adj = pa_cfg_payload.global_val_adj;
+	pa_cfg_payload32.global_cont_adj = pa_cfg_payload.global_cont_adj;
+
+	__to_user_pa_mem_col_data_v1_7(&pa_cfg_payload32.skin_cfg,
+					&pa_cfg_payload.skin_cfg);
+	__to_user_pa_mem_col_data_v1_7(&pa_cfg_payload32.sky_cfg,
+					&pa_cfg_payload.sky_cfg);
+	__to_user_pa_mem_col_data_v1_7(&pa_cfg_payload32.fol_cfg,
+					&pa_cfg_payload.fol_cfg);
+
+	pa_cfg_payload32.six_zone_thresh = pa_cfg_payload.six_zone_thresh;
+	pa_cfg_payload32.six_zone_adj_p0 = pa_cfg_payload.six_zone_adj_p0;
+	pa_cfg_payload32.six_zone_adj_p1 = pa_cfg_payload.six_zone_adj_p1;
+	pa_cfg_payload32.six_zone_sat_hold = pa_cfg_payload.six_zone_sat_hold;
+	pa_cfg_payload32.six_zone_val_hold = pa_cfg_payload.six_zone_val_hold;
+	pa_cfg_payload32.six_zone_len = pa_cfg_payload.six_zone_len;
+
+	if (copy_to_user(compat_ptr(pa_v2_cfg32->cfg_payload),
+			&pa_cfg_payload32,
+			sizeof(pa_cfg_payload32))) {
+		pr_err("Failed to copy to user pa cfg payload\n");
+		return -EFAULT;
+	}
 
 	return 0;
 }
@@ -1342,15 +2165,55 @@ static int __to_user_pa_v2_cfg_data(
 			struct mdp_pa_v2_cfg_data32 __user *pa_v2_cfg32,
 			struct mdp_pa_v2_cfg_data __user *pa_v2_cfg)
 {
-	if (copy_in_user(&pa_v2_cfg32->block,
-			&pa_v2_cfg->block,
+	uint32_t version = 0;
+	uint32_t flags = 0;
+
+	if (copy_from_user(&version,
+			&pa_v2_cfg32->version,
 			sizeof(uint32_t)))
 		return -EFAULT;
 
-	if (__to_user_pa_v2_data(
-			compat_ptr((uintptr_t)&pa_v2_cfg32->pa_v2_data),
-			&pa_v2_cfg->pa_v2_data))
-		return -EFAULT;
+	switch (version) {
+	case mdp_pa_v1_7:
+		if (copy_from_user(&flags,
+				&pa_v2_cfg32->flags,
+				sizeof(uint32_t))) {
+			pr_err("failed to get PA v1_7 flags\n");
+			return -EFAULT;
+		}
+
+		if (!(flags & MDP_PP_OPS_READ)) {
+			pr_debug("Read op not set. Skipping compat copyback\n");
+			return 0;
+		}
+
+		if (__to_user_pa_data_v1_7(pa_v2_cfg32, pa_v2_cfg)) {
+			pr_err("failed to set pa data for version %d\n",
+				version);
+			return -EFAULT;
+		}
+		break;
+	default:
+		pr_debug("version invalid, fallback to legacy\n");
+
+		if (copy_from_user(&flags,
+				&pa_v2_cfg32->pa_v2_data.flags,
+				sizeof(uint32_t))) {
+			pr_err("failed to get PAv2 flags\n");
+			return -EFAULT;
+		}
+
+		if (!(flags & MDP_PP_OPS_READ)) {
+			pr_debug("Read op not set. Skipping compat copyback\n");
+			return 0;
+		}
+
+		if (__to_user_pa_v2_data(
+				compat_ptr((uintptr_t)&pa_v2_cfg32->pa_v2_data),
+				&pa_v2_cfg->pa_v2_data))
+			return -EFAULT;
+		break;
+	}
 
 	return 0;
 }
@@ -1403,11 +2266,48 @@ static int __to_user_dither_cfg_data(
 	return 0;
 }
 
+static int __from_user_gamut_cfg_data_v17(
+			struct mdp_gamut_cfg_data32 __user *gamut_cfg32,
+			struct mdp_gamut_cfg_data __user *gamut_cfg)
+{
+	struct mdp_gamut_data_v1_7 gamut_cfg_payload;
+	struct mdp_gamut_data_v1_7_32 gamut_cfg_payload32;
+	u32 i = 0;
+
+	if (copy_from_user(&gamut_cfg_payload32,
+			   compat_ptr(gamut_cfg32->cfg_payload),
+			   sizeof(gamut_cfg_payload32))) {
+		pr_err("failed to copy the gamut payload from userspace\n");
+		return -EFAULT;
+	}
+	gamut_cfg_payload.mode = gamut_cfg_payload32.mode;
+	for (i = 0; i < MDP_GAMUT_TABLE_NUM_V1_7; i++) {
+		gamut_cfg_payload.tbl_size[i] =
+			gamut_cfg_payload32.tbl_size[i];
+		gamut_cfg_payload.c0_data[i] =
+			compat_ptr(gamut_cfg_payload32.c0_data[i]);
+		gamut_cfg_payload.c1_c2_data[i] =
+			compat_ptr(gamut_cfg_payload32.c1_c2_data[i]);
+	}
+	for (i = 0; i < MDP_GAMUT_SCALE_OFF_TABLE_NUM; i++) {
+		gamut_cfg_payload.tbl_scale_off_sz[i] =
+			gamut_cfg_payload32.tbl_scale_off_sz[i];
+		gamut_cfg_payload.scale_off_data[i] =
+			compat_ptr(gamut_cfg_payload32.scale_off_data[i]);
+	}
+	if (copy_to_user(gamut_cfg->cfg_payload, &gamut_cfg_payload,
+			 sizeof(gamut_cfg_payload))) {
+		pr_err("failed to copy the gamut payload to userspace\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
 static int __from_user_gamut_cfg_data(
 			struct mdp_gamut_cfg_data32 __user *gamut_cfg32,
 			struct mdp_gamut_cfg_data __user *gamut_cfg)
 {
-	uint32_t data;
+	uint32_t data, version;
 	int i;
 
 	if (copy_in_user(&gamut_cfg->block,
@@ -1421,31 +2321,50 @@ static int __from_user_gamut_cfg_data(
 			sizeof(uint32_t)) ||
 	    copy_in_user(&gamut_cfg->tbl_size[0],
 			&gamut_cfg32->tbl_size[0],
-			MDP_GAMUT_TABLE_NUM * sizeof(uint32_t)))
+			MDP_GAMUT_TABLE_NUM * sizeof(uint32_t)) ||
+	    copy_in_user(&gamut_cfg->version,
+			&gamut_cfg32->version,
+			sizeof(uint32_t)))
 		return 0;
 
+	if (copy_from_user(&version, &gamut_cfg32->version, sizeof(u32))) {
+		pr_err("failed to copy the version info\n");
+		return -EFAULT;
+	}
+
+	switch (version) {
+	case mdp_gamut_v1_7:
+		if (__from_user_gamut_cfg_data_v17(gamut_cfg32, gamut_cfg)) {
+			pr_err("failed to get the gamut data for version %d\n",
+				version);
+			return -EFAULT;
+		}
+		break;
+	default:
+		pr_debug("version invalid fallback to legacy\n");
 	/* The Gamut LUT data contains 3 static arrays for R, G, and B
 	 * gamut data. Each these arrays contains pointers dynamic arrays
 	 * which hold the gamut LUTs for R, G, and B. Must copy the array of
 	 * pointers from 32 bit to 64 bit addresses. */
-	for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
-		if (get_user(data, &gamut_cfg32->r_tbl[i]) ||
-		    put_user(compat_ptr(data), &gamut_cfg->r_tbl[i]))
-			return -EFAULT;
-	}
+		for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
+			if (get_user(data, &gamut_cfg32->r_tbl[i]) ||
+			    put_user(compat_ptr(data), &gamut_cfg->r_tbl[i]))
+				return -EFAULT;
+		}
 
-	for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
-		if (get_user(data, &gamut_cfg32->g_tbl[i]) ||
-		    put_user(compat_ptr(data), &gamut_cfg->g_tbl[i]))
-			return -EFAULT;
-	}
+		for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
+			if (get_user(data, &gamut_cfg32->g_tbl[i]) ||
+			    put_user(compat_ptr(data), &gamut_cfg->g_tbl[i]))
+				return -EFAULT;
+		}
 
-	for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
-		if (get_user(data, &gamut_cfg32->b_tbl[i]) ||
-		    put_user(compat_ptr(data), &gamut_cfg->b_tbl[i]))
-			return -EFAULT;
+		for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
+			if (get_user(data, &gamut_cfg32->b_tbl[i]) ||
+			    put_user(compat_ptr(data), &gamut_cfg->b_tbl[i]))
+				return -EFAULT;
+		}
+		break;
 	}
-
 	return 0;
 }
 
@@ -1850,52 +2769,67 @@ static int __from_user_calib_dcm_state(
 	return 0;
 }
 
+static u32 __pp_compat_size_igc(void)
+{
+	u32 alloc_size = 0;
+	/* When we have mutiple versions pick largest struct size */
+	alloc_size = sizeof(struct mdp_igc_lut_data_v1_7);
+	return alloc_size;
+}
+
+static u32 __pp_compat_size_hist_lut(void)
+{
+	u32 alloc_size = 0;
+	/* When we have mutiple versions pick largest struct size */
+	alloc_size = sizeof(struct mdp_hist_lut_data_v1_7);
+	return alloc_size;
+}
+
+static u32 __pp_compat_size_pgc(void)
+{
+	u32 tbl_sz_max = 0;
+	tbl_sz_max =  3 * GC_LUT_SEGMENTS * sizeof(struct mdp_ar_gc_lut_data);
+	tbl_sz_max += sizeof(struct mdp_pgc_lut_data_v1_7);
+	return tbl_sz_max;
+}
+
+static u32 __pp_compat_size_pcc(void)
+{
+	/* if new version of PCC is added return max struct size */
+	return sizeof(struct mdp_pcc_data_v1_7);
+}
+
+static u32 __pp_compat_size_pa(void)
+{
+	/* if new version of PA is added return max struct size */
+	return sizeof(struct mdp_pa_data_v1_7);
+}
+
+static u32 __pp_compat_size_gamut(void)
+{
+	return sizeof(struct mdp_gamut_data_v1_7);
+}
+
 static int __pp_compat_alloc(struct msmfb_mdp_pp32 __user *pp32,
 					struct msmfb_mdp_pp __user **pp,
 					uint32_t op)
 {
-	uint32_t alloc_size = 0, lut_type, r_size, g_size, b_size;
-	struct mdp_pgc_lut_data32 __user *pgc_data32;
-	uint8_t num_r_stages, num_g_stages, num_b_stages;
+	uint32_t alloc_size = 0, lut_type, pgc_size = 0;
 
 	alloc_size = sizeof(struct msmfb_mdp_pp);
-
-	if (op == mdp_op_lut_cfg) {
+	switch (op) {
+	case  mdp_op_lut_cfg:
 		if (copy_from_user(&lut_type,
 			&pp32->data.lut_cfg_data.lut_type,
 			sizeof(uint32_t)))
 			return -EFAULT;
 
-		if (lut_type == mdp_lut_pgc) {
-			pgc_data32 = compat_ptr((uintptr_t)
-				&pp32->data.lut_cfg_data.data.pgc_lut_data);
-			if (copy_from_user(&num_r_stages,
-				&pgc_data32->num_r_stages,
-				sizeof(uint8_t)) ||
-			    copy_from_user(&num_g_stages,
-				&pgc_data32->num_g_stages,
-				sizeof(uint8_t)) ||
-			    copy_from_user(&num_b_stages,
-				&pgc_data32->num_b_stages,
-				sizeof(uint8_t)))
-				return -EFAULT;
+		switch (lut_type)  {
+		case mdp_lut_pgc:
 
-			if (num_r_stages > GC_LUT_SEGMENTS ||
-			    num_g_stages > GC_LUT_SEGMENTS ||
-			    num_b_stages > GC_LUT_SEGMENTS ||
-			    num_r_stages <= 0 ||
-			    num_g_stages <= 0 ||
-			    num_b_stages <= 0)
-				return -EINVAL;
-
-			r_size = num_r_stages *
+			pgc_size = GC_LUT_SEGMENTS *
 				sizeof(struct mdp_ar_gc_lut_data);
-			g_size = num_g_stages *
-				sizeof(struct mdp_ar_gc_lut_data);
-			b_size = num_b_stages *
-				sizeof(struct mdp_ar_gc_lut_data);
-
-			alloc_size += r_size + g_size + b_size;
+			alloc_size += __pp_compat_size_pgc();
 
 			*pp = compat_alloc_user_space(alloc_size);
 			if (NULL == *pp)
@@ -1909,30 +2843,106 @@ static int __pp_compat_alloc(struct msmfb_mdp_pp32 __user *pp32,
 			(*pp)->data.lut_cfg_data.data.pgc_lut_data.g_data =
 					(struct mdp_ar_gc_lut_data *)
 					((unsigned long) *pp +
-					sizeof(struct msmfb_mdp_pp) + r_size);
+					sizeof(struct msmfb_mdp_pp) +
+					pgc_size);
 			(*pp)->data.lut_cfg_data.data.pgc_lut_data.b_data =
 					(struct mdp_ar_gc_lut_data *)
 					((unsigned long) *pp +
 					sizeof(struct msmfb_mdp_pp) +
-					r_size + g_size);
-		} else {
+					(2 * pgc_size));
+			(*pp)->data.lut_cfg_data.data.pgc_lut_data.cfg_payload
+					 = (void *)((unsigned long) *pp +
+					sizeof(struct msmfb_mdp_pp) +
+					(3 * pgc_size));
+			break;
+		case mdp_lut_igc:
+			alloc_size += __pp_compat_size_igc();
 			*pp = compat_alloc_user_space(alloc_size);
-			if (NULL == *pp)
+			if (NULL == *pp) {
+				pr_err("failed to alloc from user size %d for igc\n",
+					alloc_size);
 				return -ENOMEM;
+			}
 			memset(*pp, 0, alloc_size);
+			(*pp)->data.lut_cfg_data.data.igc_lut_data.cfg_payload
+					= (void *)((unsigned long)(*pp) +
+					   sizeof(struct msmfb_mdp_pp));
+			break;
+		case mdp_lut_hist:
+			alloc_size += __pp_compat_size_hist_lut();
+			*pp = compat_alloc_user_space(alloc_size);
+			if (NULL == *pp) {
+				pr_err("failed to alloc from user size %d for hist lut\n",
+					alloc_size);
+				return -ENOMEM;
+			}
+			memset(*pp, 0, alloc_size);
+			(*pp)->data.lut_cfg_data.data.hist_lut_data.cfg_payload
+					= (void *)((unsigned long)(*pp) +
+					   sizeof(struct msmfb_mdp_pp));
+			break;
+		default:
+			*pp = compat_alloc_user_space(alloc_size);
+			if (NULL == *pp) {
+				pr_err("failed to alloc from user size %d for lut_type %d\n",
+					alloc_size, lut_type);
+				return -ENOMEM;
+			}
+			memset(*pp, 0, alloc_size);
+			break;
 		}
-	} else {
+		break;
+	case mdp_op_pcc_cfg:
+		alloc_size += __pp_compat_size_pcc();
+		*pp = compat_alloc_user_space(alloc_size);
+		if (NULL == *pp) {
+			pr_err("alloc from user size %d for pcc fail\n",
+				alloc_size);
+			return -ENOMEM;
+		}
+		memset(*pp, 0, alloc_size);
+		(*pp)->data.pcc_cfg_data.cfg_payload =
+				(void *)((unsigned long)(*pp) +
+				 sizeof(struct msmfb_mdp_pp));
+		break;
+	case mdp_op_gamut_cfg:
+		alloc_size += __pp_compat_size_gamut();
+		*pp = compat_alloc_user_space(alloc_size);
+		if (NULL == *pp) {
+			pr_err("alloc from user size %d for pcc fail\n",
+				alloc_size);
+			return -ENOMEM;
+		}
+		memset(*pp, 0, alloc_size);
+		(*pp)->data.gamut_cfg_data.cfg_payload =
+				(void *)((unsigned long)(*pp) +
+				 sizeof(struct msmfb_mdp_pp));
+		break;
+	case mdp_op_pa_v2_cfg:
+		alloc_size += __pp_compat_size_pa();
+		*pp = compat_alloc_user_space(alloc_size);
+		if (NULL == *pp) {
+			pr_err("alloc from user size %d for pcc fail\n",
+				alloc_size);
+			return -ENOMEM;
+		}
+		memset(*pp, 0, alloc_size);
+		(*pp)->data.pa_v2_cfg_data.cfg_payload =
+				(void *)((unsigned long)(*pp) +
+				sizeof(struct msmfb_mdp_pp));
+		break;
+	default:
 		*pp = compat_alloc_user_space(alloc_size);
 		if (NULL == *pp)
 			return -ENOMEM;
 		memset(*pp, 0, alloc_size);
+		break;
 	}
-
 	return 0;
 }
 
 static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
-			unsigned long arg)
+			unsigned long arg, struct file *file)
 {
 	uint32_t op;
 	int ret = 0;
@@ -1957,7 +2967,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.pcc_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_pcc_cfg_data(
@@ -1970,7 +2980,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.csc_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_csc_cfg_data(
@@ -1983,7 +2993,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.lut_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_lut_cfg_data(
@@ -1996,7 +3006,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.qseed_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_qseed_cfg_data(
@@ -2009,7 +3019,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.bl_scale_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		break;
 	case mdp_op_pa_cfg:
 		ret = __from_user_pa_cfg_data(
@@ -2017,7 +3027,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.pa_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_pa_cfg_data(
@@ -2030,7 +3040,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.pa_v2_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_pa_v2_cfg_data(
@@ -2043,7 +3053,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.dither_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_dither_cfg_data(
@@ -2056,7 +3066,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.gamut_cfg_data);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_gamut_cfg_data(
@@ -2069,7 +3079,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.calib_cfg);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_calib_config_data(
@@ -2082,7 +3092,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.ad_init_cfg);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		break;
 	case mdp_op_ad_input:
 		ret = __from_user_ad_input(
@@ -2090,7 +3100,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.ad_input);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_ad_input(
@@ -2103,7 +3113,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.mdss_calib_cfg);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		break;
 	case mdp_op_calib_buffer:
 		ret = __from_user_calib_config_buffer(
@@ -2111,7 +3121,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.calib_buffer);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		if (ret)
 			goto pp_compat_exit;
 		ret = __to_user_calib_config_buffer(
@@ -2124,7 +3134,7 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 			&pp->data.calib_dcm);
 		if (ret)
 			goto pp_compat_exit;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp, file);
 		break;
 	default:
 		break;
@@ -2324,7 +3334,7 @@ static int __to_user_hist_data(
 }
 
 static int mdss_histo_compat_ioctl(struct fb_info *info, unsigned int cmd,
-			unsigned long arg)
+			unsigned long arg, struct file *file)
 {
 	struct mdp_histogram_data __user *hist;
 	struct mdp_histogram_data32 __user *hist32;
@@ -2347,10 +3357,11 @@ static int mdss_histo_compat_ioctl(struct fb_info *info, unsigned int cmd,
 		ret = __from_user_hist_start_req(hist_req32, hist_req);
 		if (ret)
 			goto histo_compat_err;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) hist_req);
+		ret = mdss_fb_do_ioctl(info, cmd,
+			(unsigned long) hist_req, file);
 		break;
 	case MSMFB_HISTOGRAM_STOP:
-		ret = mdss_fb_do_ioctl(info, cmd, arg);
+		ret = mdss_fb_do_ioctl(info, cmd, arg, file);
 		break;
 	case MSMFB_HISTOGRAM:
 		hist32 = compat_ptr(arg);
@@ -2366,7 +3377,7 @@ static int mdss_histo_compat_ioctl(struct fb_info *info, unsigned int cmd,
 		ret = __from_user_hist_data(hist32, hist);
 		if (ret)
 			goto histo_compat_err;
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) hist);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) hist, file);
 		if (ret)
 			goto histo_compat_err;
 		ret = __to_user_hist_data(hist32, hist);
@@ -2378,6 +3389,435 @@ static int mdss_histo_compat_ioctl(struct fb_info *info, unsigned int cmd,
 histo_compat_err:
 	return ret;
 }
+
+static int __copy_layer_pp_info_qseed_params(
+			struct mdp_overlay_pp_params *pp_info,
+			struct mdp_overlay_pp_params32 *pp_info32)
+{
+	pp_info->qseed_cfg[0].table_num = pp_info32->qseed_cfg[0].table_num;
+	pp_info->qseed_cfg[0].ops = pp_info32->qseed_cfg[0].ops;
+	pp_info->qseed_cfg[0].len = pp_info32->qseed_cfg[0].len;
+	pp_info->qseed_cfg[0].data = compat_ptr(pp_info32->qseed_cfg[0].data);
+
+	pp_info->qseed_cfg[1].table_num = pp_info32->qseed_cfg[1].table_num;
+	pp_info->qseed_cfg[1].ops = pp_info32->qseed_cfg[1].ops;
+	pp_info->qseed_cfg[1].len = pp_info32->qseed_cfg[1].len;
+	pp_info->qseed_cfg[1].data = compat_ptr(pp_info32->qseed_cfg[1].data);
+
+	return 0;
+}
+
+static int __copy_layer_igc_lut_data_v1_7(
+			struct mdp_igc_lut_data_v1_7 *cfg_payload,
+			struct mdp_igc_lut_data_v1_7_32 __user *cfg_payload32)
+{
+	struct mdp_igc_lut_data_v1_7_32 local_cfg_payload32;
+	int ret = 0;
+
+	ret = copy_from_user(&local_cfg_payload32,
+			cfg_payload32,
+			sizeof(struct mdp_igc_lut_data_v1_7_32));
+	if (ret) {
+		pr_err("copy from user failed, IGC cfg payload = %p\n",
+			cfg_payload32);
+		ret = -EFAULT;
+		goto exit;
+	}
+
+	cfg_payload->table_fmt = local_cfg_payload32.table_fmt;
+	cfg_payload->len = local_cfg_payload32.len;
+	cfg_payload->c0_c1_data = compat_ptr(local_cfg_payload32.c0_c1_data);
+	cfg_payload->c2_data = compat_ptr(local_cfg_payload32.c2_data);
+
+exit:
+	return ret;
+}
+
+static int __copy_layer_pp_info_igc_params(
+			struct mdp_overlay_pp_params *pp_info,
+			struct mdp_overlay_pp_params32 *pp_info32)
+{
+	void *cfg_payload = NULL;
+	uint32_t payload_size = 0;
+	int ret = 0;
+
+	pp_info->igc_cfg.block = pp_info32->igc_cfg.block;
+	pp_info->igc_cfg.version = pp_info32->igc_cfg.version;
+	pp_info->igc_cfg.ops = pp_info32->igc_cfg.ops;
+
+	if (pp_info->igc_cfg.version != 0) {
+		payload_size = __pp_compat_size_igc();
+
+		cfg_payload = kmalloc(payload_size, GFP_KERNEL);
+		if (!cfg_payload) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+	switch (pp_info->igc_cfg.version) {
+	case mdp_igc_v1_7:
+		ret = __copy_layer_igc_lut_data_v1_7(cfg_payload,
+				compat_ptr(pp_info32->igc_cfg.cfg_payload));
+		if (ret) {
+			pr_err("compat copy of IGC cfg payload failed, ret %d\n",
+				ret);
+			kfree(cfg_payload);
+			cfg_payload = NULL;
+			goto exit;
+		}
+		break;
+	default:
+		pr_debug("No version set, fallback to legacy IGC version\n");
+		pp_info->igc_cfg.len = pp_info32->igc_cfg.len;
+		pp_info->igc_cfg.c0_c1_data =
+			compat_ptr(pp_info32->igc_cfg.c0_c1_data);
+		pp_info->igc_cfg.c2_data =
+			compat_ptr(pp_info32->igc_cfg.c2_data);
+		cfg_payload = NULL;
+		break;
+	}
+exit:
+	pp_info->igc_cfg.cfg_payload = cfg_payload;
+	return ret;
+}
+
+static int __copy_layer_hist_lut_data_v1_7(
+			struct mdp_hist_lut_data_v1_7 *cfg_payload,
+			struct mdp_hist_lut_data_v1_7_32 __user *cfg_payload32)
+{
+	struct mdp_hist_lut_data_v1_7_32 local_cfg_payload32;
+	int ret = 0;
+
+	ret = copy_from_user(&local_cfg_payload32,
+			cfg_payload32,
+			sizeof(struct mdp_hist_lut_data_v1_7_32));
+	if (ret) {
+		pr_err("copy from user failed, hist lut cfg_payload = %p\n",
+			cfg_payload32);
+		ret = -EFAULT;
+		goto exit;
+	}
+
+	cfg_payload->len = local_cfg_payload32.len;
+	cfg_payload->data = compat_ptr(local_cfg_payload32.data);
+exit:
+	return ret;
+}
+
+static int __copy_layer_pp_info_hist_lut_params(
+			struct mdp_overlay_pp_params *pp_info,
+			struct mdp_overlay_pp_params32 *pp_info32)
+{
+	void *cfg_payload = NULL;
+	uint32_t payload_size = 0;
+	int ret = 0;
+
+	pp_info->hist_lut_cfg.block = pp_info32->hist_lut_cfg.block;
+	pp_info->hist_lut_cfg.version = pp_info32->hist_lut_cfg.version;
+	pp_info->hist_lut_cfg.ops = pp_info32->hist_lut_cfg.ops;
+	pp_info->hist_lut_cfg.hist_lut_first =
+			pp_info32->hist_lut_cfg.hist_lut_first;
+
+	if (pp_info->hist_lut_cfg.version != 0) {
+		payload_size = __pp_compat_size_hist_lut();
+
+		cfg_payload = kmalloc(payload_size, GFP_KERNEL);
+		if (!cfg_payload) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+	switch (pp_info->hist_lut_cfg.version) {
+	case mdp_hist_lut_v1_7:
+		ret = __copy_layer_hist_lut_data_v1_7(cfg_payload,
+			compat_ptr(pp_info32->hist_lut_cfg.cfg_payload));
+		if (ret) {
+			pr_err("compat copy of Hist LUT cfg payload failed, ret %d\n",
+				ret);
+			kfree(cfg_payload);
+			cfg_payload = NULL;
+			goto exit;
+		}
+		break;
+	default:
+		pr_debug("version invalid, fallback to legacy\n");
+		pp_info->hist_lut_cfg.len = pp_info32->hist_lut_cfg.len;
+		pp_info->hist_lut_cfg.data =
+				compat_ptr(pp_info32->hist_lut_cfg.data);
+		cfg_payload = NULL;
+		break;
+	}
+exit:
+	pp_info->hist_lut_cfg.cfg_payload = cfg_payload;
+	return ret;
+}
+
+static int __copy_layer_pa_data_v1_7(
+			struct mdp_pa_data_v1_7 *cfg_payload,
+			struct mdp_pa_data_v1_7_32 __user *cfg_payload32)
+{
+	struct mdp_pa_data_v1_7_32 local_cfg_payload32;
+	int ret = 0;
+
+	ret = copy_from_user(&local_cfg_payload32,
+			cfg_payload32,
+			sizeof(struct mdp_pa_data_v1_7_32));
+	if (ret) {
+		pr_err("copy from user failed, pa cfg_payload = %p\n",
+			cfg_payload32);
+		ret = -EFAULT;
+		goto exit;
+	}
+
+	cfg_payload->mode = local_cfg_payload32.mode;
+	cfg_payload->global_hue_adj = local_cfg_payload32.global_hue_adj;
+	cfg_payload->global_sat_adj = local_cfg_payload32.global_sat_adj;
+	cfg_payload->global_val_adj = local_cfg_payload32.global_val_adj;
+	cfg_payload->global_cont_adj = local_cfg_payload32.global_cont_adj;
+
+	memcpy(&cfg_payload->skin_cfg, &local_cfg_payload32.skin_cfg,
+			sizeof(struct mdp_pa_mem_col_data_v1_7));
+	memcpy(&cfg_payload->sky_cfg, &local_cfg_payload32.sky_cfg,
+			sizeof(struct mdp_pa_mem_col_data_v1_7));
+	memcpy(&cfg_payload->fol_cfg, &local_cfg_payload32.fol_cfg,
+			sizeof(struct mdp_pa_mem_col_data_v1_7));
+
+	cfg_payload->six_zone_thresh = local_cfg_payload32.six_zone_thresh;
+	cfg_payload->six_zone_adj_p0 = local_cfg_payload32.six_zone_adj_p0;
+	cfg_payload->six_zone_adj_p1 = local_cfg_payload32.six_zone_adj_p1;
+	cfg_payload->six_zone_sat_hold = local_cfg_payload32.six_zone_sat_hold;
+	cfg_payload->six_zone_val_hold = local_cfg_payload32.six_zone_val_hold;
+	cfg_payload->six_zone_len = local_cfg_payload32.six_zone_len;
+
+	cfg_payload->six_zone_curve_p0 =
+			compat_ptr(local_cfg_payload32.six_zone_curve_p0);
+	cfg_payload->six_zone_curve_p1 =
+			compat_ptr(local_cfg_payload32.six_zone_curve_p1);
+exit:
+	return ret;
+}
+
+static int __copy_layer_pp_info_pa_v2_params(
+			struct mdp_overlay_pp_params *pp_info,
+			struct mdp_overlay_pp_params32 *pp_info32)
+{
+	void *cfg_payload = NULL;
+	uint32_t payload_size = 0;
+	int ret = 0;
+
+	pp_info->pa_v2_cfg_data.block = pp_info32->pa_v2_cfg_data.block;
+	pp_info->pa_v2_cfg_data.version = pp_info32->pa_v2_cfg_data.version;
+	pp_info->pa_v2_cfg_data.flags = pp_info32->pa_v2_cfg_data.flags;
+
+	if (pp_info->pa_v2_cfg_data.version != 0) {
+		payload_size = __pp_compat_size_pa();
+
+		cfg_payload = kmalloc(payload_size, GFP_KERNEL);
+		if (!cfg_payload) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+	switch (pp_info->pa_v2_cfg_data.version) {
+	case mdp_pa_v1_7:
+		ret = __copy_layer_pa_data_v1_7(cfg_payload,
+			compat_ptr(pp_info32->pa_v2_cfg_data.cfg_payload));
+		if (ret) {
+			pr_err("compat copy of PA cfg payload failed, ret %d\n",
+				ret);
+			kfree(cfg_payload);
+			cfg_payload = NULL;
+			goto exit;
+		}
+		break;
+	default:
+		pr_debug("version invalid\n");
+		cfg_payload = NULL;
+		break;
+	}
+exit:
+	pp_info->pa_v2_cfg_data.cfg_payload = cfg_payload;
+	return ret;
+}
+
+static int __copy_layer_pp_info_legacy_pa_v2_params(
+			struct mdp_overlay_pp_params *pp_info,
+			struct mdp_overlay_pp_params32 *pp_info32)
+{
+	pp_info->pa_v2_cfg.global_hue_adj =
+		pp_info32->pa_v2_cfg.global_hue_adj;
+	pp_info->pa_v2_cfg.global_sat_adj =
+		pp_info32->pa_v2_cfg.global_sat_adj;
+	pp_info->pa_v2_cfg.global_val_adj =
+		pp_info32->pa_v2_cfg.global_val_adj;
+	pp_info->pa_v2_cfg.global_cont_adj =
+		pp_info32->pa_v2_cfg.global_cont_adj;
+
+	memcpy(&pp_info->pa_v2_cfg.skin_cfg,
+			&pp_info32->pa_v2_cfg.skin_cfg,
+			sizeof(struct mdp_pa_mem_col_cfg));
+	memcpy(&pp_info->pa_v2_cfg.sky_cfg,
+			&pp_info32->pa_v2_cfg.sky_cfg,
+			sizeof(struct mdp_pa_mem_col_cfg));
+	memcpy(&pp_info->pa_v2_cfg.fol_cfg,
+			&pp_info32->pa_v2_cfg.fol_cfg,
+			sizeof(struct mdp_pa_mem_col_cfg));
+
+	pp_info->pa_v2_cfg.six_zone_thresh =
+		pp_info32->pa_v2_cfg.six_zone_thresh;
+	pp_info->pa_v2_cfg.six_zone_len =
+		pp_info32->pa_v2_cfg.six_zone_len;
+
+	pp_info->pa_v2_cfg.six_zone_curve_p0 =
+		compat_ptr(pp_info32->pa_v2_cfg.six_zone_curve_p0);
+	pp_info->pa_v2_cfg.six_zone_curve_p1 =
+		compat_ptr(pp_info32->pa_v2_cfg.six_zone_curve_p1);
+
+	return 0;
+}
+
+static int __copy_layer_pp_info_pcc_params(
+			struct mdp_overlay_pp_params *pp_info,
+			struct mdp_overlay_pp_params32 *pp_info32)
+{
+	void *cfg_payload = NULL;
+	uint32_t payload_size = 0;
+	int ret = 0;
+
+	pp_info->pcc_cfg_data.block = pp_info32->pcc_cfg_data.block;
+	pp_info->pcc_cfg_data.version = pp_info32->pcc_cfg_data.version;
+	pp_info->pcc_cfg_data.ops = pp_info32->pcc_cfg_data.ops;
+
+	if (pp_info->pcc_cfg_data.version != 0) {
+		payload_size = __pp_compat_size_pcc();
+
+		cfg_payload = kmalloc(payload_size, GFP_KERNEL);
+		if (!cfg_payload) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+	switch (pp_info->pcc_cfg_data.version) {
+	case mdp_pcc_v1_7:
+		ret = copy_from_user(cfg_payload,
+			compat_ptr(pp_info32->pcc_cfg_data.cfg_payload),
+			sizeof(struct mdp_pcc_data_v1_7));
+		if (ret) {
+			pr_err("compat copy of PCC cfg payload failed, ptr %p\n",
+				compat_ptr(
+				pp_info32->pcc_cfg_data.cfg_payload));
+			ret = -EFAULT;
+			kfree(cfg_payload);
+			cfg_payload = NULL;
+			goto exit;
+		}
+		break;
+	default:
+		pr_debug("version invalid, fallback to legacy\n");
+		cfg_payload = NULL;
+		break;
+	}
+exit:
+	pp_info->pcc_cfg_data.cfg_payload = cfg_payload;
+	return ret;
+}
+
+
+static int __copy_layer_pp_info_params(struct mdp_input_layer *layer,
+				struct mdp_input_layer32 *layer32)
+{
+	struct mdp_overlay_pp_params *pp_info;
+	struct mdp_overlay_pp_params32 pp_info32;
+	int ret = 0;
+
+	if (!(layer->flags & MDP_LAYER_PP))
+		return 0;
+
+	ret = copy_from_user(&pp_info32,
+			compat_ptr(layer32->pp_info),
+			sizeof(struct mdp_overlay_pp_params32));
+	if (ret) {
+		pr_err("pp info copy from user failed, pp_info %p\n",
+			compat_ptr(layer32->pp_info));
+		ret = -EFAULT;
+		goto exit;
+	}
+
+	pp_info = kmalloc(sizeof(struct mdp_overlay_pp_params), GFP_KERNEL);
+	if (!pp_info) {
+		ret = -ENOMEM;
+		goto exit;
+	}
+	memset(pp_info, 0, sizeof(struct mdp_overlay_pp_params));
+
+	pp_info->config_ops = pp_info32.config_ops;
+
+	memcpy(&pp_info->csc_cfg, &pp_info32.csc_cfg,
+		sizeof(struct mdp_csc_cfg));
+	memcpy(&pp_info->sharp_cfg, &pp_info32.sharp_cfg,
+		sizeof(struct mdp_sharp_cfg));
+	memcpy(&pp_info->hist_cfg, &pp_info32.hist_cfg,
+		sizeof(struct mdp_histogram_cfg));
+	memcpy(&pp_info->pa_cfg, &pp_info32.pa_cfg,
+		sizeof(struct mdp_pa_cfg));
+
+	ret = __copy_layer_pp_info_qseed_params(pp_info, &pp_info32);
+	if (ret) {
+		pr_err("compat copy pp_info QSEED params failed, ret %d\n",
+			ret);
+		goto exit_pp_info;
+	}
+	ret = __copy_layer_pp_info_legacy_pa_v2_params(pp_info, &pp_info32);
+	if (ret) {
+		pr_err("compat copy pp_info Legacy PAv2 params failed, ret %d\n",
+			ret);
+		goto exit_pp_info;
+	}
+	ret = __copy_layer_pp_info_igc_params(pp_info, &pp_info32);
+	if (ret) {
+		pr_err("compat copy pp_info IGC params failed, ret %d\n",
+			ret);
+		goto exit_pp_info;
+	}
+	ret = __copy_layer_pp_info_hist_lut_params(pp_info, &pp_info32);
+	if (ret) {
+		pr_err("compat copy pp_info Hist LUT params failed, ret %d\n",
+			ret);
+		goto exit_igc;
+	}
+	ret = __copy_layer_pp_info_pa_v2_params(pp_info, &pp_info32);
+	if (ret) {
+		pr_err("compat copy pp_info PAv2 params failed, ret %d\n",
+			ret);
+		goto exit_hist_lut;
+	}
+	ret = __copy_layer_pp_info_pcc_params(pp_info, &pp_info32);
+	if (ret) {
+		pr_err("compat copy pp_info PCC params failed, ret %d\n",
+			ret);
+		goto exit_pa;
+	}
+
+	layer->pp_info = pp_info;
+
+	return ret;
+
+exit_pa:
+	kfree(pp_info->pa_v2_cfg_data.cfg_payload);
+exit_hist_lut:
+	kfree(pp_info->hist_lut_cfg.cfg_payload);
+exit_igc:
+	kfree(pp_info->igc_cfg.cfg_payload);
+exit_pp_info:
+	kfree(pp_info);
+exit:
+	return ret;
+}
+
 
 static int __to_user_mdp_overlay(struct mdp_overlay32 __user *ov32,
 				 struct mdp_overlay __user *ov)
@@ -2421,10 +3861,6 @@ static int __to_user_mdp_overlay(struct mdp_overlay32 __user *ov32,
 
 	ret = copy_in_user(&ov32->scale, &ov->scale,
 			   sizeof(struct mdp_scale_data));
-	if (ret)
-		return -EFAULT;
-
-	ret |= put_user(ov->color_space, &ov32->color_space);
 	if (ret)
 		return -EFAULT;
 
@@ -2486,10 +3922,6 @@ static int __from_user_mdp_overlay(struct mdp_overlay *ov,
 
 	if (copy_in_user(&ov->scale, &ov32->scale,
 			 sizeof(struct mdp_scale_data)))
-		return -EFAULT;
-
-	if (get_user(data, &ov32->color_space) ||
-	    put_user(data, &ov->color_space))
 		return -EFAULT;
 
 	if (get_user(data, &ov32->frame_rate) ||
@@ -2614,8 +4046,39 @@ void mdss_compat_align_list(void __user *total_mem_chunk,
 		list_ptr[i] = contig_overlays + i;
 }
 
+static u32 __pp_sspp_size(void)
+{
+	u32 size = 0;
+	/* pick the largest of the revision when multiple revs are supported */
+	size = sizeof(struct mdp_igc_lut_data_v1_7);
+	size += sizeof(struct mdp_pa_data_v1_7);
+	size += sizeof(struct mdp_pcc_data_v1_7);
+	size += sizeof(struct mdp_hist_lut_data_v1_7);
+	return size;
+}
+
+static int __pp_sspp_set_offsets(struct mdp_overlay *ov)
+{
+	if (!ov) {
+		pr_err("invalid overlay pointer\n");
+		return -EFAULT;
+	}
+	ov->overlay_pp_cfg.igc_cfg.cfg_payload = (void *)((unsigned long)ov +
+				sizeof(struct mdp_overlay));
+	ov->overlay_pp_cfg.pa_v2_cfg_data.cfg_payload =
+		ov->overlay_pp_cfg.igc_cfg.cfg_payload +
+		sizeof(struct mdp_igc_lut_data_v1_7);
+	ov->overlay_pp_cfg.pcc_cfg_data.cfg_payload =
+		ov->overlay_pp_cfg.pa_v2_cfg_data.cfg_payload +
+		sizeof(struct mdp_pa_data_v1_7);
+	ov->overlay_pp_cfg.hist_lut_cfg.cfg_payload =
+		ov->overlay_pp_cfg.pcc_cfg_data.cfg_payload +
+		sizeof(struct mdp_pcc_data_v1_7);
+	return 0;
+}
+
 int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
-			 unsigned long arg)
+			 unsigned long arg, struct file *file)
 {
 	struct mdp_overlay *ov, **layers_head;
 	struct mdp_overlay32 *ov32;
@@ -2624,6 +4087,7 @@ int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
 	size_t layers_refs_sz, layers_sz, prepare_sz;
 	void __user *total_mem_chunk;
 	uint32_t num_overlays;
+	uint32_t alloc_size = 0;
 	int ret;
 
 	if (!info || !info->par)
@@ -2632,48 +4096,56 @@ int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
 
 	switch (cmd) {
 	case MSMFB_MDP_PP:
-		ret = mdss_compat_pp_ioctl(info, cmd, arg);
+		ret = mdss_compat_pp_ioctl(info, cmd, arg, file);
 		break;
 	case MSMFB_HISTOGRAM_START:
 	case MSMFB_HISTOGRAM_STOP:
 	case MSMFB_HISTOGRAM:
-		ret = mdss_histo_compat_ioctl(info, cmd, arg);
+		ret = mdss_histo_compat_ioctl(info, cmd, arg, file);
 		break;
 	case MSMFB_OVERLAY_GET:
-		ov = compat_alloc_user_space(sizeof(*ov));
+		alloc_size += sizeof(*ov) + __pp_sspp_size();
+		ov = compat_alloc_user_space(alloc_size);
 		if (!ov) {
 			pr_err("%s:%u: compat alloc error [%zu] bytes\n",
 				 __func__, __LINE__, sizeof(*ov));
 			return -EINVAL;
 		}
 		ov32 = compat_ptr(arg);
-		ret = __from_user_mdp_overlay(ov, ov32);
-
+		ret = __pp_sspp_set_offsets(ov);
 		if (ret) {
-			pr_err("%s: compat mdp overlay failed\n", __func__);
-		} else {
-			ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) ov);
-
-			if (!ret)
-				ret = __to_user_mdp_overlay(ov32, ov);
+			pr_err("setting the pp offsets failed ret %d\n", ret);
+			return ret;
 		}
+		ret = __from_user_mdp_overlay(ov, ov32);
+		if (ret)
+			pr_err("%s: compat mdp overlay failed\n", __func__);
+		else
+			ret = mdss_fb_do_ioctl(info, cmd,
+				(unsigned long) ov, file);
+		ret = __to_user_mdp_overlay(ov32, ov);
 		break;
 	case MSMFB_OVERLAY_SET:
-		ov = compat_alloc_user_space(sizeof(*ov));
+		alloc_size += sizeof(*ov) + __pp_sspp_size();
+		ov = compat_alloc_user_space(alloc_size);
 		if (!ov) {
 			pr_err("%s:%u: compat alloc error [%zu] bytes\n",
 				 __func__, __LINE__, sizeof(*ov));
 			return -EINVAL;
+		}
+		ret = __pp_sspp_set_offsets(ov);
+		if (ret) {
+			pr_err("setting the pp offsets failed ret %d\n", ret);
+			return ret;
 		}
 		ov32 = compat_ptr(arg);
 		ret = __from_user_mdp_overlay(ov, ov32);
 		if (ret) {
 			pr_err("%s: compat mdp overlay failed\n", __func__);
 		} else {
-			ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) ov);
-
-			if (!ret)
-				ret = __to_user_mdp_overlay(ov32, ov);
+			ret = mdss_fb_do_ioctl(info, cmd,
+				(unsigned long) ov, file);
+			ret = __to_user_mdp_overlay(ov32, ov);
 		}
 		break;
 	case MSMFB_OVERLAY_PREPARE:
@@ -2712,24 +4184,20 @@ int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
 			pr_err("compat mdp overlaylist failed\n");
 		} else {
 			ret = mdss_fb_do_ioctl(info, cmd,
-						(unsigned long) ovlist);
+				(unsigned long) ovlist, file);
 			if (!ret)
 				ret = __to_user_mdp_overlaylist(ovlist32,
 							 ovlist, layers_head);
 		}
 		break;
 	case MSMFB_OVERLAY_UNSET:
-	case MSMFB_OVERLAY_PLAY_ENABLE:
 	case MSMFB_OVERLAY_PLAY:
-	case MSMFB_OVERLAY_PLAY_WAIT:
-	case MSMFB_VSYNC_CTRL:
 	case MSMFB_OVERLAY_VSYNC_CTRL:
-	case MSMFB_OVERLAY_COMMIT:
 	case MSMFB_METADATA_SET:
 	case MSMFB_METADATA_GET:
 	default:
 		pr_debug("%s: overlay ioctl cmd=[%u]\n", __func__, cmd);
-		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) arg);
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) arg, file);
 		break;
 	}
 	return ret;
@@ -2746,7 +4214,7 @@ int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
  * framebuffer device driven in 64-bit kernel.
  */
 int mdss_fb_compat_ioctl(struct fb_info *info, unsigned int cmd,
-			 unsigned long arg)
+			 unsigned long arg, struct file *file)
 {
 	int ret;
 
@@ -2756,13 +4224,19 @@ int mdss_fb_compat_ioctl(struct fb_info *info, unsigned int cmd,
 	cmd = __do_compat_ioctl_nr(cmd);
 	switch (cmd) {
 	case MSMFB_CURSOR:
-		ret = mdss_fb_compat_cursor(info, cmd, arg);
+		ret = mdss_fb_compat_cursor(info, cmd, arg, file);
 		break;
 	case MSMFB_SET_LUT:
-		ret = mdss_fb_compat_set_lut(info, arg);
+		ret = mdss_fb_compat_set_lut(info, arg, file);
 		break;
 	case MSMFB_BUFFER_SYNC:
-		ret = mdss_fb_compat_buf_sync(info, cmd, arg);
+		ret = mdss_fb_compat_buf_sync(info, cmd, arg, file);
+		break;
+	case MSMFB_ATOMIC_COMMIT:
+		ret = __compat_atomic_commit(info, cmd, arg, file);
+		break;
+	case MSMFB_ASYNC_POSITION_UPDATE:
+		ret = __compat_async_position_update(info, cmd, arg);
 		break;
 	case MSMFB_MDP_PP:
 	case MSMFB_HISTOGRAM_START:
@@ -2771,20 +4245,17 @@ int mdss_fb_compat_ioctl(struct fb_info *info, unsigned int cmd,
 	case MSMFB_OVERLAY_GET:
 	case MSMFB_OVERLAY_SET:
 	case MSMFB_OVERLAY_UNSET:
-	case MSMFB_OVERLAY_PLAY_ENABLE:
 	case MSMFB_OVERLAY_PLAY:
-	case MSMFB_OVERLAY_PLAY_WAIT:
-	case MSMFB_VSYNC_CTRL:
 	case MSMFB_OVERLAY_VSYNC_CTRL:
-	case MSMFB_OVERLAY_COMMIT:
 	case MSMFB_METADATA_SET:
 	case MSMFB_METADATA_GET:
 	case MSMFB_OVERLAY_PREPARE:
-		ret = mdss_compat_overlay_ioctl(info, cmd, arg);
+		ret = mdss_compat_overlay_ioctl(info, cmd, arg, file);
 		break;
+	case MSMFB_NOTIFY_UPDATE:
 	case MSMFB_DISPLAY_COMMIT:
 	default:
-		ret = mdss_fb_do_ioctl(info, cmd, arg);
+		ret = mdss_fb_do_ioctl(info, cmd, arg, file);
 		break;
 	}
 

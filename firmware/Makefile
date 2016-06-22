@@ -4,10 +4,10 @@
 
 # Create $(fwabs) from $(CONFIG_EXTRA_FIRMWARE_DIR) -- if it doesn't have a
 # leading /, it's relative to $(srctree).
-fwdir := $(subst ",,$(CONFIG_EXTRA_FIRMWARE_DIR))
+fwdir := $(subst $(quote),,$(CONFIG_EXTRA_FIRMWARE_DIR))
 fwabs := $(addprefix $(srctree)/,$(filter-out /%,$(fwdir)))$(filter /%,$(fwdir))
 
-fw-external-y := $(subst ",,$(CONFIG_EXTRA_FIRMWARE))
+fw-external-y := $(subst $(quote),,$(CONFIG_EXTRA_FIRMWARE))
 
 # There are three cases to care about:
 # 1. Building kernel with CONFIG_FIRMWARE_IN_KERNEL=y -- $(fw-shipped-y) should
@@ -26,6 +26,15 @@ fw-shipped- += acenic/tg1.bin
 else
 acenic-objs := acenic/tg1.bin acenic/tg2.bin
 endif
+
+ifdef CONFIG_LGE_TOUCH_FW_PATH
+fwpath := $(subst ",,$(CONFIG_LGE_TOUCH_FW_PATH))
+lge_touch_image_files := $(wildcard $(srctree)/firmware/$(fwpath)/*.img)
+lge_touch_image_files += $(wildcard $(srctree)/firmware/$(fwpath)/*.txt)
+endif
+lge_touch_firmware := $(subst $(srctree)/firmware/,,$(lge_touch_image_files))
+fw-shipped-$(CONFIG_LGE_TOUCH_CORE_BASE) += $(lge_touch_firmware)
+
 fw-shipped-$(CONFIG_ACENIC) += $(acenic-objs)
 fw-shipped-$(CONFIG_ADAPTEC_STARFIRE) += adaptec/starfire_rx.bin \
 					 adaptec/starfire_tx.bin
@@ -135,17 +144,16 @@ fw-shipped-$(CONFIG_USB_SERIAL_XIRCOM) += keyspan_pda/xircom_pgs.fw
 fw-shipped-$(CONFIG_USB_VICAM) += vicam/firmware.fw
 fw-shipped-$(CONFIG_VIDEO_CPIA2) += cpia2/stv0672_vp4.bin
 fw-shipped-$(CONFIG_YAM) += yam/1200.bin yam/9600.bin
+fw-shipped-$(CONFIG_LGE_USB_ANX7418) += anx7418/ocm_hamming_12.bin
+fw-shipped-$(CONFIG_LGE_USB_ANX7418) += anx7418/ocm_crc_08.bin
 
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 
-# Directories which we _might_ need to create, so we have a rule for them.
-firmware-dirs := $(sort $(addprefix $(objtree)/$(obj)/,$(dir $(fw-external-y) $(fw-shipped-all))))
-
-quiet_cmd_mkdir = MKDIR   $(patsubst $(objtree)/%,%,$@)
-      cmd_mkdir = mkdir -p $@
-
 quiet_cmd_ihex  = IHEX    $@
       cmd_ihex  = $(OBJCOPY) -Iihex -Obinary $< $@
+
+quiet_cmd_copy  = COPY    $@
+      cmd_copy  = cp -u $(srctree)/$@ $@
 
 quiet_cmd_ihex2fw  = IHEX2FW $@
       cmd_ihex2fw  = $(objtree)/$(obj)/ihex2fw $< $@
@@ -190,15 +198,16 @@ wordsize_deps := $(wildcard include/config/64bit.h include/config/32bit.h \
 PHONY += $(objtree)/$$(%) $(objtree)/$(obj)/$$(%)
 $(objtree)/$$(%) $(objtree)/$(obj)/$$(%): $(firmware-dirs)
 	@true
-
 # For the $$(dir %) trick, where we need % to be expanded first.
 .SECONDEXPANSION:
-
-$(patsubst %,$(obj)/%.gen.S, $(fw-shipped-y)): %: $(wordsize_deps) \
-		| $(objtree)/$$(dir %)
+ifneq ($(objtree),$(srctree))
+$(patsubst %,$(obj)/%, $(fw-shipped-y)): %: %.gen.S
+	$(call cmd,copy)
+endif
+$(patsubst %,$(obj)/%.gen.S, $(fw-shipped-y)): %: $(wordsize_deps)
 	$(call cmd,fwbin,$(patsubst %.gen.S,%,$@))
 $(patsubst %,$(obj)/%.gen.S, $(fw-external-y)): %: $(wordsize_deps) \
-		include/config/extra/firmware/dir.h | $(objtree)/$$(dir %)
+		include/config/extra/firmware/dir.h
 	$(call cmd,fwbin,$(fwabs)/$(patsubst $(obj)/%.gen.S,%,$@))
 
 # The .o files depend on the binaries directly; the .S files don't.
@@ -207,7 +216,7 @@ $(patsubst %,$(obj)/%.gen.o, $(fw-external-y)): $(obj)/%.gen.o: $(fwdir)/%
 
 # .ihex is used just as a simple way to hold binary files in a source tree
 # where binaries are frowned upon. They are directly converted with objcopy.
-$(obj)/%: $(obj)/%.ihex | $(objtree)/$(obj)/$$(dir %)
+$(obj)/%: $(obj)/%.ihex
 	$(call cmd,ihex)
 
 # Don't depend on ihex2fw if we're installing and it already exists.
@@ -226,18 +235,21 @@ endif
 # is actually meaningful, because the firmware has to be loaded in a certain
 # order rather than as a single binary blob. Thus, we convert them into our
 # more compact binary representation of ihex records (<linux/ihex.h>)
-$(obj)/%.fw: $(obj)/%.HEX $(ihex2fw_dep) | $(objtree)/$(obj)/$$(dir %)
+$(obj)/%.fw: $(obj)/%.HEX $(ihex2fw_dep)
 	$(call cmd,ihex2fw)
 
 # .H16 is our own modified form of Intel HEX, with 16-bit length for records.
-$(obj)/%.fw: $(obj)/%.H16 $(ihex2fw_dep) | $(objtree)/$(obj)/$$(dir %)
+$(obj)/%.fw: $(obj)/%.H16 $(ihex2fw_dep)
 	$(call cmd,h16tofw)
-
-$(firmware-dirs):
-	$(call cmd,mkdir)
 
 obj-y				 += $(patsubst %,%.gen.o, $(fw-external-y))
 obj-$(CONFIG_FIRMWARE_IN_KERNEL) += $(patsubst %,%.gen.o, $(fw-shipped-y))
+
+ifeq ($(KBUILD_SRC),)
+# Makefile.build only creates subdirectories for O= builds, but external
+# firmware might live outside the kernel source tree
+_dummy := $(foreach d,$(addprefix $(obj)/,$(dir $(fw-external-y))), $(shell [ -d $(d) ] || mkdir -p $(d)))
+endif
 
 # Remove .S files and binaries created from ihex
 # (during 'make clean' .config isn't included so they're all in $(fw-shipped-))
@@ -246,6 +258,6 @@ targets := $(fw-shipped-) $(patsubst $(obj)/%,%, \
 
 # Without this, built-in.o won't be created when it's empty, and the
 # final vmlinux link will fail.
-obj-n := dummy
+obj- := dummy
 
 hostprogs-y := ihex2fw

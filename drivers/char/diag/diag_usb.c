@@ -28,6 +28,9 @@
 #include "diag_usb.h"
 #include "diag_mux.h"
 #include "diagmem.h"
+#ifdef CONFIG_LGE_DIAG_BYPASS
+int diag_bypass_enable = 1;
+#endif
 #include "diag_ipc_logging.h"
 
 #define DIAG_USB_STRING_SZ	10
@@ -313,21 +316,20 @@ static void diag_usb_write_done(struct diag_usb_info *ch,
 		diag_ws_on_copy_complete(DIAG_WS_MUX);
 		diagmem_free(driver, req, ch->mempool);
 		return;
-	} else {
-		DIAG_LOG(DIAG_DEBUG_MUX, "full write_done, ctxt: %d\n",
-			 ctxt);
-		spin_lock_irqsave(&ch->write_lock, flags);
-		list_del(&entry->track);
-		spin_unlock_irqrestore(&ch->write_lock, flags);
 	}
+	DIAG_LOG(DIAG_DEBUG_MUX, "full write_done, ctxt: %d\n",
+		 ctxt);
+	spin_lock_irqsave(&ch->write_lock, flags);
+	list_del(&entry->track);
 	ctxt = entry->ctxt;
 	buf = entry->buf;
 	len = entry->len;
 	kfree(entry);
+	diag_ws_on_copy_complete(DIAG_WS_MUX);
+	spin_unlock_irqrestore(&ch->write_lock, flags);
 
 	if (ch->ops && ch->ops->write_done)
 		ch->ops->write_done(buf, len, ctxt, DIAG_USB_MODE);
-	diag_ws_on_copy_complete(DIAG_WS_MUX);
 	diagmem_free(driver, req, ch->mempool);
 }
 
@@ -347,12 +349,18 @@ static void diag_usb_notifier(void *priv, unsigned event,
 	case USB_DIAG_CONNECT:
 		usb_info->max_size = usb_diag_request_size(usb_info->hdl);
 		atomic_set(&usb_info->connected, 1);
+#ifdef CONFIG_LGE_DIAG_BYPASS
+        diag_bypass_enable = 0;
+#endif
 		pr_info("diag: USB channel %s connected\n", usb_info->name);
 		queue_work(usb_info->usb_wq,
 			   &usb_info->connect_work);
 		break;
 	case USB_DIAG_DISCONNECT:
 		atomic_set(&usb_info->connected, 0);
+#ifdef CONFIG_LGE_DIAG_BYPASS
+        diag_bypass_enable = 1;
+#endif
 		pr_info("diag: USB channel %s disconnected\n", usb_info->name);
 		queue_work(usb_info->usb_wq,
 			   &usb_info->disconnect_work);

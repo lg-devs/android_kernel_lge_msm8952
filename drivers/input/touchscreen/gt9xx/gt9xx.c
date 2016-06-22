@@ -1,6 +1,6 @@
 /* drivers/input/touchscreen/gt9xx.c
  *
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * Linux Foundation chooses to take subject only to the GPLv2 license
  * terms, and distributes only under these terms.
@@ -201,7 +201,7 @@ int gtp_i2c_write(struct i2c_client *client, u8 *buf, int len)
 			break;
 		dev_err(&client->dev, "I2C retry: %d\n", retries + 1);
 	}
-	if ((retries == GTP_I2C_RETRY_5)) {
+	if (retries == GTP_I2C_RETRY_5) {
 		if (ts->pdata->slide_wakeup)
 			if (DOZE_ENABLED == doze_status)
 				return ret;
@@ -252,12 +252,10 @@ int gtp_i2c_read_dbl_check(struct i2c_client *client,
 	if (retry < GTP_I2C_RETRY_3) {
 		memcpy(rxbuf, confirm_buf + 2, len);
 		return SUCCESS;
-	} else {
-		dev_err(&client->dev,
-			"i2c read 0x%04X, %d bytes, double check failed!",
-			addr, len);
-		return FAIL;
 	}
+	dev_err(&client->dev,
+		"i2c read 0x%04X, %d bytes, double check failed!", addr, len);
+	return FAIL;
 }
 
 /*******************************************************
@@ -744,19 +742,18 @@ static u8 gtp_enter_sleep(struct goodix_ts_data *ts)
 			return ret;
 		}
 		return 0;
-	} else {
-		usleep(5000);
-		while (retry++ < GTP_I2C_RETRY_5) {
-			ret = gtp_i2c_write(ts->client, i2c_control_buf, 3);
-			if (ret == 1) {
-				dev_dbg(&ts->client->dev, "GTP enter sleep!");
-				return 0;
-			}
-			msleep(20);
-		}
-		dev_err(&ts->client->dev, "GTP send sleep cmd failed.\n");
-		return ret;
 	}
+	usleep(5000);
+	while (retry++ < GTP_I2C_RETRY_5) {
+		ret = gtp_i2c_write(ts->client, i2c_control_buf, 3);
+		if (ret == 1) {
+			dev_dbg(&ts->client->dev, "GTP enter sleep!");
+			return 0;
+		}
+		msleep(20);
+	}
+	dev_err(&ts->client->dev, "GTP send sleep cmd failed.\n");
+	return ret;
 }
 
 /*******************************************************
@@ -1186,11 +1183,10 @@ static int gtp_request_irq(struct goodix_ts_data *ts)
 	if (ret) {
 		ts->use_irq = false;
 		return ret;
-	} else {
-		gtp_irq_disable(ts);
-		ts->use_irq = true;
-		return ret;
 	}
+	gtp_irq_disable(ts);
+	ts->use_irq = true;
+	return ret;
 }
 
 /*******************************************************
@@ -1216,7 +1212,7 @@ static int gtp_request_input_dev(struct goodix_ts_data *ts)
 	}
 
 	ts->input_dev->evbit[0] =
-		BIT_MASK(EV_SYN) | BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS) ;
+		BIT_MASK(EV_SYN) | BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
 	set_bit(BTN_TOOL_FINGER, ts->input_dev->keybit);
 	__set_bit(INPUT_PROP_DIRECT, ts->input_dev->propbit);
 	/* in case of "out of memory" */
@@ -1523,6 +1519,7 @@ static ssize_t gtp_fw_upgrade_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct goodix_ts_data *ts = dev_get_drvdata(dev);
+
 	return snprintf(buf, 2, "%d\n", ts->fw_loading);
 }
 
@@ -1537,8 +1534,9 @@ static ssize_t gtp_fw_upgrade_store(struct device *dev,
 	if (size > 2)
 		return -EINVAL;
 
-	if (sscanf(buf, "%u", &val) != 1)
-		return -EINVAL;
+	ret = kstrtouint(buf, 10, &val);
+	if (ret)
+		return ret;
 
 	if (ts->gtp_is_suspend) {
 		dev_err(&ts->client->dev,
@@ -1575,8 +1573,9 @@ static ssize_t gtp_force_fw_upgrade_store(struct device *dev,
 	if (size > 2)
 		return -EINVAL;
 
-	if (sscanf(buf, "%u", &val) != 1)
-		return -EINVAL;
+	ret = kstrtouint(buf, 10, &val);
+	if (ret)
+		return ret;
 
 	if (ts->gtp_is_suspend) {
 		dev_err(&ts->client->dev,
@@ -1954,11 +1953,8 @@ static int goodix_ts_probe(struct i2c_client *client,
 	if (client->dev.of_node) {
 		pdata = devm_kzalloc(&client->dev,
 			sizeof(struct goodix_ts_platform_data), GFP_KERNEL);
-		if (!pdata) {
-			dev_err(&client->dev,
-				"GTP Failed to allocate memory for pdata\n");
+		if (!pdata)
 			return -ENOMEM;
-		}
 
 		ret = goodix_parse_dt(&client->dev, pdata);
 		if (ret)
@@ -1980,10 +1976,8 @@ static int goodix_ts_probe(struct i2c_client *client,
 	}
 
 	ts = devm_kzalloc(&client->dev, sizeof(*ts), GFP_KERNEL);
-	if (!ts) {
-		dev_err(&client->dev, "GTP not enough memory for ts\n");
+	if (!ts)
 		return -ENOMEM;
-	}
 
 	memset(ts, 0, sizeof(*ts));
 	ts->client = client;
@@ -2357,7 +2351,6 @@ static void goodix_ts_late_resume(struct early_suspend *h)
 
 	ts = container_of(h, struct goodix_ts_data, early_suspend);
 	goodix_ts_late_resume(ts);
-	return;
 }
 #endif
 #endif /* !CONFIG_HAS_EARLYSUSPEND && !CONFIG_FB*/
@@ -2467,12 +2460,11 @@ static void gtp_esd_check_func(struct work_struct *work)
 				/* IC works abnormally..*/
 				retry = GTP_I2C_RETRY_3;
 				break;
-			} else {
-				/* IC works normally, Write 0x8040 0xAA*/
-				test[2] = 0xAA;
-				gtp_i2c_write(ts->client, test, 3);
-				break;
 			}
+			/* IC works normally, Write 0x8040 0xAA*/
+			test[2] = 0xAA;
+			gtp_i2c_write(ts->client, test, 3);
+			break;
 		}
 	}
 	if (retry == GTP_I2C_RETRY_3) {

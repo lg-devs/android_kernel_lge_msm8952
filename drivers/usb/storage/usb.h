@@ -161,8 +161,6 @@ struct us_data {
 	/* hacks for READ CAPACITY bug handling */
 	int			use_last_sector_hacks;
 	int			last_sector_retries;
-	int			sdev_autosuspend_delay;
-	unsigned int		sdev_max_ratio;
 };
 
 /* Convert between us_data and the corresponding Scsi_Host */
@@ -202,5 +200,8 @@ extern int usb_stor_probe1(struct us_data **pus,
 		struct us_unusual_dev *unusual_dev);
 extern int usb_stor_probe2(struct us_data *us);
 extern void usb_stor_disconnect(struct usb_interface *intf);
+
+extern void usb_stor_adjust_quirks(struct usb_device *dev,
+		unsigned long *fflags);
 
 #endif

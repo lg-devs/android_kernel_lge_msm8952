@@ -64,11 +64,11 @@ struct mmc_command {
  *              actively failing requests
  */
 
-	unsigned int		cmd_timeout_ms;	/* in milliseconds */
-	/* Set this flag only for sanitize request */
+	unsigned int		busy_timeout;	/* busy detect timeout in ms */
+	/* Set this flag only for blocking sanitize request */
 	bool			sanitize_busy;
-	/* Set this flag only for commands which can be HPIed */
-	bool			ignore_timeout;
+	/* Set this flag only for blocking bkops request */
+	bool			bkops_busy;
 
 	struct mmc_data		*data;		/* data segment associated with cmd */
 	struct mmc_request	*mrq;		/* associated request */
@@ -111,6 +111,22 @@ struct mmc_request {
 	struct request *req;
 };
 
+struct mmc_bus_ops {
+	void (*remove)(struct mmc_host *);
+	void (*detect)(struct mmc_host *);
+	int (*pre_suspend)(struct mmc_host *);
+	int (*suspend)(struct mmc_host *);
+	int (*resume)(struct mmc_host *);
+	int (*runtime_suspend)(struct mmc_host *);
+	int (*runtime_resume)(struct mmc_host *);
+	int (*runtime_idle)(struct mmc_host *);
+	int (*power_save)(struct mmc_host *);
+	int (*power_restore)(struct mmc_host *);
+	int (*alive)(struct mmc_host *);
+	int (*shutdown)(struct mmc_host *);
+	int (*change_bus_speed)(struct mmc_host *, unsigned long *);
+};
+
 struct mmc_card;
 struct mmc_async_req;
 struct mmc_cmdq_req;
@@ -118,7 +134,8 @@ struct mmc_cmdq_req;
 extern int mmc_cmdq_discard_queue(struct mmc_host *host, u32 tasks);
 extern int mmc_cmdq_halt(struct mmc_host *host, bool enable);
 extern int mmc_cmdq_halt_on_empty_queue(struct mmc_host *host);
-extern void mmc_cmdq_post_req(struct mmc_host *host, int tag, int err);
+extern void mmc_cmdq_post_req(struct mmc_host *host, struct mmc_request *mrq,
+			      int err);
 extern int mmc_cmdq_start_req(struct mmc_host *host,
 			      struct mmc_cmdq_req *cmdq_req);
 extern int mmc_cmdq_prepare_flush(struct mmc_command *cmd);
@@ -127,9 +144,9 @@ extern int mmc_cmdq_wait_for_dcmd(struct mmc_host *host,
 extern int mmc_cmdq_erase(struct mmc_cmdq_req *cmdq_req,
 	      struct mmc_card *card, unsigned int from, unsigned int nr,
 	      unsigned int arg);
+
 extern int mmc_stop_bkops(struct mmc_card *);
 extern int mmc_read_bkops_status(struct mmc_card *);
-extern bool mmc_card_is_prog_state(struct mmc_card *);
 extern struct mmc_async_req *mmc_start_req(struct mmc_host *,
 					   struct mmc_async_req *, int *);
 extern int mmc_interrupt_hpi(struct mmc_card *);
@@ -138,21 +155,16 @@ extern int mmc_wait_for_cmd(struct mmc_host *, struct mmc_command *, int);
 extern int mmc_app_cmd(struct mmc_host *, struct mmc_card *);
 extern int mmc_wait_for_app_cmd(struct mmc_host *, struct mmc_card *,
 	struct mmc_command *, int);
-extern void mmc_start_bkops(struct mmc_card *card, bool from_exception);
-extern void mmc_start_delayed_bkops(struct mmc_card *card);
-extern void mmc_start_idle_time_bkops(struct work_struct *work);
-extern void mmc_bkops_completion_polling(struct work_struct *work);
+extern void mmc_check_bkops(struct mmc_card *card);
+extern void mmc_start_manual_bkops(struct mmc_card *card);
 extern int __mmc_switch(struct mmc_card *, u8, u8, u8, unsigned int, bool,
-			bool);
+			bool, bool);
 extern int __mmc_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index,
 				  u8 value, unsigned int timeout_ms,
 				  bool use_busy_signal, bool ignore_timeout);
 extern int mmc_switch(struct mmc_card *, u8, u8, u8, unsigned int);
-extern int mmc_switch_ignore_timeout(struct mmc_card *, u8, u8, u8,
-				     unsigned int);
 extern int mmc_send_ext_csd(struct mmc_card *card, u8 *ext_csd);
-extern void mmc_clk_scaling(struct mmc_host *host, bool from_wq);
-extern void mmc_update_clk_scaling(struct mmc_host *host, bool is_cmdq_dcmd);
+extern int mmc_set_auto_bkops(struct mmc_card *card, bool enable);
 
 #define MMC_ERASE_ARG		0x00000000
 #define MMC_SECURE_ERASE_ARG	0x80000000
@@ -179,7 +191,6 @@ extern int mmc_set_blocklen(struct mmc_card *card, unsigned int blocklen);
 extern int mmc_set_blockcount(struct mmc_card *card, unsigned int blockcount,
 			      bool is_rel_write);
 extern int mmc_hw_reset(struct mmc_host *host);
-extern int mmc_cmdq_hw_reset(struct mmc_host *host);
 extern int mmc_hw_reset_check(struct mmc_host *host);
 extern int mmc_can_reset(struct mmc_card *card);
 
@@ -188,15 +199,24 @@ extern unsigned int mmc_align_data_size(struct mmc_card *, unsigned int);
 
 extern int __mmc_claim_host(struct mmc_host *host, atomic_t *abort);
 extern void mmc_release_host(struct mmc_host *host);
-extern int mmc_try_claim_host(struct mmc_host *host);
+
+extern void mmc_get_card(struct mmc_card *card);
+extern void mmc_put_card(struct mmc_card *card);
+extern void __mmc_put_card(struct mmc_card *card);
+
 extern void mmc_set_ios(struct mmc_host *host);
 extern int mmc_flush_cache(struct mmc_card *);
+extern int mmc_cache_barrier(struct mmc_card *);
 
 extern int mmc_detect_card_removed(struct mmc_host *host);
 
 extern void mmc_blk_init_bkops_statistics(struct mmc_card *card);
-extern void mmc_rpm_hold(struct mmc_host *host, struct device *dev);
-extern void mmc_rpm_release(struct mmc_host *host, struct device *dev);
+
+extern void mmc_deferred_scaling(struct mmc_host *host);
+extern void mmc_cmdq_clk_scaling_start_busy(struct mmc_host *host,
+	bool lock_needed);
+extern void mmc_cmdq_clk_scaling_stop_busy(struct mmc_host *host,
+	bool lock_needed, bool is_cmdq_dcmd);
 
 /**
  *	mmc_claim_host - exclusively claim a host
@@ -209,6 +229,8 @@ static inline void mmc_claim_host(struct mmc_host *host)
 	__mmc_claim_host(host, NULL);
 }
 
+struct device_node;
 extern u32 mmc_vddrange_to_ocrmask(int vdd_min, int vdd_max);
+extern int mmc_of_parse_voltage(struct device_node *np, u32 *mask);
 
 #endif /* LINUX_MMC_CORE_H */

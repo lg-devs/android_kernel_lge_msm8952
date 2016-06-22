@@ -94,7 +94,7 @@ struct ion_cma_pdata {
 #ifdef CONFIG_ION
 /**
  *  msm_ion_client_create - allocate a client using the ion_device specified in
- *				drivers/gpu/ion/msm/msm_ion.c
+ *				drivers/staging/android/ion/msm/msm_ion.c
  *
  * name is the same as ion_client_create, return values
  * are the same as ion_client_create.
@@ -132,7 +132,7 @@ int ion_handle_get_flags(struct ion_client *client, struct ion_handle *handle,
  */
 
 int ion_handle_get_size(struct ion_client *client, struct ion_handle *handle,
-			unsigned long *size);
+			size_t *size);
 /**
  * msm_ion_do_cache_op - do cache operations.
  *
@@ -150,12 +150,6 @@ int ion_handle_get_size(struct ion_client *client, struct ion_handle *handle,
 int msm_ion_do_cache_op(struct ion_client *client, struct ion_handle *handle,
 			void *vaddr, unsigned long len, unsigned int cmd);
 
-int msm_ion_secure_table(struct sg_table *table);
-
-int msm_ion_unsecure_table(struct sg_table *table);
-int msm_ion_hyp_assign_call(struct sg_table *table,
-				u32 *source_vm_list, u32 source_list_size,
-				u32 *dest_vm_list, u32 dest_list_size);
 #else
 static inline struct ion_client *msm_ion_client_create(const char *name)
 {
@@ -163,7 +157,7 @@ static inline struct ion_client *msm_ion_client_create(const char *name)
 }
 
 static inline int ion_handle_get_size(struct ion_client *client,
-				struct ion_handle *handle, unsigned long *size)
+				struct ion_handle *handle, size_t *size)
 {
 	return -ENODEV;
 }
@@ -171,23 +165,6 @@ static inline int ion_handle_get_size(struct ion_client *client,
 static inline int msm_ion_do_cache_op(struct ion_client *client,
 			struct ion_handle *handle, void *vaddr,
 			unsigned long len, unsigned int cmd)
-{
-	return -ENODEV;
-}
-
-static inline int msm_ion_secure_table(struct sg_table *table)
-{
-	return -ENODEV;
-}
-
-static inline int msm_ion_unsecure_table(struct sg_table *table)
-{
-	return -ENODEV;
-}
-
-static inline int msm_ion_hyp_assign_call(struct sg_table *table,
-				u32 *source_vm_list, u32 source_list_size,
-				u32 *dest_vm_list, u32 dest_list_size)
 {
 	return -ENODEV;
 }

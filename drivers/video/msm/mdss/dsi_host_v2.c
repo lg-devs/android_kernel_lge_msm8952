@@ -311,7 +311,7 @@ static int msm_dsi_wait4mdp_done(struct mdss_dsi_ctrl_pdata *ctrl)
 	unsigned long flag;
 
 	spin_lock_irqsave(&ctrl->mdp_lock, flag);
-	INIT_COMPLETION(ctrl->mdp_comp);
+	reinit_completion(&ctrl->mdp_comp);
 	msm_dsi_set_irq(ctrl, DSI_INTR_CMD_MDP_DONE_MASK);
 	spin_unlock_irqrestore(&ctrl->mdp_lock, flag);
 
@@ -354,7 +354,7 @@ static int msm_dsi_wait4video_done(struct mdss_dsi_ctrl_pdata *ctrl)
 	unsigned long flag;
 
 	spin_lock_irqsave(&ctrl->mdp_lock, flag);
-	INIT_COMPLETION(ctrl->video_comp);
+	reinit_completion(&ctrl->video_comp);
 	msm_dsi_set_irq(ctrl, DSI_INTR_VIDEO_DONE_MASK);
 	spin_unlock_irqrestore(&ctrl->mdp_lock, flag);
 
@@ -650,7 +650,7 @@ int msm_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 	msm_dsi_get_cmd_engine(ctrl);
 
 	spin_lock_irqsave(&ctrl->mdp_lock, flag);
-	INIT_COMPLETION(ctrl->dma_comp);
+	reinit_completion(&ctrl->dma_comp);
 	msm_dsi_set_irq(ctrl, DSI_INTR_CMD_DMA_DONE_MASK);
 	spin_unlock_irqrestore(&ctrl->mdp_lock, flag);
 
@@ -753,7 +753,7 @@ static int msm_dsi_cmds_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 			}
 
 			if (dchdr->wait)
-				usleep(dchdr->wait * 1000);
+				usleep_range(dchdr->wait * 1000, dchdr->wait * 1000);
 
 			mdss_dsi_buf_init(tp);
 			len = 0;
@@ -1035,7 +1035,7 @@ int msm_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 }
 
 static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
-				u32 *bitclk_rate,
+				u64 *bitclk_rate,
 				u32 *dsiclk_rate,
 				u32 *byteclk_rate,
 				u32 *pclk_rate)
@@ -1044,6 +1044,7 @@ static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 	struct mipi_panel_info *mipi;
 	u32 hbp, hfp, vbp, vfp, hspw, vspw, width, height;
 	int lanes;
+	u64 clk_rate;
 
 	pinfo = &pdata->panel_info;
 	mipi  = &pdata->panel_info.mipi;
@@ -1072,9 +1073,11 @@ static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 	*bitclk_rate = (width + hbp + hfp + hspw) * (height + vbp + vfp + vspw);
 	*bitclk_rate *= mipi->frame_rate;
 	*bitclk_rate *= pdata->panel_info.bpp;
-	*bitclk_rate /= lanes;
+	do_div(*bitclk_rate, lanes);
+	clk_rate = *bitclk_rate;
 
-	*byteclk_rate = *bitclk_rate / 8;
+	do_div(clk_rate, 8U);
+	*byteclk_rate = (u32) clk_rate;
 	*dsiclk_rate = *byteclk_rate * lanes;
 	*pclk_rate = *byteclk_rate * lanes * 8 / pdata->panel_info.bpp;
 
@@ -1086,13 +1089,14 @@ static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 static int msm_dsi_on(struct mdss_panel_data *pdata)
 {
 	int ret = 0, i;
-	u32 clk_rate;
+	u64 clk_rate;
 	struct mdss_panel_info *pinfo;
 	struct mipi_panel_info *mipi;
 	u32 hbp, hfp, vbp, vfp, hspw, vspw, width, height;
 	u32 ystride, bpp, data;
 	u32 dummy_xres, dummy_yres;
-	u32 bitclk_rate = 0, byteclk_rate = 0, pclk_rate = 0, dsiclk_rate = 0;
+	u64 bitclk_rate = 0
+	u32 byteclk_rate = 0, pclk_rate = 0, dsiclk_rate = 0;
 	unsigned char *ctrl_base = dsi_host_private->dsi_base;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
@@ -1406,7 +1410,7 @@ static int msm_dsi_bta_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 	msm_dsi_clk_ctrl(&ctrl_pdata->panel_data, 1);
 	msm_dsi_cmd_mdp_busy(ctrl_pdata);
 	msm_dsi_set_irq(ctrl_pdata, DSI_INTR_BTA_DONE_MASK);
-	INIT_COMPLETION(ctrl_pdata->bta_comp);
+	reinit_completion(&ctrl_pdata->bta_comp);
 
 	/* BTA trigger */
 	MIPI_OUTP(dsi_host_private->dsi_base + DSI_CMD_MODE_BTA_SW_TRIGGER,

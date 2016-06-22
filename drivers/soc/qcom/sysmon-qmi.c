@@ -448,7 +448,7 @@ int sysmon_send_shutdown(struct subsys_desc *dest_desc)
 	resp_desc.max_msg_len = QMI_SSCTL_RESP_MSG_LENGTH;
 	resp_desc.ei_array = qmi_ssctl_shutdown_resp_msg_ei;
 
-	INIT_COMPLETION(data->ind_recv);
+	reinit_completion(&data->ind_recv);
 	mutex_lock(&sysmon_lock);
 	ret = qmi_send_req_wait(data->clnt_handle, &req_desc, &req,
 		sizeof(req), &resp_desc, &resp, sizeof(resp), SERVER_TIMEOUT);
@@ -465,24 +465,23 @@ int sysmon_send_shutdown(struct subsys_desc *dest_desc)
 		goto out;
 	}
 
+	shutdown_ack_ret = wait_for_shutdown_ack(dest_desc);
+	if (shutdown_ack_ret < 0) {
+		pr_err("shutdown_ack SMP2P bit for %s not set\n", data->name);
+		if (!&data->ind_recv.done) {
+			pr_err("QMI shutdown indication not received\n");
+			ret = shutdown_ack_ret;
+		}
+		goto out;
+	} else if (shutdown_ack_ret > 0)
+		goto out;
+
 	if (!wait_for_completion_timeout(&data->ind_recv,
 					msecs_to_jiffies(SHUTDOWN_TIMEOUT))) {
 		pr_err("Timed out waiting for shutdown indication from %s\n",
 							data->name);
 		ret = -ETIMEDOUT;
 	}
-
-	/*
-	 * Subsystem SSCTL service might not be able to send the QMI
-	 * acknowledgment. Wait for the shutdown_ack SMP2P bit to be
-	 * set by the service if that's the case.
-	 */
-	shutdown_ack_ret = wait_for_shutdown_ack(dest_desc);
-	if (shutdown_ack_ret < 0) {
-		pr_err("shutdown_ack SMP2P bit for %s not set\n", data->name);
-		ret = shutdown_ack_ret;
-	} else if (shutdown_ack_ret > 0)
-		ret = 0;
 out:
 	mutex_unlock(&sysmon_lock);
 	return ret;
@@ -660,12 +659,12 @@ int sysmon_notifier_register(struct subsys_desc *desc)
 	data->clnt_handle = NULL;
 	data->legacy_version = false;
 
+	mutex_lock(&sysmon_list_lock);
 	if (data->instance_id <= 0) {
 		pr_debug("SSCTL instance id not defined\n");
 		goto add_list;
 	}
 
-	mutex_lock(&sysmon_list_lock);
 	if (sysmon_wq)
 		goto notif_register;
 

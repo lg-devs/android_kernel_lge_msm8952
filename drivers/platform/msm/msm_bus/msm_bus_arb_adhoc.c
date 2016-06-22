@@ -706,7 +706,6 @@ static int update_path(struct device *src_dev, int dest, uint64_t act_req_ib,
 
 	while (next_dev) {
 		int i;
-
 		dev_info = to_msm_bus_node(next_dev);
 
 		if (curr_idx >= dev_info->num_lnodes) {
@@ -919,7 +918,7 @@ static int alloc_handle_lst(int size)
 	} else {
 		t_cl_list = krealloc(handle_list.cl_list,
 				sizeof(struct msm_bus_client *) *
-				handle_list.num_entries + NUM_CL_HANDLES,
+				(handle_list.num_entries + NUM_CL_HANDLES),
 				GFP_KERNEL);
 		if (ZERO_OR_NULL_PTR(t_cl_list)) {
 			ret = -ENOMEM;

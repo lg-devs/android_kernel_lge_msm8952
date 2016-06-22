@@ -74,7 +74,6 @@ struct idletimer_tg {
 	bool work_pending;
 	bool send_nl_msg;
 	bool active;
-	bool suspend_time_valid;
 	uid_t uid;
 };
 
@@ -245,13 +244,8 @@ static int idletimer_resume(struct notifier_block *notifier,
 	switch (pm_event) {
 	case PM_SUSPEND_PREPARE:
 		get_monotonic_boottime(&timer->last_suspend_time);
-		timer->suspend_time_valid = true;
 		break;
 	case PM_POST_SUSPEND:
-		if (!timer->suspend_time_valid)
-			break;
-		timer->suspend_time_valid = false;
-
 		spin_lock_bh(&timestamp_lock);
 		if (!timer->active) {
 			spin_unlock_bh(&timestamp_lock);
@@ -286,7 +280,7 @@ static int idletimer_tg_create(struct idletimer_tg_info *info)
 {
 	int ret;
 
-	info->timer = kzalloc(sizeof(*info->timer), GFP_KERNEL);
+	info->timer = kmalloc(sizeof(*info->timer), GFP_KERNEL);
 	if (!info->timer) {
 		ret = -ENOMEM;
 		goto out;
@@ -359,12 +353,8 @@ static void reset_timer(const struct idletimer_tg_info *info,
 
 		/* Stores the uid resposible for waking up the radio */
 		if (skb && (skb->sk)) {
-			struct sock *sk = skb->sk;
-			read_lock_bh(&sk->sk_callback_lock);
-			if ((sk->sk_socket) && (sk->sk_socket->file) &&
-		    (sk->sk_socket->file->f_cred))
-				timer->uid = sk->sk_socket->file->f_cred->uid;
-			read_unlock_bh(&sk->sk_callback_lock);
+			timer->uid = from_kuid_munged(current_user_ns(),
+						sock_i_uid(skb->sk));
 		}
 
 		/* checks if there is a pending inactive notification*/
@@ -396,7 +386,9 @@ static unsigned int idletimer_tg_target(struct sk_buff *skb,
 
 	BUG_ON(!info->timer);
 
+	spin_lock_bh(&timestamp_lock);
 	info->timer->active = true;
+	spin_unlock_bh(&timestamp_lock);
 
 	if (time_before(info->timer->timer.expires, now)) {
 		schedule_work(&info->timer->work);
@@ -463,9 +455,9 @@ static void idletimer_tg_destroy(const struct xt_tgdtor_param *par)
 
 		list_del(&info->timer->entry);
 		del_timer_sync(&info->timer->timer);
-		cancel_work_sync(&info->timer->work);
 		sysfs_remove_file(idletimer_tg_kobj, &info->timer->attr.attr);
 		unregister_pm_notifier(&info->timer->pm_nb);
+		cancel_work_sync(&info->timer->work);
 		kfree(info->timer->attr.attr.name);
 		kfree(info->timer);
 	} else {

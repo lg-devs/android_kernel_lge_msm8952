@@ -49,6 +49,7 @@ struct module;
  * @sysmon_shutdown_ret: Return value for the call to sysmon_send_shutdown
  * @system_debug: If "set", triggers a device restart when the
  * subsystem's wdog bite handler is invoked.
+ * @edge: GLINK logical name of the subsystem
  */
 struct subsys_desc {
 	const char *name;
@@ -80,6 +81,7 @@ struct subsys_desc {
 	u32 sysmon_pid;
 	int sysmon_shutdown_ret;
 	bool system_debug;
+	const char *edge;
 };
 
 /**
@@ -104,6 +106,7 @@ struct notif_data {
 extern int subsys_get_restart_level(struct subsys_device *dev);
 extern int subsystem_restart_dev(struct subsys_device *dev);
 extern int subsystem_restart(const char *name);
+extern int subsys_modem_restart(void);
 extern int subsystem_crashed(const char *name);
 
 extern void *subsystem_get(const char *name);
@@ -172,7 +175,7 @@ static inline void notify_proxy_vote(struct device *device) { }
 static inline void notify_proxy_unvote(struct device *device) { }
 static inline int wait_for_shutdown_ack(struct subsys_desc *desc)
 {
-	return 0;
+	return -ENOSYS;
 }
 #endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 

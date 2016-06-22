@@ -43,6 +43,7 @@ pgd_t swapper_pg_dir[PTRS_PER_PGD] __attribute__((__aligned__(PAGE_SIZE)));
 
 unsigned long empty_zero_page, zero_page_mask;
 EXPORT_SYMBOL(empty_zero_page);
+EXPORT_SYMBOL(zero_page_mask);
 
 static void __init setup_zero_pages(void)
 {
@@ -70,13 +71,16 @@ static void __init setup_zero_pages(void)
 		break;
 	case 0x2827:	/* zEC12 */
 	case 0x2828:	/* zEC12 */
-	default:
 		order = 5;
+		break;
+	case 0x2964:	/* z13 */
+	default:
+		order = 7;
 		break;
 	}
 	/* Limit number of empty zero pages for small memory sizes */
-	if (order > 2 && totalram_pages <= 16384)
-		order = 2;
+	while (order > 2 && (totalram_pages >> 10) < (1UL << order))
+		order--;
 
 	empty_zero_page = __get_free_pages(GFP_KERNEL | __GFP_ZERO, order);
 	if (!empty_zero_page)
@@ -124,8 +128,6 @@ void __init paging_init(void)
 	__ctl_load(S390_lowcore.kernel_asce, 13, 13);
 	arch_local_irq_restore(4UL << (BITS_PER_LONG - 8));
 
-	atomic_set(&init_mm.context.attach_count, 1);
-
 	sparse_memory_present_with_active_regions(MAX_NUMNODES);
 	sparse_init();
 	memset(max_zone_pfns, 0, sizeof(max_zone_pfns));
@@ -136,9 +138,12 @@ void __init paging_init(void)
 
 void __init mem_init(void)
 {
-	unsigned long codesize, reservedpages, datasize, initsize;
+	if (MACHINE_HAS_TLB_LC)
+		cpumask_set_cpu(0, &init_mm.context.cpu_attach_mask);
+	cpumask_set_cpu(0, mm_cpumask(&init_mm));
+	atomic_set(&init_mm.context.attach_count, 1);
 
-        max_mapnr = num_physpages = max_low_pfn;
+        max_mapnr = max_low_pfn;
         high_memory = (void *) __va(max_low_pfn * PAGE_SIZE);
 
 	/* Setup guest page hinting */
@@ -148,18 +153,7 @@ void __init mem_init(void)
 	free_all_bootmem();
 	setup_zero_pages();	/* Setup zeroed pages. */
 
-	reservedpages = 0;
-
-	codesize =  (unsigned long) &_etext - (unsigned long) &_text;
-	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;
-	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;
-        printk("Memory: %luk/%luk available (%ldk kernel code, %ldk reserved, %ldk data, %ldk init)\n",
-		nr_free_pages() << (PAGE_SHIFT-10),
-                max_mapnr << (PAGE_SHIFT-10),
-                codesize >> 10,
-                reservedpages << (PAGE_SHIFT-10),
-                datasize >>10,
-                initsize >> 10);
+	mem_init_print_info(NULL);
 	printk("Write protected kernel read-only data: %#lx - %#lx\n",
 	       (unsigned long)&_stext,
 	       PFN_ALIGN((unsigned long)&_eshared) - 1);
@@ -167,13 +161,14 @@ void __init mem_init(void)
 
 void free_initmem(void)
 {
-	free_initmem_default(0);
+	free_initmem_default(POISON_FREE_INITMEM);
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
 void __init free_initrd_mem(unsigned long start, unsigned long end)
 {
-	free_reserved_area(start, end, POISON_FREE_INITMEM, "initrd");
+	free_reserved_area((void *)start, (void *)end, POISON_FREE_INITMEM,
+			   "initrd");
 }
 #endif
 

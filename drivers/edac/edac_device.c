@@ -411,8 +411,6 @@ void edac_device_workq_setup(struct edac_device_ctl_info *edac_dev,
 	 * to used in the time period calculation
 	 * then calc the number of jiffies that represents
 	 */
-	if (!msec)
-		msec = 1000;
 	edac_dev->poll_msec = msec;
 	edac_dev->delay = msecs_to_jiffies(msec);
 
@@ -442,6 +440,9 @@ void edac_device_workq_setup(struct edac_device_ctl_info *edac_dev,
 void edac_device_workq_teardown(struct edac_device_ctl_info *edac_dev)
 {
 	int status;
+
+	if (!edac_dev->edac_check)
+		return;
 
 	status = cancel_delayed_work(&edac_dev->work);
 	if (status == 0) {
@@ -529,19 +530,16 @@ int edac_device_add_device(struct edac_device_ctl_info *edac_dev)
 		 * enable workq processing on this instance,
 		 * default = 1000 msec
 		 */
-		edac_device_workq_setup(edac_dev, edac_dev->poll_msec);
+		edac_device_workq_setup(edac_dev, 1000);
 	} else {
 		edac_dev->op_state = OP_RUNNING_INTERRUPT;
 	}
 
 	/* Report action taken */
 	edac_device_printk(edac_dev, KERN_INFO,
-				"Giving out device to module '%s' controller "
-				"'%s': DEV '%s' (%s)\n",
-				edac_dev->mod_name,
-				edac_dev->ctl_name,
-				edac_dev_name(edac_dev),
-				edac_op_state_to_string(edac_dev->op_state));
+		"Giving out device to module %s controller %s: DEV %s (%s)\n",
+		edac_dev->mod_name, edac_dev->ctl_name, edac_dev->dev_name,
+		edac_op_state_to_string(edac_dev->op_state));
 
 	mutex_unlock(&device_ctls_mutex);
 	return 0;

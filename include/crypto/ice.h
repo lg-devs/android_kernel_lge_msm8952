@@ -38,7 +38,7 @@ struct ice_crypto_setting {
 	enum ice_crpto_key_size		key_size;
 	enum ice_cryto_algo_mode	algo_mode;
 	enum ice_crpto_key_mode		key_mode;
-	unsigned short			key_index;
+	short				key_index;
 
 };
 
@@ -47,12 +47,6 @@ struct ice_data_setting {
 	bool				sw_forced_context_switch;
 	bool				decr_bypass;
 	bool				encr_bypass;
-};
-
-enum ice_event_completion {
-	ICE_INIT_COMPLETION,
-	ICE_RESUME_COMPLETION,
-	ICE_RESET_COMPLETION,
 };
 
 enum ice_error_code {
@@ -81,7 +75,6 @@ enum ice_error_code {
 	ICE_ERROR_STREAM2_NOT_EXPECTED_NEW_TRNS
 };
 
-typedef void (*ice_success_cb)(void *, enum ice_event_completion);
 typedef void (*ice_error_cb)(void *, enum ice_error_code);
 
 struct qcom_ice_variant_ops *qcom_ice_get_variant_ops(struct device_node *node);
@@ -98,8 +91,7 @@ static inline int qcom_ice_setup_ice_hw(const char *storage_type, int enable)
 
 struct qcom_ice_variant_ops {
 	const char *name;
-	int	(*init)(struct platform_device *, void *,
-				ice_success_cb, ice_error_cb);
+	int	(*init)(struct platform_device *, void *, ice_error_cb);
 	int	(*reset)(struct platform_device *);
 	int	(*resume)(struct platform_device *);
 	int	(*suspend)(struct platform_device *);

@@ -23,14 +23,11 @@ struct ext_intf_cfg {
 	atomic_t quat_mi2s_clk_ref;
 	atomic_t quin_mi2s_clk_ref;
 	atomic_t auxpcm_mi2s_clk_ref;
-	atomic_t sec_auxpcm_mi2s_clk_ref;
 };
 
 int msm_slim_0_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					    struct snd_pcm_hw_params *params);
 int msm_slim_0_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
-					    struct snd_pcm_hw_params *params);
-int msm_slim_1_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					    struct snd_pcm_hw_params *params);
 int msm_slim_4_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 				struct snd_pcm_hw_params *params);
@@ -67,12 +64,10 @@ int msm_auxpcm_be_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					struct snd_pcm_hw_params *params);
 int msm_prim_auxpcm_startup(struct snd_pcm_substream *substream);
 void msm_prim_auxpcm_shutdown(struct snd_pcm_substream *substream);
-int msm_sec_auxpcm_startup(struct snd_pcm_substream *substream);
-void msm_sec_auxpcm_shutdown(struct snd_pcm_substream *substream);
 
 struct snd_soc_card *populate_snd_card_dailinks(struct device *dev);
 int msm_slim_4_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					    struct snd_pcm_hw_params *params);
-int msm895x_wsa881x_init(struct snd_soc_dapm_context *dapm);
+int msm895x_wsa881x_init(struct snd_soc_component *component);
 void msm895x_free_auxdev_mem(struct platform_device *pdev);
 #endif

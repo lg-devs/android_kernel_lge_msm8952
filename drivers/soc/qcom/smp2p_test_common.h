@@ -140,7 +140,7 @@ static inline int smp2p_test_notify(struct notifier_block *self,
  */
 static inline void mock_cb_data_reset(struct mock_cb_data *cb)
 {
-	INIT_COMPLETION(cb->cb_completion);
+	reinit_completion(&cb->cb_completion);
 	cb->cb_count = 0;
 	cb->event_open = 0;
 	cb->event_entry_update = 0;

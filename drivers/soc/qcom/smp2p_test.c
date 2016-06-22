@@ -375,7 +375,7 @@ static void smp2p_ut_mock_loopback(struct seq_file *s)
 
 		/* Create test entry and attach loopback server */
 		rmp->rx_interrupt_count = 0;
-		INIT_COMPLETION(rmp->cb_completion);
+		reinit_completion(&rmp->cb_completion);
 		strlcpy(rmp->remote_item.entries[0].name, "smp2p",
 							SMP2P_MAX_ENTRY_NAME);
 		rmp->remote_item.entries[0].entry = 0;
@@ -390,7 +390,7 @@ static void smp2p_ut_mock_loopback(struct seq_file *s)
 
 		/* Send Echo Command */
 		rmp->rx_interrupt_count = 0;
-		INIT_COMPLETION(rmp->cb_completion);
+		reinit_completion(&rmp->cb_completion);
 		SMP2P_SET_RMT_CMD_TYPE(test_request, 1);
 		SMP2P_SET_RMT_CMD(test_request, SMP2P_LB_CMD_ECHO);
 		SMP2P_SET_RMT_DATA(test_request, 10);
@@ -413,7 +413,7 @@ static void smp2p_ut_mock_loopback(struct seq_file *s)
 		test_request = 0;
 		test_response = 0;
 		rmp->rx_interrupt_count = 0;
-		INIT_COMPLETION(rmp->cb_completion);
+		reinit_completion(&rmp->cb_completion);
 		SMP2P_SET_RMT_CMD_TYPE(test_request, 1);
 		SMP2P_SET_RMT_CMD(test_request, SMP2P_LB_CMD_PINGPONG);
 		SMP2P_SET_RMT_DATA(test_request, 10);
@@ -435,7 +435,7 @@ static void smp2p_ut_mock_loopback(struct seq_file *s)
 		test_request = 0;
 		test_response = 0;
 		rmp->rx_interrupt_count = 0;
-		INIT_COMPLETION(rmp->cb_completion);
+		reinit_completion(&rmp->cb_completion);
 		SMP2P_SET_RMT_CMD_TYPE(test_request, 1);
 		SMP2P_SET_RMT_CMD(test_request, SMP2P_LB_CMD_CLEARALL);
 		SMP2P_SET_RMT_DATA(test_request, 10);

@@ -87,16 +87,14 @@ void ip_options_build(struct sk_buff *skb, struct ip_options *opt,
  * NOTE: dopt cannot point to skb.
  */
 
-int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb)
+int __ip_options_echo(struct ip_options *dopt, struct sk_buff *skb,
+		      const struct ip_options *sopt)
 {
-	const struct ip_options *sopt;
 	unsigned char *sptr, *dptr;
 	int soffset, doffset;
 	int	optlen;
 
 	memset(dopt, 0, sizeof(struct ip_options));
-
-	sopt = &(IPCB(skb)->opt);
 
 	if (sopt->optlen == 0)
 		return 0;
@@ -167,7 +165,7 @@ int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb)
 		soffset -= 4;
 		if (soffset > 3) {
 			memcpy(&faddr, &start[soffset-1], 4);
-			for (soffset-=4, doffset=4; soffset > 3; soffset-=4, doffset+=4)
+			for (soffset -= 4, doffset = 4; soffset > 3; soffset -= 4, doffset += 4)
 				memcpy(&dptr[doffset-1], &start[soffset-1], 4);
 			/*
 			 * RFC1812 requires to fix illegal source routes.
@@ -192,7 +190,18 @@ int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb)
 	}
 	if (sopt->cipso) {
 		optlen  = sptr[sopt->cipso+1];
-		dopt->cipso = dopt->optlen+sizeof(struct iphdr);
+        dopt->cipso = dopt->optlen+sizeof(struct iphdr);
+        /* 2015-11-24 chisung.in@lge.com, LGP_DATA_KERNEL_CRASHFIX_ICMP_OPTION [START] */
+        //QCT_LOG
+        trace_printk("dst : %p, src : %p, optlen : %d, sopt->cipso : %d (%p), dopt->cipso : %d (%p)\n", dptr, sptr+sopt->cipso, optlen, sopt->cipso, sopt, dopt->cipso, dopt); 
+        pr_err("[%s] dst : %p, src : %p, optlen : %d, sopt->cipso : %d (%p), dopt->cipso : %d (%p)\n", __func__, dptr, sptr+sopt->cipso, optlen, sopt->cipso, sopt, dopt->cipso, dopt); 
+        //QCT_LOG
+        if(optlen > 40) {
+            printk(KERN_ERR "[DEBUG] optlen is greater than 40, -> %d\n", optlen);
+            printk("Process %s (pid: %d)\n", current->comm, current->pid);
+            return -EINVAL;
+        }
+        /* 2015-11-24 chisung.in@lge.com, LGP_DATA_KERNEL_CRASHFIX_ICMP_OPTION [END] */
 		memcpy(dptr, sptr+sopt->cipso, optlen);
 		dptr += optlen;
 		dopt->optlen += optlen;
@@ -227,7 +236,7 @@ void ip_options_fragment(struct sk_buff *skb)
 			continue;
 		}
 		optlen = optptr[1];
-		if (optlen<2 || optlen>l)
+		if (optlen < 2 || optlen > l)
 		  return;
 		if (!IPOPT_COPIED(*optptr))
 			memset(optptr, IPOPT_NOOP, optlen);
@@ -272,18 +281,21 @@ int ip_options_compile(struct net *net,
 	} else
 		optptr = opt->__data;
 	iph = optptr - sizeof(struct iphdr);
-
+    //QCT_LOG
+    trace_printk("skb : %p, optptr : %p, iph : %p\n", skb, optptr, iph); 
+    pr_err("[%s] skb : %p, optptr : %p, iph : %p\n", __func__, skb, optptr, iph); 
+    //QCT_LOG
 	for (l = opt->optlen; l > 0; ) {
 		switch (*optptr) {
-		      case IPOPT_END:
-			for (optptr++, l--; l>0; optptr++, l--) {
+		case IPOPT_END:
+			for (optptr++, l--; l > 0; optptr++, l--) {
 				if (*optptr != IPOPT_END) {
 					*optptr = IPOPT_END;
 					opt->is_changed = 1;
 				}
 			}
 			goto eol;
-		      case IPOPT_NOOP:
+		case IPOPT_NOOP:
 			l--;
 			optptr++;
 			continue;
@@ -293,13 +305,13 @@ int ip_options_compile(struct net *net,
 			goto error;
 		}
 		optlen = optptr[1];
-		if (optlen<2 || optlen>l) {
+		if (optlen < 2 || optlen > l) {
 			pp_ptr = optptr;
 			goto error;
 		}
 		switch (*optptr) {
-		      case IPOPT_SSRR:
-		      case IPOPT_LSRR:
+		case IPOPT_SSRR:
+		case IPOPT_LSRR:
 			if (optlen < 3) {
 				pp_ptr = optptr + 1;
 				goto error;
@@ -325,7 +337,7 @@ int ip_options_compile(struct net *net,
 			opt->is_strictroute = (optptr[0] == IPOPT_SSRR);
 			opt->srr = optptr - iph;
 			break;
-		      case IPOPT_RR:
+		case IPOPT_RR:
 			if (opt->rr) {
 				pp_ptr = optptr;
 				goto error;
@@ -353,7 +365,7 @@ int ip_options_compile(struct net *net,
 			}
 			opt->rr = optptr - iph;
 			break;
-		      case IPOPT_TIMESTAMP:
+		case IPOPT_TIMESTAMP:
 			if (opt->ts) {
 				pp_ptr = optptr;
 				goto error;
@@ -368,19 +380,19 @@ int ip_options_compile(struct net *net,
 			}
 			if (optptr[2] <= optlen) {
 				unsigned char *timeptr = NULL;
-				if (optptr[2]+3 > optptr[1]) {
+				if (optptr[2]+3 > optlen) {
 					pp_ptr = optptr + 2;
 					goto error;
 				}
 				switch (optptr[3]&0xF) {
-				      case IPOPT_TS_TSONLY:
+				case IPOPT_TS_TSONLY:
 					if (skb)
 						timeptr = &optptr[optptr[2]-1];
 					opt->ts_needtime = 1;
 					optptr[2] += 4;
 					break;
-				      case IPOPT_TS_TSANDADDR:
-					if (optptr[2]+7 > optptr[1]) {
+				case IPOPT_TS_TSANDADDR:
+					if (optptr[2]+7 > optlen) {
 						pp_ptr = optptr + 2;
 						goto error;
 					}
@@ -393,8 +405,8 @@ int ip_options_compile(struct net *net,
 					opt->ts_needtime = 1;
 					optptr[2] += 8;
 					break;
-				      case IPOPT_TS_PRESPEC:
-					if (optptr[2]+7 > optptr[1]) {
+				case IPOPT_TS_PRESPEC:
+					if (optptr[2]+7 > optlen) {
 						pp_ptr = optptr + 2;
 						goto error;
 					}
@@ -409,7 +421,7 @@ int ip_options_compile(struct net *net,
 					opt->ts_needtime = 1;
 					optptr[2] += 8;
 					break;
-				      default:
+				default:
 					if (!skb && !ns_capable(net->user_ns, CAP_NET_RAW)) {
 						pp_ptr = optptr + 3;
 						goto error;
@@ -437,7 +449,7 @@ int ip_options_compile(struct net *net,
 			}
 			opt->ts = optptr - iph;
 			break;
-		      case IPOPT_RA:
+		case IPOPT_RA:
 			if (optlen < 4) {
 				pp_ptr = optptr + 1;
 				goto error;
@@ -445,20 +457,24 @@ int ip_options_compile(struct net *net,
 			if (optptr[2] == 0 && optptr[3] == 0)
 				opt->router_alert = optptr - iph;
 			break;
-		      case IPOPT_CIPSO:
+		case IPOPT_CIPSO:
 			if ((!skb && !ns_capable(net->user_ns, CAP_NET_RAW)) || opt->cipso) {
 				pp_ptr = optptr;
 				goto error;
 			}
 			opt->cipso = optptr - iph;
+            //QCT+LOG
+            trace_printk("opt : %p, opt->cipso : %d, optptr : %p, iph : %p\n", opt, opt->cipso, optptr, iph); 
+            pr_err("[%s] opt : %p, opt->cipso : %d, optptr : %p, iph : %p\n", __func__, opt, opt->cipso, optptr, iph); 
+            //QCT+LOG
 			if (cipso_v4_validate(skb, &optptr)) {
 				pp_ptr = optptr;
 				goto error;
 			}
 			break;
-		      case IPOPT_SEC:
-		      case IPOPT_SID:
-		      default:
+		case IPOPT_SEC:
+		case IPOPT_SID:
+		default:
 			if (!skb && !ns_capable(net->user_ns, CAP_NET_RAW)) {
 				pp_ptr = optptr;
 				goto error;
@@ -576,7 +592,7 @@ void ip_forward_options(struct sk_buff *skb)
 
 		optptr = raw + opt->srr;
 
-		for ( srrptr=optptr[2], srrspace = optptr[1];
+		for ( srrptr = optptr[2], srrspace = optptr[1];
 		     srrptr <= srrspace;
 		     srrptr += 4
 		     ) {
@@ -632,7 +648,7 @@ int ip_options_rcv_srr(struct sk_buff *skb)
 	if (rt->rt_type != RTN_LOCAL)
 		return -EINVAL;
 
-	for (srrptr=optptr[2], srrspace = optptr[1]; srrptr <= srrspace; srrptr += 4) {
+	for (srrptr = optptr[2], srrspace = optptr[1]; srrptr <= srrspace; srrptr += 4) {
 		if (srrptr + 3 > srrspace) {
 			icmp_send(skb, ICMP_PARAMETERPROB, 0, htonl((opt->srr+2)<<24));
 			return -EINVAL;

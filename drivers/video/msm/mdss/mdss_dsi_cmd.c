@@ -21,10 +21,9 @@
 #include <linux/iopoll.h>
 #include <linux/kthread.h>
 
-#include <linux/msm_iommu_domains.h>
-
 #include "mdss_dsi_cmd.h"
 #include "mdss_dsi.h"
+#include "mdss_smmu.h"
 
 /*
  * mipi dsi buf mechanism
@@ -72,8 +71,8 @@ char *mdss_dsi_buf_init(struct dsi_buf *dp)
 
 int mdss_dsi_buf_alloc(struct device *ctrl_dev, struct dsi_buf *dp, int size)
 {
-	dp->start = dma_alloc_writecombine(ctrl_dev, size, &dp->dmap,
-					   GFP_KERNEL);
+	dp->start = mdss_smmu_dsi_alloc_buf(ctrl_dev, size, &dp->dmap,
+			GFP_KERNEL);
 	if (dp->start == NULL) {
 		pr_err("%s:%u\n", __func__, __LINE__);
 		return -ENOMEM;

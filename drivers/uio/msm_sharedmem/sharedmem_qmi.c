@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -73,6 +73,8 @@ void sharedmem_qmi_add_entry(struct sharemem_qmi_entry *qmi_entry)
 	struct shared_addr_list *list_entry;
 
 	list_entry = kzalloc(sizeof(*list_entry), GFP_KERNEL);
+
+	/* If we cannot add the entry log the failure and bail */
 	if (list_entry == NULL) {
 		pr_err("Alloc of new list entry failed\n");
 		return;
@@ -276,6 +278,7 @@ static u32 fill_debug_info(char *buffer, u32 buffer_size)
 static int debug_open(struct inode *inode, struct file *file)
 {
 	u32 buffer_size;
+
 	if (debug_buffer != NULL)
 		return -EBUSY;
 	buffer_size = DEBUG_BUF_SIZE;

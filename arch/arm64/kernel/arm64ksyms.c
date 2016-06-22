@@ -63,11 +63,10 @@ EXPORT_SYMBOL(test_and_clear_bit);
 EXPORT_SYMBOL(change_bit);
 EXPORT_SYMBOL(test_and_change_bit);
 
+#ifdef CONFIG_FUNCTION_TRACER
+EXPORT_SYMBOL(_mcount);
+#endif
 	/* caching functions */
 EXPORT_SYMBOL(__dma_inv_range);
 EXPORT_SYMBOL(__dma_clean_range);
 EXPORT_SYMBOL(__dma_flush_range);
-
-#ifdef CONFIG_FUNCTION_TRACER
-EXPORT_SYMBOL(_mcount);
-#endif

@@ -219,6 +219,22 @@ enum bimc_m_bke_health_3 {
 	M_BKE_HEALTH_3_CONFIG_PRIOLVL_SHFT		= 0x0,
 };
 
+/* S_ARB_GENERIC */
+
+#define S_ARB_REG_BASE(b)	((b) + 0x00049000)
+
+#define S_ARB_CONFIG_INFO_0_ADDR(b, n) \
+	(S_ARB_REG_BASE(b) + (0x8000 * (n)) + 0x00000020)
+#define S_ARB_MODE_ADDR(b, n) \
+	(S_ARB_REG_BASE(b) + (0x8000 * (n)) + 0x00000210)
+enum bimc_s_arb_mode {
+	S_ARB_MODE_RMSK				= 0xf0000001,
+	S_ARB_MODE_WR_GRANTS_AHEAD_BMSK		= 0xf0000000,
+	S_ARB_MODE_WR_GRANTS_AHEAD_SHFT		= 0x1c,
+	S_ARB_MODE_PRIO_RR_EN_BMSK		= 0x1,
+	S_ARB_MODE_PRIO_RR_EN_SHFT		= 0x0,
+};
+
 #define BKE_HEALTH_MASK \
 	(M_BKE_HEALTH_0_CONFIG_LIMIT_CMDS_BMSK |\
 	M_BKE_HEALTH_0_CONFIG_AREQPRIO_BMSK |\
@@ -268,6 +284,27 @@ void msm_bus_bimc_set_mas_clk_gate(struct msm_bus_bimc_info *binfo,
 	writel_relaxed(((reg_val & (~mask)) | (val & mask)), addr);
 	/* Ensure clock gating enable mask is set before exiting */
 	wmb();
+}
+
+void msm_bus_bimc_arb_en(struct msm_bus_bimc_info *binfo,
+	uint32_t slv_index, bool en)
+{
+	uint32_t reg_val, reg_mask_val, enable, val;
+
+	reg_mask_val = (readl_relaxed(S_ARB_CONFIG_INFO_0_ADDR(binfo->
+		base, slv_index)) & S_ARB_CONFIG_INFO_0_FUNC_BMSK)
+		>> S_ARB_CONFIG_INFO_0_FUNC_SHFT;
+	enable = ENABLE(en);
+	val = enable << S_ARB_MODE_PRIO_RR_EN_SHFT;
+	if (reg_mask_val == BIMC_ARB_MODE_PRIORITY_RR) {
+		reg_val = readl_relaxed(S_ARB_CONFIG_INFO_0_ADDR(binfo->
+			base, slv_index)) & S_ARB_MODE_RMSK;
+		writel_relaxed(((reg_val & (~(S_ARB_MODE_PRIO_RR_EN_BMSK))) |
+			(val & S_ARB_MODE_PRIO_RR_EN_BMSK)),
+			S_ARB_MODE_ADDR(binfo->base, slv_index));
+		/* Ensure arbitration mode is set before returning */
+		wmb();
+	}
 }
 
 static void set_qos_mode(void __iomem *baddr, uint32_t index, uint32_t val0,

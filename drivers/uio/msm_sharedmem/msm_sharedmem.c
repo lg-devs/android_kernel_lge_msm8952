@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,9 +19,14 @@
 #include <linux/err.h>
 #include <linux/of.h>
 #include <linux/dma-mapping.h>
+
+#include <soc/qcom/secure_buffer.h>
+
 #include "sharedmem_qmi.h"
 
 #define CLIENT_ID_PROP "qcom,client-id"
+
+#define MPSS_RMTS_CLIENT_ID 1
 
 static int uio_get_mem_index(struct uio_info *info, struct vm_area_struct *vma)
 {
@@ -68,6 +73,31 @@ static int sharedmem_mmap(struct uio_info *info, struct vm_area_struct *vma)
 		pr_debug("mmap success\n");
 
 	return result;
+}
+
+/* Setup the shared ram permissions.
+ * This function currently supports the mpss client only.
+ */
+static void setup_shared_ram_perms(u32 client_id, phys_addr_t addr, u32 size)
+{
+	int ret;
+	u32 source_vmlist[1] = {VMID_HLOS};
+	int dest_vmids[2] = {VMID_HLOS, VMID_MSS_MSA};
+	int dest_perms[2] = {PERM_READ|PERM_WRITE ,
+			     PERM_READ|PERM_WRITE};
+
+	if (client_id != MPSS_RMTS_CLIENT_ID)
+		return;
+
+	ret = hyp_assign_phys(addr, size, source_vmlist, 1, dest_vmids,
+				dest_perms, 2);
+	if (ret != 0) {
+		if (ret == -ENOSYS)
+			pr_warn("hyp_assign_phys is not supported!");
+		else
+			pr_err("hyp_assign_phys failed IPA=0x016%pa size=%u err=%d\n",
+				&addr, size, ret);
+	}
 }
 
 static int msm_sharedmem_probe(struct platform_device *pdev)
@@ -123,6 +153,9 @@ static int msm_sharedmem_probe(struct platform_device *pdev)
 			return -ENOMEM;
 		}
 	}
+
+	/* Set up the permissions for the shared ram that was allocated. */
+	setup_shared_ram_perms(client_id, shared_mem_pyhsical, shared_mem_size);
 
 	/* Setup device */
 	info->mmap = sharedmem_mmap; /* Custom mmap function. */
@@ -180,6 +213,7 @@ static struct platform_driver msm_sharedmem_driver = {
 static int __init msm_sharedmem_init(void)
 {
 	int result;
+
 	result = sharedmem_qmi_init();
 	if (result < 0) {
 		pr_err("sharedmem_qmi_init failed result = %d\n", result);
@@ -198,7 +232,6 @@ static void __exit msm_sharedmem_exit(void)
 {
 	platform_driver_unregister(&msm_sharedmem_driver);
 	sharedmem_qmi_exit();
-	return;
 }
 
 module_init(msm_sharedmem_init);

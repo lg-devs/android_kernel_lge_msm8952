@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -82,7 +82,7 @@
 
 enum device_status {
 	STATUS_NO_ERROR = 0x00,
-	STATUS_RESET_OCCURED = 0x01,
+	STATUS_RESET_OCCURRED = 0x01,
 	STATUS_INVALID_CONFIG = 0x02,
 	STATUS_DEVICE_FAILURE = 0x03,
 	STATUS_CONFIG_CRC_FAILURE = 0x04,
@@ -471,6 +471,7 @@ static int synaptics_secure_touch_clk_prepare_enable(
 		struct synaptics_rmi4_data *rmi4_data)
 {
 	int ret;
+
 	ret = clk_prepare_enable(rmi4_data->iface_clk);
 	if (ret) {
 		dev_err(&rmi4_data->i2c_client->dev,
@@ -497,6 +498,7 @@ static void synaptics_secure_touch_clk_disable_unprepare(
 static void synaptics_secure_touch_init(struct synaptics_rmi4_data *data)
 {
 	int ret = 0;
+
 	data->st_initialized = 0;
 	init_completion(&data->st_powerdown);
 	init_completion(&data->st_irq_processed);
@@ -571,6 +573,7 @@ static ssize_t synaptics_secure_touch_enable_show(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
 	struct synaptics_rmi4_data *data = dev_get_drvdata(dev);
+
 	return scnprintf(buf, PAGE_SIZE, "%d", atomic_read(&data->st_enabled));
 }
 /*
@@ -638,8 +641,8 @@ static ssize_t synaptics_secure_touch_enable_store(struct device *dev,
 			err = -EIO;
 			break;
 		}
-		INIT_COMPLETION(data->st_powerdown);
-		INIT_COMPLETION(data->st_irq_processed);
+		reinit_completion(&data->st_powerdown);
+		reinit_completion(&data->st_irq_processed);
 		atomic_set(&data->st_enabled, 1);
 		atomic_set(&data->st_pending_irqs,  0);
 		break;
@@ -669,6 +672,7 @@ static ssize_t synaptics_secure_touch_show(struct device *dev,
 {
 	struct synaptics_rmi4_data *data = dev_get_drvdata(dev);
 	int val = 0;
+
 	if (atomic_read(&data->st_enabled) == 0)
 		return -EBADF;
 
@@ -684,6 +688,7 @@ static ssize_t synaptics_secure_touch_show(struct device *dev,
 
 }
 #endif
+
 static int synaptics_rmi4_debug_suspend_set(void *_data, u64 val)
 {
 	struct synaptics_rmi4_data *rmi4_data = _data;
@@ -720,11 +725,12 @@ static ssize_t synaptics_rmi4_full_pm_cycle_show(struct device *dev,
 static ssize_t synaptics_rmi4_full_pm_cycle_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
-	unsigned int input;
+	unsigned int input, retval;
 	struct synaptics_rmi4_data *rmi4_data = dev_get_drvdata(dev);
 
-	if (sscanf(buf, "%u", &input) != 1)
-		return -EINVAL;
+	retval = kstrtouint(buf, 10, &input);
+	if (retval)
+		return retval;
 
 	rmi4_data->full_pm_cycle = input > 0 ? 1 : 0;
 
@@ -742,7 +748,6 @@ static void configure_sleep(struct synaptics_rmi4_data *rmi4_data)
 	if (retval)
 		dev_err(&rmi4_data->i2c_client->dev,
 			"Unable to register fb_notifier: %d\n", retval);
-	return;
 }
 #elif defined CONFIG_HAS_EARLYSUSPEND
 static void configure_sleep(struct synaptics_rmi4_data *rmi4_data)
@@ -751,13 +756,10 @@ static void configure_sleep(struct synaptics_rmi4_data *rmi4_data)
 	rmi4_data->early_suspend.suspend = synaptics_rmi4_early_suspend;
 	rmi4_data->early_suspend.resume = synaptics_rmi4_late_resume;
 	register_early_suspend(&rmi4_data->early_suspend);
-
-	return;
 }
 #else
 static void configure_sleep(struct synaptics_rmi4_data *rmi4_data)
 {
-	return;
 }
 #endif
 
@@ -768,8 +770,9 @@ static ssize_t synaptics_rmi4_f01_reset_store(struct device *dev,
 	unsigned int reset;
 	struct synaptics_rmi4_data *rmi4_data = dev_get_drvdata(dev);
 
-	if (sscanf(buf, "%u", &reset) != 1)
-		return -EINVAL;
+	retval = kstrtouint(buf, 10, &reset);
+	if (retval)
+		return retval;
 
 	if (reset != 1)
 		return -EINVAL;
@@ -856,8 +859,9 @@ static ssize_t synaptics_rmi4_0dbutton_store(struct device *dev,
 
 	rmi = &(rmi4_data->rmi4_mod_info);
 
-	if (sscanf(buf, "%u", &input) != 1)
-		return -EINVAL;
+	retval = kstrtouint(buf, 10, &input);
+	if (retval)
+		return retval;
 
 	input = input > 0 ? 1 : 0;
 
@@ -1482,8 +1486,6 @@ static void synaptics_rmi4_f1a_report(struct synaptics_rmi4_data *rmi4_data,
 	}
 
 	input_sync(rmi4_data->input_dev);
-
-	return;
 }
 
  /**
@@ -1535,8 +1537,6 @@ static void synaptics_rmi4_report_touch(struct synaptics_rmi4_data *rmi4_data,
 	default:
 		break;
 	}
-
-	return;
 }
 
  /**
@@ -1945,12 +1945,8 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
 			return retval;
 
 		intr_status = kzalloc(rmi4_data->num_of_intr_regs, GFP_KERNEL);
-		if (!intr_status) {
-			dev_err(&rmi4_data->i2c_client->dev,
-					"%s: Failed to alloc memory\n",
-					__func__);
+		if (!intr_status)
 			return -ENOMEM;
-		}
 		/* Clear interrupts first */
 		retval = synaptics_rmi4_i2c_read(rmi4_data,
 				rmi4_data->f01_data_base_addr + 1,
@@ -1978,7 +1974,7 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
  *
  * Called by synaptics_rmi4_query_device().
  *
- * This funtion parses information from the Function 11 registers
+ * This function parses information from the Function 11 registers
  * and determines the number of fingers supported, x and y data ranges,
  * offset to the associated interrupt status register, interrupt bit
  * mask, and gathers finger data acquisition capabilities from the query
@@ -2163,12 +2159,9 @@ static int synaptics_rmi4_f12_init(struct synaptics_rmi4_data *rmi4_data,
 	size_of_2d_data = sizeof(struct synaptics_rmi4_f12_finger_data);
 
 	fhandler->extra = kmalloc(sizeof(*extra_data), GFP_KERNEL);
-	if (!fhandler->extra) {
-		dev_err(&rmi4_data->i2c_client->dev,
-			"%s: Failed to alloc mem for function handler\n",
-			__func__);
+	if (!fhandler->extra)
 		return -ENOMEM;
-	}
+
 	extra_data = (struct synaptics_rmi4_f12_extra_data *)fhandler->extra;
 
 	retval = synaptics_rmi4_i2c_read(rmi4_data,
@@ -2400,12 +2393,8 @@ static int synaptics_rmi4_f1a_alloc_mem(struct synaptics_rmi4_data *rmi4_data,
 	struct synaptics_rmi4_f1a_handle *f1a;
 
 	f1a = kzalloc(sizeof(*f1a), GFP_KERNEL);
-	if (!f1a) {
-		dev_err(&rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for function handle\n",
-				__func__);
+	if (!f1a)
 		return -ENOMEM;
-	}
 
 	fhandler->data = (void *)f1a;
 
@@ -2425,21 +2414,13 @@ static int synaptics_rmi4_f1a_alloc_mem(struct synaptics_rmi4_data *rmi4_data,
 
 	f1a->button_data_buffer = kcalloc(f1a->button_bitmask_size,
 			sizeof(*(f1a->button_data_buffer)), GFP_KERNEL);
-	if (!f1a->button_data_buffer) {
-		dev_err(&rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for data buffer\n",
-				__func__);
+	if (!f1a->button_data_buffer)
 		return -ENOMEM;
-	}
 
 	f1a->button_map = kcalloc(f1a->button_count,
 			sizeof(*(f1a->button_map)), GFP_KERNEL);
-	if (!f1a->button_map) {
-		dev_err(&rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for button map\n",
-				__func__);
+	if (!f1a->button_map)
 		return -ENOMEM;
-	}
 
 	return 0;
 }
@@ -2489,8 +2470,6 @@ static void synaptics_rmi4_f1a_kfree(struct synaptics_rmi4_fn *fhandler)
 		kfree(f1a);
 		fhandler->data = NULL;
 	}
-
-	return;
 }
 
 static int synaptics_rmi4_f1a_init(struct synaptics_rmi4_data *rmi4_data,
@@ -2663,7 +2642,7 @@ static int synaptics_rmi4_check_fn_list(struct synaptics_rmi4_data *rmi4_data,
  *
  * Called by synaptics_rmi4_probe().
  *
- * This funtion scans the page description table, records the offsets
+ * This function scans the page description table, records the offsets
  * to the register types of Function $01, sets up the function handlers
  * for Function $11 and Function $12, determines the number of interrupt
  * sources from the sensor, adds valid Functions with data inputs to the
@@ -2737,9 +2716,11 @@ static int synaptics_rmi4_query_device(struct synaptics_rmi4_data *rmi4_data)
 				if (retval < 0)
 					return retval;
 
-				while (status.status_code == STATUS_CRC_IN_PROGRESS) {
-					msleep(1);
-					retval = synaptics_rmi4_i2c_read(rmi4_data,
+				while (status.status_code ==
+						STATUS_CRC_IN_PROGRESS) {
+					usleep_range(1000, 1001);
+					retval = synaptics_rmi4_i2c_read(
+						rmi4_data,
 						rmi4_data->f01_data_base_addr,
 						status.data,
 						sizeof(status.data));
@@ -2874,7 +2855,8 @@ flash_prog_mode:
 			list_for_each_entry(fhandler,
 						&rmi->support_fn_list, link) {
 				if (fhandler->num_of_data_sources) {
-					rmi4_data->intr_mask[fhandler->intr_reg_num] |=
+					rmi4_data->intr_mask[fhandler->
+						intr_reg_num] |=
 						fhandler->intr_mask;
 				}
 			}
@@ -3045,8 +3027,6 @@ static void synaptics_rmi4_detection_work(struct work_struct *work)
 		}
 	}
 	mutex_unlock(&exp_fn_list_mutex);
-
-	return;
 }
 
 /**
@@ -3104,8 +3084,6 @@ void synaptics_rmi4_new_function(enum exp_fn fn_type, bool insert,
 
 exit:
 	mutex_unlock(&exp_fn_list_mutex);
-
-	return;
 }
 EXPORT_SYMBOL(synaptics_rmi4_new_function);
 
@@ -3326,12 +3304,12 @@ static int synaptics_rmi4_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 					rmi4_data->board->irq_gpio);
 				goto err_irq_gpio_req;
 			}
-			retval = gpio_direction_input(rmi4_data->board->\
+			retval = gpio_direction_input(rmi4_data->board->
 				irq_gpio);
 			if (retval) {
 				dev_err(&rmi4_data->i2c_client->dev,
-					"unable to set direction for gpio " \
-					"[%d]\n", rmi4_data->board->irq_gpio);
+				"unable to set direction for gpio [%d]\n",
+					rmi4_data->board->irq_gpio);
 				goto err_irq_gpio_dir;
 			}
 		} else {
@@ -3351,12 +3329,12 @@ static int synaptics_rmi4_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 				goto err_irq_gpio_dir;
 			}
 
-			retval = gpio_direction_output(rmi4_data->board->\
+			retval = gpio_direction_output(rmi4_data->board->
 				reset_gpio, 1);
 			if (retval) {
 				dev_err(&rmi4_data->i2c_client->dev,
-					"unable to set direction for gpio " \
-					"[%d]\n", rmi4_data->board->reset_gpio);
+				"unable to set direction for gpio [%d]\n",
+					rmi4_data->board->reset_gpio);
 				goto err_reset_gpio_dir;
 			}
 
@@ -3366,30 +3344,29 @@ static int synaptics_rmi4_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 			synaptics_rmi4_reset_command(rmi4_data);
 
 		return 0;
-	} else {
-		if (rmi4_data->board->disable_gpios) {
-			if (gpio_is_valid(rmi4_data->board->irq_gpio))
-				gpio_free(rmi4_data->board->irq_gpio);
-			if (gpio_is_valid(rmi4_data->board->reset_gpio)) {
-				/*
-				 * This is intended to save leakage current
-				 * only. Even if the call(gpio_direction_input)
-				 * fails, only leakage current will be more but
-				 * functionality will not be affected.
-				 */
-				retval = gpio_direction_input(rmi4_data->
-							board->reset_gpio);
-				if (retval) {
-					dev_err(&rmi4_data->i2c_client->dev,
-					"unable to set direction for gpio "
-					"[%d]\n", rmi4_data->board->irq_gpio);
-				}
-				gpio_free(rmi4_data->board->reset_gpio);
-			}
-		}
-
-		return 0;
 	}
+	if (rmi4_data->board->disable_gpios) {
+		if (gpio_is_valid(rmi4_data->board->irq_gpio))
+			gpio_free(rmi4_data->board->irq_gpio);
+		if (gpio_is_valid(rmi4_data->board->reset_gpio)) {
+			/*
+			 * This is intended to save leakage current
+			 * only. Even if the call(gpio_direction_input)
+			 * fails, only leakage current will be more but
+			 * functionality will not be affected.
+			 */
+			retval = gpio_direction_input(rmi4_data->
+						board->reset_gpio);
+			if (retval) {
+				dev_err(&rmi4_data->i2c_client->dev,
+				"unable to set direction for gpio [%d]\n",
+					rmi4_data->board->irq_gpio);
+			}
+			gpio_free(rmi4_data->board->reset_gpio);
+		}
+	}
+
+	return 0;
 
 err_reset_gpio_dir:
 	if (gpio_is_valid(rmi4_data->board->reset_gpio))
@@ -3407,7 +3384,7 @@ err_irq_gpio_req:
  * Called by the kernel when an association with an I2C device of the
  * same name is made (after doing i2c_add_driver).
  *
- * This funtion allocates and initializes the resources for the driver
+ * This function allocates and initializes the resources for the driver
  * as an input driver, turns on the power to the sensor, queries the
  * sensor for its supported Functions and characteristics, registers
  * the driver to the input subsystem, sets up the interrupt, handles
@@ -3462,20 +3439,13 @@ static int synaptics_rmi4_probe(struct i2c_client *client,
 	}
 
 	rmi4_data = kzalloc(sizeof(*rmi4_data) * 2, GFP_KERNEL);
-	if (!rmi4_data) {
-		dev_err(&client->dev,
-				"%s: Failed to alloc mem for rmi4_data\n",
-				__func__);
+	if (!rmi4_data)
 		return -ENOMEM;
-	}
 
 	rmi = &(rmi4_data->rmi4_mod_info);
 
 	rmi4_data->input_dev = input_allocate_device();
 	if (rmi4_data->input_dev == NULL) {
-		dev_err(&client->dev,
-				"%s: Failed to allocate input device\n",
-				__func__);
 		retval = -ENOMEM;
 		goto err_input_device;
 	}
@@ -3791,7 +3761,7 @@ err_input_device:
  * Called by the kernel when the association with an I2C device of the
  * same name is broken (when the driver is unloaded).
  *
- * This funtion terminates the work queue, stops sensor data acquisition,
+ * This function terminates the work queue, stops sensor data acquisition,
  * frees the interrupt, unregisters the driver from the input subsystem,
  * turns off the power to the sensor, and frees other allocated resources.
  */
@@ -3900,11 +3870,8 @@ static void synaptics_rmi4_sensor_sleep(struct synaptics_rmi4_data *rmi4_data)
 				__func__);
 		rmi4_data->sensor_sleep = false;
 		return;
-	} else {
-		rmi4_data->sensor_sleep = true;
 	}
-
-	return;
+	rmi4_data->sensor_sleep = true;
 }
 
  /**
@@ -3950,11 +3917,8 @@ static void synaptics_rmi4_sensor_wake(struct synaptics_rmi4_data *rmi4_data)
 				__func__);
 		rmi4_data->sensor_sleep = true;
 		return;
-	} else {
-		rmi4_data->sensor_sleep = false;
 	}
-
-	return;
+	rmi4_data->sensor_sleep = false;
 }
 
 #if defined(CONFIG_FB)
@@ -4012,8 +3976,6 @@ static void synaptics_rmi4_early_suspend(struct early_suspend *h)
 
 	if (rmi4_data->full_pm_cycle)
 		synaptics_rmi4_suspend(&(rmi4_data->input_dev->dev));
-
-	return;
 }
 
  /**
@@ -4044,8 +4006,6 @@ static void synaptics_rmi4_late_resume(struct early_suspend *h)
 		rmi4_data->touch_stopped = false;
 		synaptics_rmi4_irq_enable(rmi4_data, true);
 	}
-
-	return;
 }
 #endif
 
@@ -4065,8 +4025,7 @@ static int synaptics_rmi4_regulator_lpm(struct synaptics_rmi4_data *rmi4_data,
 			load_ua);
 		if (retval < 0) {
 			dev_err(&rmi4_data->i2c_client->dev,
-				"Regulator vcc_i2c set_opt failed " \
-				"rc=%d\n", retval);
+			"Regulator vcc_i2c set_opt failed rc=%d\n", retval);
 			goto fail_regulator_lpm;
 		}
 
@@ -4074,8 +4033,8 @@ static int synaptics_rmi4_regulator_lpm(struct synaptics_rmi4_data *rmi4_data,
 			retval = regulator_disable(rmi4_data->vcc_i2c);
 			if (retval) {
 				dev_err(&rmi4_data->i2c_client->dev,
-					"Regulator vcc_i2c disable failed " \
-					"rc=%d\n", retval);
+				"Regulator vcc_i2c disable failed rc=%d\n",
+					retval);
 				goto fail_regulator_lpm;
 			}
 		}
@@ -4137,8 +4096,8 @@ regulator_hpm:
 			retval = regulator_enable(rmi4_data->vcc_i2c);
 			if (retval) {
 				dev_err(&rmi4_data->i2c_client->dev,
-					"Regulator vcc_i2c enable failed " \
-					"rc=%d\n", retval);
+				"Regulator vcc_i2c enable failed rc=%d\n",
+					retval);
 				goto fail_regulator_hpm;
 			}
 		}
@@ -4458,7 +4417,7 @@ static int __init synaptics_rmi4_init(void)
  *
  * Called by the kernel when the driver is unloaded.
  *
- * This funtion unregisters the driver from the I2C subsystem.
+ * This function unregisters the driver from the I2C subsystem.
  *
  */
 static void __exit synaptics_rmi4_exit(void)

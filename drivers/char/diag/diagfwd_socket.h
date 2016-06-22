@@ -74,6 +74,7 @@ struct diag_cntl_socket_info {
 	atomic_t data_ready;
 	struct workqueue_struct *wq;
 	struct work_struct read_work;
+	struct work_struct init_work;
 	wait_queue_head_t read_wait_q;
 	struct socket *hdl;
 };
@@ -91,4 +92,5 @@ int diag_socket_init_peripheral(uint8_t peripheral);
 void diag_socket_exit(void);
 void diag_socket_early_exit(void);
 void diag_socket_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt);
+int diag_socket_check_state(void *ctxt);
 #endif

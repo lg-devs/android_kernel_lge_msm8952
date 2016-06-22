@@ -1,4 +1,4 @@
-* Qualcomm RmNet IPA driver module
+* Qualcomm Technologies, Inc. RmNet IPA driver module
 
 This module enables embedded data calls using IPA HW.
 
@@ -13,3 +13,4 @@ Example:
 	qcom,rmnet-ipa {
 		compatible = "qcom,rmnet-ipa";
 	}
+

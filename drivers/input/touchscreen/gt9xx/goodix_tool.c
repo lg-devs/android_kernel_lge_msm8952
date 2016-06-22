@@ -1,7 +1,7 @@
 /* drivers/input/touchscreen/goodix_tool.c
  *
  * 2010 - 2012 Goodix Technology.
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,7 +39,7 @@ struct st_cmd_head {
 	u16 circle;	/* polling cycle */
 	u8  times;	/* plling times */
 	u8  retry;	/* I2C retry times */
-	u16 delay;	/* delay befor read or after write */
+	u16 delay;	/* delay before read or after write */
 	u16 data_len;	/* data length */
 	u8  addr_len;	/* address length */
 	u8  addr[2];	/* address */
@@ -67,13 +67,15 @@ static void tool_set_proc_name(char *procname)
 	"Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 	char date[20] = {0};
 	char month[4] = {0};
-	int i = 0, n_month = 1, n_day = 0, n_year = 0;
+	int i = 0, n_month = 1, n_day = 0, n_year = 0, ret;
+
 	snprintf(date, 20, "%s", __DATE__);
 
 	/* pr_debug("compile date: %s", date); */
 
-	sscanf(date, "%s %d %d", month, &n_day, &n_year);
-
+	ret = sscanf(date, "%s %d %d", month, &n_day, &n_year);
+	if (!ret)
+		return;
 	for (i = 0; i < 12; ++i) {
 		if (!memcmp(months[i], month, 3)) {
 			n_month = i+1;
@@ -417,6 +419,7 @@ static s32 goodix_tool_write(struct file *filp, const char __user *userbuf,
 		goto exit;
 	} else if (cmd_head.wr == GTP_RW_CHECK_RAWDIFF_MODE) {
 		struct goodix_ts_data *ts = i2c_get_clientdata(gt_client);
+
 		ret = copy_from_user(&cmd_head.data[GTP_ADDR_LENGTH],
 				&userbuf[CMD_HEAD_LENGTH], cmd_head.data_len);
 		if (ret) {

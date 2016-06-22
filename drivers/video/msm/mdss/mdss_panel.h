@@ -14,6 +14,7 @@
 #ifndef MDSS_PANEL_H
 #define MDSS_PANEL_H
 
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/stringify.h>
 #include <linux/types.h>
@@ -32,6 +33,11 @@ struct panel_id {
 /* worst case prefill lines for all chipsets including all vertical blank */
 #define MDSS_MDP_MAX_PREFILL_FETCH 25
 
+#define OVERRIDE_CFG	"override"
+#define SIM_PANEL	"sim"
+#define SIM_SW_TE_PANEL	"sim-swte"
+#define SIM_HW_TE_PANEL	"sim-hwte"
+
 /* panel type list */
 #define NO_PANEL		0xffff	/* No Panel */
 #define MDDI_PANEL		1	/* MDDI */
@@ -46,6 +52,17 @@ struct panel_id {
 #define WRITEBACK_PANEL		10	/* Wifi display */
 #define LVDS_PANEL		11	/* LVDS */
 #define EDP_PANEL		12	/* LVDS */
+
+
+#if defined(CONFIG_LGE_MIPI_H1_INCELL_QHD_CMD_PANEL)
+enum lcd_panel_type {
+	LGD_R69007_INCELL_CMD_PANEL,
+	LGD_SIC_LG4945_INCELL_CMD_PANEL,
+	LGE_SIC_LG4946_INCELL_CND_PANEL,
+	LGE_TD4302_INCELL_CND_PANEL,
+	UNKNOWN_PANEL
+};
+#endif
 
 static inline const char *mdss_panel2str(u32 panel)
 {
@@ -105,10 +122,23 @@ enum {
 
 enum {
 	MODE_GPIO_NOT_VALID = 0,
-	MODE_SEL_SPLIT,
-	MODE_SEL_DSC_SINGLE,
 	MODE_GPIO_HIGH,
 	MODE_GPIO_LOW,
+};
+
+/*
+ * enum sim_panel_modes - Different panel modes for simulator panels
+ *
+ * @SIM_MODE:		Disables all host reads for video mode simulator panels.
+ * @SIM_SW_TE_MODE:	Disables all host reads and genereates the SW TE. Used
+ *                      for cmd mode simulator panels.
+ * @SIM_HW_TE_MODE:	Disables all host reads and expects TE from hardware
+ *                      (terminator card). Used for cmd mode simulator panels.
+ */
+enum {
+	SIM_MODE = 1,
+	SIM_SW_TE_MODE,
+	SIM_HW_TE_MODE,
 };
 
 struct mdss_rect {
@@ -179,6 +209,7 @@ struct mdss_intf_recovery {
  *				- 1 clock enable
  * @MDSS_EVENT_DSI_CMDLIST_KOFF: acquire dsi_mdp_busy lock before kickoff.
  * @MDSS_EVENT_ENABLE_PARTIAL_ROI: Event to update ROI of the panel.
+ * @MDSS_EVENT_DSC_PPS_SEND: Event to send DSC PPS command to panel.
  * @MDSS_EVENT_DSI_STREAM_SIZE: Event to update DSI controller's stream size
  * @MDSS_EVENT_DSI_UPDATE_PANEL_DATA: Event to update the dsi driver structures
  *				based on the dsi mode passed as argument.
@@ -186,7 +217,7 @@ struct mdss_intf_recovery {
  *				- 1: update to command mode
  * @MDSS_EVENT_REGISTER_RECOVERY_HANDLER: Event to recover the interface in
  *					case there was any errors detected.
- * @ MDSS_EVENT_DSI_PANEL_STATUS:Event to check the panel status
+ * @MDSS_EVENT_DSI_PANEL_STATUS: Event to check the panel status
  *				<= 0: panel check fail
  *				>  0: panel check success
  * @MDSS_EVENT_DSI_DYNAMIC_SWITCH: Send DCS command to panel to initiate
@@ -198,6 +229,8 @@ struct mdss_intf_recovery {
  *				- MIPI_CMD_PANEL: switch to command mode
  * @MDSS_EVENT_DSI_RESET_WRITE_PTR: Reset the write pointer coordinates on
  *				the panel.
+ * @MDSS_EVENT_PANEL_TIMING_SWITCH: Panel timing switch is requested.
+ *				Argument provided is new panel timing.
  */
 enum mdss_intf_events {
 	MDSS_EVENT_RESET = 1,
@@ -218,6 +251,7 @@ enum mdss_intf_events {
 	MDSS_EVENT_PANEL_CLK_CTRL,
 	MDSS_EVENT_DSI_CMDLIST_KOFF,
 	MDSS_EVENT_ENABLE_PARTIAL_ROI,
+	MDSS_EVENT_DSC_PPS_SEND,
 	MDSS_EVENT_DSI_STREAM_SIZE,
 	MDSS_EVENT_DSI_UPDATE_PANEL_DATA,
 	MDSS_EVENT_REGISTER_RECOVERY_HANDLER,
@@ -225,6 +259,7 @@ enum mdss_intf_events {
 	MDSS_EVENT_DSI_DYNAMIC_SWITCH,
 	MDSS_EVENT_DSI_RECONFIG_CMD,
 	MDSS_EVENT_DSI_RESET_WRITE_PTR,
+	MDSS_EVENT_PANEL_TIMING_SWITCH,
 };
 
 struct lcd_panel_info {
@@ -250,22 +285,72 @@ struct lcd_panel_info {
 
 /* DSI PHY configuration */
 struct mdss_dsi_phy_ctrl {
-	uint32_t regulator[7];
-	uint32_t timing[12];
-	uint32_t ctrl[4];
-	uint32_t strength[2];
+	char regulator[7];	/* 8996, 1 * 5 */
+	char timing[12];
+	char ctrl[4];
+	char strength[10];	/* 8996, 2 * 5 */
 	char bistctrl[6];
 	uint32_t pll[21];
-	char lanecfg[45];
+	char lanecfg[45];	/* 8996, 4 * 5 */
 	bool reg_ldo_mode;
+
+	char timing_8996[40];/* 8996, 8 * 5 */
+	char regulator_len;
+	char strength_len;
+	char lanecfg_len;
 };
 
+/**
+ * enum dynamic_mode_switch - Dynamic mode switch methods
+ * @DYNAMIC_MODE_SWITCH_DISABLED: Dynamic mode switch is not supported
+ * @DYNAMIC_MODE_SWITCH_SUSPEND_RESUME: Switch requires panel suspend/resume
+ * @DYNAMIC_MODE_SWITCH_IMMEDIATE: Supports video/cmd mode switch immediately
+ * @DYNAMIC_MODE_RESOLUTION_SWITCH_IMMEDIATE: Panel supports display resolution
+ * switch immediately.
+ **/
 enum dynamic_mode_switch {
 	DYNAMIC_MODE_SWITCH_DISABLED = 0,
 	DYNAMIC_MODE_SWITCH_SUSPEND_RESUME,
 	DYNAMIC_MODE_SWITCH_IMMEDIATE,
+	DYNAMIC_MODE_RESOLUTION_SWITCH_IMMEDIATE,
 };
 
+/**
+ * enum dynamic_switch_modes - Type of dynamic mode switch to be given as
+ * argument to MDSS_EVENT_DSI_DYNAMIC_SWITCH event
+ * @SWITCH_TO_CMD_MODE: Switch from DSI video mode to command mode
+ * @SWITCH_TO_VIDEO_MODE: Switch from DSI command mode to video mode
+ * @SWITCH_RESOLUTION: Switch only display resolution
+ **/
+enum dynamic_switch_modes {
+	SWITCH_MODE_UNKNOWN = 0,
+	SWITCH_TO_CMD_MODE,
+	SWITCH_TO_VIDEO_MODE,
+	SWITCH_RESOLUTION,
+};
+
+/**
+ * struct mdss_panel_timing - structure for panel timing information
+ * @list: List head ptr to track within panel data timings list
+ * @name: A unique name of this timing that can be used to identify it
+ * @xres: Panel width
+ * @yres: Panel height
+ * @h_back_porch: Horizontal back porch
+ * @h_front_porch: Horizontal front porch
+ * @h_pulse_width: Horizontal pulse width
+ * @hsync_skew: Horizontal sync skew
+ * @v_back_porch: Vertical back porch
+ * @v_front_porch: Vertical front porch
+ * @v_pulse_width: Vertical pulse width
+ * @border_top: Border color on top
+ * @border_bottom: Border color on bottom
+ * @border_left: Border color on left
+ * @border_right: Border color on right
+ * @clk_rate: Pixel clock rate of this panel timing
+ * @frame_rate: Display refresh rate
+ * @fbc: Framebuffer compression parameters for this display timing
+ * @te: Tearcheck parameters for this display timing
+ **/
 struct mipi_panel_info {
 	char boot_mode;	/* identify if mode switched from starting mode */
 	char mode;		/* video/cmd */
@@ -321,7 +406,6 @@ struct mipi_panel_info {
 
 	char lp11_init;
 	u32  init_delay;
-	u32  post_init_delay;
 };
 
 struct edp_panel_info {
@@ -348,21 +432,12 @@ struct lvds_panel_info {
 };
 
 enum {
-	DSC_PATH_1P1D,
-	DSC_PATH_MERGE_1P1D,
-	DSC_PATH_SPLIT_1P2D
-};
-
-enum {
 	COMPRESSION_NONE,
 	COMPRESSION_DSC,
 	COMPRESSION_FBC
 };
 
 struct dsc_desc {
-	int data_path_model;		/* multiplex + split_panel */
-	int ich_reset_value;
-	int ich_reset_override;
 	int initial_lines;
 	int slice_last_group_size;
 	int bpp;	/* target bit per pixel */
@@ -370,6 +445,7 @@ struct dsc_desc {
 	int line_buf_depth;
 	bool config_by_manufacture_cmd;
 	bool block_pred_enable;
+	int vbr_enable;
 	int enable_422;
 	int convert_rgb;
 	int input_10_bits;
@@ -380,6 +456,7 @@ struct dsc_desc {
 	int slice_height;
 	int slice_width;
 	int chunk_size;
+	int full_frame_slices; /* denotes number of slice in full frame */
 
 	int pkt_per_line;
 	int bytes_in_slice;
@@ -466,9 +543,9 @@ struct mdss_panel_info {
 	u32 bl_max;
 	u32 bl_min;
 	u32 fb_num;
-	u32 clk_rate;
+	u64 clk_rate;
 	u32 clk_min;
-	u32 clk_max;
+	u64 clk_max;
 	u32 mdp_transfer_time_us;
 	u32 frame_count;
 	u32 is_3d_panel;
@@ -480,16 +557,40 @@ struct mdss_panel_info {
 	int pwm_pmic_gpio;
 	int pwm_lpg_chan;
 	int pwm_period;
+#if defined(CONFIG_LGE_MIPI_H1_INCELL_QHD_CMD_PANEL)
+	int blmap_size;
+	int *blmap;
+	int panel_type;
+#if defined(CONFIG_LGE_HIGH_LUMINANCE_MODE)
+	int hl_blmap_size;
+	int *hl_blmap;
+	int hl_mode_on;
+#endif
+#if defined(CONFIG_LGE_THERMAL_BL_MAX)
+	int thermal_maxblvalue;
+#endif
+
+#endif
 	bool dynamic_fps;
 	bool ulps_feature_enabled;
 	bool ulps_suspend_enabled;
 	bool panel_ack_disabled;
 	bool esd_check_enabled;
 	char dfps_update;
+	/* new requested fps before it is updated in hw */
 	int new_fps;
+	/* stores initial fps after boot */
+	u32 default_fps;
+	/* stores initial vtotal (vfp-method) or htotal (hfp-method) */
+	u32 saved_total;
+	/* stores initial vfp (vfp-method) or hfp (hfp-method) */
+	u32 saved_fporch;
+	/* current fps, once is programmed in hw */
+	int current_fps;
+
 	int panel_max_fps;
 	int panel_max_vtotal;
-	u32 mode_sel_state;
+	u32 mode_gpio_state;
 	u32 xstart_pix_align;
 	u32 width_pix_align;
 	u32 ystart_pix_align;
@@ -498,6 +599,7 @@ struct mdss_panel_info {
 	u32 min_height;
 	u32 min_fps;
 	u32 max_fps;
+	u32 prg_fet;
 
 	u32 cont_splash_enabled;
 	bool esd_rdy;
@@ -507,6 +609,7 @@ struct mdss_panel_info {
 	u32 partial_update_roi_merge;
 	struct ion_handle *splash_ihdl;
 	int panel_power_state;
+	int blank_state;
 	int compression_mode;
 
 	uint32_t panel_dead;
@@ -514,29 +617,103 @@ struct mdss_panel_info {
 	u32 panel_orientation;
 	bool dynamic_switch_pending;
 	bool is_lpm_mode;
-	bool is_split_display;
+	bool is_split_display; /* two DSIs in one display, pp split or not */
+	bool use_pingpong_split;
+
+	/*
+	 * index[0] = left layer mixer, value of 0 not valid
+	 * index[1] = right layer mixer, 0 is possible
+	 *
+	 * Ex(1): 1080x1920 display using single DSI and single lm, [1080 0]
+	 * Ex(2): 1440x2560 display using two DSIs and two lms,
+	 *        each with 720x2560, [720 0]
+	 * Ex(3): 1440x2560 display using single DSI w/ compression and
+	 *        single lm, [1440 0]
+	 * Ex(4): 1440x2560 display using single DSI w/ compression and
+	 *        two lms, [720 720]
+	 * Ex(5): 1080x1920 display using single DSI and two lm, [540 540]
+	 * Ex(6): 1080x1920 display using single DSI and two lm,
+	 *        [880 400] - not practical but possible
+	 */
+	u32 lm_widths[2];
 
 	bool is_prim_panel;
-	bool is_pluggable;
-	bool is_cec_supported;
+
+	/* refer sim_panel_modes enum for different modes */
+	u8 sim_panel_mode;
 
 	void *edid_data;
-	void *dba_data;
-	void *cec_data;
 
 	char panel_name[MDSS_MAX_PANEL_LEN];
 	struct mdss_mdp_pp_tear_check te;
 
+	/*
+	 * Value of 2 only when single DSI is configured with 2 DSC
+	 * encoders. When 2 encoders are used, currently both use
+	 * same configuration.
+	 */
+	u8 dsc_enc_total; /* max 2 */
 	struct dsc_desc dsc;
+
 	struct lcd_panel_info lcdc;
 	struct fbc_panel_info fbc;
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
 	struct edp_panel_info edp;
 
-	bool is_dba_panel;
+	/*
+	 * Delay(in ms) to accommodate s/w delay while
+	 * configuring the event timer wakeup logic.
+	 */
+	u32 adjust_timer_delay_ms;
+
 	/* debugfs structure for the panel */
 	struct mdss_panel_debugfs_info *debugfs_info;
+
+#if defined(CONFIG_LGE_DISPLAY_AOD_SUPPORTED)
+	bool aod_init_done;
+	bool aod_labibb_ctrl;
+	unsigned int aod_cur_mode;
+	unsigned int aod_cmd_mode;
+	unsigned int aod_node_from_user;
+	unsigned int aod_keep_u2;
+#endif
+#ifdef CONFIG_LGE_LCD_POWER_CTRL
+	bool power_ctrl;
+#endif
+};
+
+struct mdss_panel_timing {
+	struct list_head list;
+	const char *name;
+
+	u32 xres;
+	u32 yres;
+
+	u32 h_back_porch;
+	u32 h_front_porch;
+	u32 h_pulse_width;
+	u32 hsync_skew;
+	u32 v_back_porch;
+	u32 v_front_porch;
+	u32 v_pulse_width;
+
+	u32 border_top;
+	u32 border_bottom;
+	u32 border_left;
+	u32 border_right;
+
+	u32 lm_widths[2];
+
+	u64 clk_rate;
+	char frame_rate;
+
+	u8 dsc_enc_total;
+	struct dsc_desc dsc;
+	struct fbc_panel_info fbc;
+	u32 compression_mode;
+
+	struct mdss_mdp_pp_tear_check te;
 };
 
 struct mdss_panel_data {
@@ -558,6 +735,11 @@ struct mdss_panel_data {
 	 */
 	int (*event_handler) (struct mdss_panel_data *pdata, int e, void *arg);
 
+	struct list_head timings_list;
+	struct mdss_panel_timing *current_timing;
+	bool active;
+
+	struct device_node *cfg_np; /* NULL if config node is not present */
 	struct mdss_panel_data *next;
 };
 
@@ -575,6 +757,7 @@ struct mdss_panel_debugfs_info {
 static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 {
 	u32 frame_rate, pixel_total;
+	u64 rate;
 
 	if (panel_info == NULL)
 		return DEFAULT_FRAME_RATE;
@@ -599,11 +782,13 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 			  panel_info->lcdc.v_front_porch +
 			  panel_info->lcdc.v_pulse_width +
 			  panel_info->yres);
-		if (pixel_total)
-			frame_rate = panel_info->clk_rate / pixel_total;
-		else
+		if (pixel_total) {
+			rate = panel_info->clk_rate;
+			do_div(rate, pixel_total);
+			frame_rate = (u32)rate;
+		} else {
 			frame_rate = DEFAULT_FRAME_RATE;
-
+		}
 		break;
 	}
 	return frame_rate;
@@ -628,7 +813,7 @@ static inline int mdss_panel_get_vtotal(struct mdss_panel_info *pinfo)
 /*
  * mdss_panel_get_htotal() - return panel horizontal width
  * @pinfo:	Pointer to panel info containing all panel information
- * @consider_fbc: true to factor fbc settings, false to ignore.
+ * @compression: true to factor fbc settings, false to ignore.
  *
  * Returns the total width of the panel including any blanking regions
  * which are not visible to user but used for calculations. For certain
@@ -636,14 +821,14 @@ static inline int mdss_panel_get_vtotal(struct mdss_panel_info *pinfo)
  * calculation, the appropriate flag can be passed.
  */
 static inline int mdss_panel_get_htotal(struct mdss_panel_info *pinfo, bool
-		consider_fbc)
+		compression)
 {
 	struct dsc_desc *dsc = NULL;
 
 	int adj_xres = pinfo->xres + pinfo->lcdc.border_left +
 				pinfo->lcdc.border_right;
 
-	if (consider_fbc) {
+	if (compression) {
 		if (pinfo->compression_mode == COMPRESSION_DSC) {
 			dsc = &pinfo->dsc;
 			adj_xres = dsc->pclk_per_line;
@@ -658,8 +843,16 @@ static inline int mdss_panel_get_htotal(struct mdss_panel_info *pinfo, bool
 		pinfo->lcdc.h_pulse_width;
 }
 
+static inline bool is_dsc_compression(struct mdss_panel_info *pinfo)
+{
+	if (pinfo)
+		return (pinfo->compression_mode == COMPRESSION_DSC);
+
+	return false;
+}
+
 int mdss_register_panel(struct platform_device *pdev,
-	struct mdss_panel_data *pdata, struct device_node *node);
+	struct mdss_panel_data *pdata);
 
 /*
  * mdss_panel_is_power_off: - checks if a panel is off
@@ -725,34 +918,6 @@ static inline bool mdss_panel_is_power_on_ulp(int panel_power_state)
 }
 
 /**
- * mdss_panel_calc_frame_rate() - calculate panel frame rate based on panel timing
- *				information.
- * @panel_info:	Pointer to panel info containing all panel information
- */
-static inline u8 mdss_panel_calc_frame_rate(struct mdss_panel_info *pinfo)
-{
-		u32 pixel_total = 0;
-		u8 frame_rate = 0;
-
-		pixel_total = (pinfo->lcdc.h_back_porch +
-			  pinfo->lcdc.h_front_porch +
-			  pinfo->lcdc.h_pulse_width +
-			  pinfo->xres) *
-			 (pinfo->lcdc.v_back_porch +
-			  pinfo->lcdc.v_front_porch +
-			  pinfo->lcdc.v_pulse_width +
-			  pinfo->yres);
-
-		if (pinfo->clk_rate && pixel_total)
-			frame_rate = DIV_ROUND_CLOSEST(pinfo->clk_rate,
-								pixel_total);
-		else
-			frame_rate = DEFAULT_FRAME_RATE;
-
-		return frame_rate;
-}
-
-/**
  * mdss_panel_intf_type: - checks if a given intf type is primary
  * @intf_val: panel interface type of the individual controller
  *
@@ -775,18 +940,58 @@ struct mdss_panel_cfg *mdss_panel_intf_type(int intf_val);
  */
 bool mdss_is_ready(void);
 int mdss_rect_cmp(struct mdss_rect *rect1, struct mdss_rect *rect2);
+
+/**
+ * mdss_panel_override_te_params() - overrides TE params to enable SW TE
+ * @pinfo: panel info
+ */
+void mdss_panel_override_te_params(struct mdss_panel_info *pinfo);
+
 #ifdef CONFIG_FB_MSM_MDSS
 int mdss_panel_debugfs_init(struct mdss_panel_info *panel_info,
 		char const *panel_name);
 void mdss_panel_debugfs_cleanup(struct mdss_panel_info *panel_info);
 void mdss_panel_debugfsinfo_to_panelinfo(struct mdss_panel_info *panel_info);
+
+/*
+ * mdss_panel_info_from_timing() - populate panel info from panel timing
+ * @pt:		pointer to source panel timing
+ * @pinfo:	pointer to destination panel info
+ *
+ * Populates relevant data from panel timing into panel info
+ */
+void mdss_panel_info_from_timing(struct mdss_panel_timing *pt,
+		struct mdss_panel_info *pinfo);
+
+/**
+ * mdss_panel_get_timing_by_name() - return panel timing with matching name
+ * @pdata:	pointer to panel data struct containing list of panel timings
+ * @name:	name of the panel timing to be returned
+ *
+ * Looks through list of timings provided in panel data and returns pointer
+ * to panel timing matching it. If none is found, NULL is returned.
+ */
+struct mdss_panel_timing *mdss_panel_get_timing_by_name(
+		struct mdss_panel_data *pdata,
+		const char *name);
 #else
 static inline int mdss_panel_debugfs_init(
-			struct mdss_panel_info *panel_info,
-			char const *panel_name) { return 0; };
+			struct mdss_panel_info *panel_info) { return 0; };
 static inline void mdss_panel_debugfs_cleanup(
 			struct mdss_panel_info *panel_info) { };
 static inline void mdss_panel_debugfsinfo_to_panelinfo(
 			struct mdss_panel_info *panel_info) { };
+static inline void mdss_panel_info_from_timing(struct mdss_panel_timing *pt,
+		struct mdss_panel_info *pinfo) { };
+static inline struct mdss_panel_timing *mdss_panel_get_timing_by_name(
+		struct mdss_panel_data *pdata,
+		const char *name) { return NULL; };
 #endif
+
+#if defined(CONFIG_LGE_MIPI_H1_INCELL_QHD_CMD_PANEL)
+#if defined (CONFIG_LGE_LCD_TUNING)
+void lge_force_mdss_dsi_panel_cmd_read(char cmd0, int cnt);
+#endif
+#endif
+
 #endif /* MDSS_PANEL_H */

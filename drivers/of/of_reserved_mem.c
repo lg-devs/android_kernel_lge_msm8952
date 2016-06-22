@@ -1,7 +1,7 @@
 /*
  * Device tree based initialization code for reserved memory.
  *
- * Copyright (c) 2013, The Linux Foundation. All Rights Reserved.
+ * Copyright (c) 2013, 2015 The Linux Foundation. All Rights Reserved.
  * Copyright (c) 2013,2014 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  * Author: Marek Szyprowski <m.szyprowski@samsung.com>
@@ -20,9 +20,11 @@
 #include <linux/mm.h>
 #include <linux/sizes.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/sort.h>
 
 #define MAX_RESERVED_REGIONS	16
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
+static struct reserved_mem sorted_reserved_mem[MAX_RESERVED_REGIONS] __initdata;
 static int reserved_mem_count;
 
 #if defined(CONFIG_HAVE_MEMBLOCK)
@@ -142,7 +144,7 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 			ret = early_init_dt_alloc_reserved_memory_arch(size,
 					align, start, end, nomap, &base);
 			if (ret == 0) {
-				pr_debug("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
+				pr_info("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
 					uname, &base,
 					(unsigned long)size / SZ_1M);
 				break;
@@ -154,7 +156,7 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 		ret = early_init_dt_alloc_reserved_memory_arch(size, align,
 							0, 0, nomap, &base);
 		if (ret == 0)
-			pr_debug("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
+			pr_info("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
 				uname, &base, (unsigned long)size / SZ_1M);
 	}
 
@@ -170,19 +172,163 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 	return 0;
 }
 
+static const struct of_device_id __rmem_of_table_sentinel
+	__used __section(__reservedmem_of_table_end);
+
+/**
+ * res_mem_init_node() - call region specific reserved memory init code
+ */
+static int __init __reserved_mem_init_node(struct reserved_mem *rmem)
+{
+	extern const struct of_device_id __reservedmem_of_table[];
+	const struct of_device_id *i;
+
+	for (i = __reservedmem_of_table; i < &__rmem_of_table_sentinel; i++) {
+		reservedmem_of_init_fn initfn = i->data;
+		const char *compat = i->compatible;
+
+		if (!of_flat_dt_is_compatible(rmem->fdt_node, compat))
+			continue;
+
+		if (initfn(rmem) == 0) {
+			pr_info("Reserved memory: initialized node %s, compatible id %s\n",
+				rmem->name, compat);
+			return 0;
+		}
+	}
+	return -ENOENT;
+}
+
+static int __init __rmem_cmp(const void *a, const void *b)
+{
+	const struct reserved_mem *ra = a, *rb = b;
+
+	return ra->base - rb->base;
+}
+
+static void __init __rmem_check_for_overlap(void)
+{
+	int i;
+
+	if (reserved_mem_count < 2)
+		return;
+
+	memcpy(sorted_reserved_mem, reserved_mem, sizeof(sorted_reserved_mem));
+	sort(sorted_reserved_mem, reserved_mem_count,
+	     sizeof(sorted_reserved_mem[0]), __rmem_cmp, NULL);
+	for (i = 0; i < reserved_mem_count - 1; i++) {
+		struct reserved_mem *this, *next;
+
+		this = &sorted_reserved_mem[i];
+		next = &sorted_reserved_mem[i + 1];
+		if (!(this->base && next->base))
+			continue;
+		if (this->base + this->size > next->base) {
+			phys_addr_t this_end, next_end;
+
+			this_end = this->base + this->size;
+			next_end = next->base + next->size;
+			WARN(1, "Reserved mem: OVERLAP DETECTED!\n");
+			pr_err("%s (%pa--%pa) overlaps with %s (%pa--%pa)\n",
+			       this->name, &this->base, &this_end,
+			       next->name, &next->base, &next_end);
+		}
+	}
+}
+
 /**
  * fdt_init_reserved_mem - allocate and init all saved reserved memory regions
  */
 void __init fdt_init_reserved_mem(void)
 {
 	int i;
+
+	/* check for overlapping reserved regions */
+	__rmem_check_for_overlap();
+
 	for (i = 0; i < reserved_mem_count; i++) {
 		struct reserved_mem *rmem = &reserved_mem[i];
 		unsigned long node = rmem->fdt_node;
+		int len;
+		const __be32 *prop;
 		int err = 0;
+
+		prop = of_get_flat_dt_prop(node, "phandle", &len);
+		if (!prop)
+			prop = of_get_flat_dt_prop(node, "linux,phandle", &len);
+		if (prop)
+			rmem->phandle = of_read_number(prop, len/4);
 
 		if (rmem->size == 0)
 			err = __reserved_mem_alloc_size(node, rmem->name,
 						 &rmem->base, &rmem->size);
+		if (err == 0)
+			__reserved_mem_init_node(rmem);
 	}
+}
+
+static inline struct reserved_mem *__find_rmem(struct device_node *node)
+{
+	unsigned int i;
+
+	if (!node->phandle)
+		return NULL;
+
+	for (i = 0; i < reserved_mem_count; i++)
+		if (reserved_mem[i].phandle == node->phandle)
+			return &reserved_mem[i];
+	return NULL;
+}
+
+/**
+ * of_reserved_mem_device_init() - assign reserved memory region to given device
+ *
+ * This function assign memory region pointed by "memory-region" device tree
+ * property to the given device.
+ */
+int of_reserved_mem_device_init(struct device *dev)
+{
+	struct reserved_mem *rmem;
+	struct device_node *np;
+	int ret;
+
+	np = of_parse_phandle(dev->of_node, "memory-region", 0);
+	if (!np)
+		return -ENODEV;
+
+	rmem = __find_rmem(np);
+	of_node_put(np);
+
+	if (!rmem || !rmem->ops || !rmem->ops->device_init)
+		return -EINVAL;
+
+	ret = rmem->ops->device_init(rmem, dev);
+	if (ret == 0)
+		dev_info(dev, "assigned reserved memory node %s\n", rmem->name);
+
+	return ret;
+}
+
+/**
+ * of_reserved_mem_device_release() - release reserved memory device structures
+ *
+ * This function releases structures allocated for memory region handling for
+ * the given device.
+ */
+void of_reserved_mem_device_release(struct device *dev)
+{
+	struct reserved_mem *rmem;
+	struct device_node *np;
+
+	np = of_parse_phandle(dev->of_node, "memory-region", 0);
+	if (!np)
+		return;
+
+	rmem = __find_rmem(np);
+	of_node_put(np);
+
+	if (!rmem || !rmem->ops || !rmem->ops->device_release)
+		return;
+
+	rmem->ops->device_release(rmem, dev);
 }

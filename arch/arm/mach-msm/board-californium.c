@@ -14,7 +14,6 @@
 #include "board-dt.h"
 #include <asm/mach/map.h>
 #include <asm/mach/arch.h>
-#include <mach/board.h>
 
 static const char *mdmcalifornium_dt_match[] __initconst = {
 	"qcom,mdmcalifornium",

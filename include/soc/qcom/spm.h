@@ -19,31 +19,41 @@ enum {
 	MSM_SPM_MODE_RETENTION,
 	MSM_SPM_MODE_GDHS,
 	MSM_SPM_MODE_POWER_COLLAPSE,
+	MSM_SPM_MODE_FASTPC,
 	MSM_SPM_MODE_NR
+};
+
+enum msm_spm_avs_irq {
+	MSM_SPM_AVS_IRQ_MIN,
+	MSM_SPM_AVS_IRQ_MAX,
 };
 
 struct msm_spm_device;
 struct device_node;
-
-#define spm_raw_write(v, a)	({ __raw_writel(v, a); __raw_readl(a); })
-#define spm_write_relaxed(v, c)	({ writel_relaxed(v, c); readl_relaxed(c); })
 
 #if defined(CONFIG_MSM_SPM)
 
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm);
 int msm_spm_probe_done(void);
 int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel);
-unsigned int msm_spm_get_vdd(unsigned int cpu);
+int msm_spm_get_vdd(unsigned int cpu);
 int msm_spm_turn_on_cpu_rail(struct device_node *l2ccc_node,
 		unsigned int val, int cpu, int vctl_offset);
 struct msm_spm_device *msm_spm_get_device_by_name(const char *name);
 int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm);
-int msm_spm_config_low_power_mode_addr(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm);
 int msm_spm_device_init(void);
 bool msm_spm_is_mode_avail(unsigned int mode);
 void msm_spm_dump_regs(unsigned int cpu);
+int msm_spm_is_avs_enabled(unsigned int cpu);
+int msm_spm_avs_enable(unsigned int cpu);
+int msm_spm_avs_disable(unsigned int cpu);
+int msm_spm_avs_set_limit(unsigned int cpu, uint32_t min_lvl,
+		uint32_t max_lvl);
+int msm_spm_avs_enable_irq(unsigned int cpu, enum msm_spm_avs_irq irq);
+int msm_spm_avs_disable_irq(unsigned int cpu, enum msm_spm_avs_irq irq);
+int msm_spm_avs_clear_irq(unsigned int cpu, enum msm_spm_avs_irq irq);
+
 #if defined(CONFIG_MSM_L2_SPM)
 
 /* Public functions */
@@ -79,7 +89,7 @@ static inline int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 	return -ENOSYS;
 }
 
-static inline unsigned int msm_spm_get_vdd(unsigned int cpu)
+static inline int msm_spm_get_vdd(unsigned int cpu)
 {
 	return 0;
 }
@@ -105,14 +115,7 @@ static inline int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
 {
 	return -ENODEV;
 }
-
-static inline int msm_spm_config_low_power_mode_addr(
-	struct msm_spm_device *dev, unsigned int mode, bool notify_rpm)
-{
-	return -ENODEV;
-}
-static inline struct msm_spm_device *msm_spm_get_device_by_name
-						(const char *name)
+static inline struct msm_spm_device *msm_spm_get_device_by_name(const char *name)
 {
 	return NULL;
 }
@@ -120,6 +123,24 @@ static inline struct msm_spm_device *msm_spm_get_device_by_name
 static inline bool msm_spm_is_mode_avail(unsigned int mode)
 {
 	return false;
+}
+
+static inline int msm_spm_avs_enable_irq(unsigned int cpu,
+		enum msm_spm_avs_irq irq)
+{
+	return -ENOSYS;
+}
+
+static inline int msm_spm_avs_disable_irq(unsigned int cpu,
+		enum msm_spm_avs_irq irq)
+{
+	return -ENOSYS;
+}
+
+static inline int msm_spm_avs_clear_irq(unsigned int cpu,
+		enum msm_spm_avs_irq irq)
+{
+	return -ENOSYS;
 }
 
 #endif  /* defined (CONFIG_MSM_SPM) */

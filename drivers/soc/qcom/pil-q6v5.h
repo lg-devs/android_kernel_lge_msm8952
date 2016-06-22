@@ -32,6 +32,9 @@ struct q6v5_data {
 	struct clk *reg_clk;	   /* CPU access registers */
 	struct clk *gpll0_mss_clk; /* GPLL0 to MSS connection */
 	struct clk *rom_clk;	   /* Boot ROM */
+	struct clk *snoc_axi_clk;
+	struct clk *mnoc_axi_clk;
+	struct clk *qdss_clk;
 	void __iomem *axi_halt_base; /* Halt base of q6, mss,
 					nc are in same 4K page */
 	void __iomem *axi_halt_q6;
@@ -45,17 +48,17 @@ struct q6v5_data {
 	bool is_booted;
 	struct pil_desc desc;
 	bool self_auth;
-	phys_addr_t mba_phys;
-	void *mba_virt;
-	size_t mba_size;
-	phys_addr_t dp_phys;
-	void *dp_virt;
+	phys_addr_t mba_dp_phys;
+	void *mba_dp_virt;
+	size_t mba_dp_size;
 	size_t dp_size;
 	bool qdsp6v55;
 	bool qdsp6v5_2_0;
 	bool qdsp6v56;
 	bool qdsp6v56_1_3;
+	bool qdsp6v56_1_5;
 	bool qdsp6v56_1_8;
+	bool qdsp6v56_1_8_inrush_current;
 	bool non_elf_image;
 	bool restart_reg_sec;
 	bool override_acc;

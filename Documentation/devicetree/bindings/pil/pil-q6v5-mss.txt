@@ -42,6 +42,8 @@ Optional properties:
 - qcom,is-not-loadable: Boolean- Present if the image does not need to
 			be loaded.
 - qcom,pil-self-auth: Boolean- True if authentication is required.
+- qcom,mem-protect-id: Virtual ID used by PIL to call into TZ/HYP to protect/unprotect
+			subsystem related memory.
 - qcom,gpio-err-fatal: GPIO used by the modem to indicate error fatal to the apps.
 - qcom,gpio-err-ready: GPIO used by the modem to indicate error ready to the apps.
 - qcom,gpio-proxy-unvote: GPIO used by the modem to trigger proxy unvoting in
@@ -51,6 +53,9 @@ Optional properties:
 		      to the apps.
 - qcom,gpio-ramdump-disable: GPIO used by the modem to inform the apps that ramdump
 			     collection should be disabled.
+- qcom,gpio-shutdown-ack: GPIO used by the modem to indicate that it has done the
+			  necessary cleanup and that the apps can move forward with
+			  the shutdown sequence.
 - qcom,restart-group: List of subsystems that will need to restart together.
 - qcom,mba-image-is-not-elf:	Boolean- Present if MBA image doesnt use the ELF
 				format.
@@ -63,9 +68,13 @@ Optional properties:
 - qcom,pnoc-clk-vote: Boolean- Present if the modem needs the PNOC bus to be
 		      clocked before it boots up
 - qcom,qdsp6v56-1-3: Boolean- Present if the qdsp version is v56 1.3
-- qcom,qdsp6v56-1-8: Boolean- Present if the qdsp version is v56 1.8
+- qcom,qdsp6v56-1-5: Boolean- Present if the qdsp version is v56 1.5
+- qcom,edge:		GLINK logical name of the remote subsystem
 - qcom,pil-force-shutdown: Boolean. If set, the SSR framework will not trigger graceful shutdown
                            on behalf of the subsystem driver.
+- qcom,qdsp6v56-1-8: Boolean- Present if the qdsp version is v56 1.8
+- qcom,qdsp6v56-1-8-inrush-current: Boolean- Present if the qdsp version is V56 1.8 and has in-rush
+				    current issue.
 
 Example:
 	qcom,mss@fc880000 {

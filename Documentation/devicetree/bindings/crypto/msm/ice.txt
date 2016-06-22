@@ -14,7 +14,7 @@ Optional properties:
   - qocm,op-freq-hz     : max clock speed sorted in the same order as the clocks
                           property.
   - qcom,instance-type  : describe the storage type for which ICE node is defined
-                          currently, only "ufs" and "sdcc" are supported storage type
+			  currently, only "ufs" and "sdcc" are supported storage type
 
 Example:
         ufs_ice: ufsice@630000 {

@@ -133,6 +133,8 @@ static int wcd9xxx_slim_device_up(struct slim_device *sldev);
 static int wcd9xxx_slim_device_down(struct slim_device *sldev);
 static int wcd9xxx_enable_static_supplies(struct wcd9xxx *wcd9xxx,
 					  struct wcd9xxx_pdata *pdata);
+static void wcd9xxx_disable_supplies(struct wcd9xxx *wcd9xxx,
+				     struct wcd9xxx_pdata *pdata);
 
 struct wcd9xxx_i2c wcd9xxx_modules[MAX_WCD9XXX_DEVICE];
 
@@ -262,6 +264,8 @@ static int regmap_slim_read(void *context, const void *reg, size_t reg_size,
 
 	if (is_wcd9xxx_reg_power_down(wcd9xxx, rreg)) {
 		ret = 0;
+		for (i = 0; i < val_size; i++)
+			((u8 *)val)[i] = 0;
 		goto err;
 	}
 	ret = wcd9xxx_page_write(wcd9xxx, &c_reg);
@@ -269,8 +273,8 @@ static int regmap_slim_read(void *context, const void *reg, size_t reg_size,
 		goto err;
 	ret = wcd9xxx->read_dev(wcd9xxx, c_reg, val_size, val, false);
 	if (ret < 0)
-		dev_err(dev, "%s: Codec read failed (%d), reg: 0x%x\n",
-			__func__, ret, rreg);
+		dev_err(dev, "%s: Codec read failed (%d), reg: 0x%x, size:%zd\n",
+			__func__, ret, rreg, val_size);
 	else {
 		for (i = 0; i < val_size; i++)
 			dev_dbg(dev, "%s: Read 0x%02x from 0x%x\n",
@@ -430,7 +434,8 @@ static int regmap_slim_gather_write(void *context,
 	ret = wcd9xxx->write_dev(wcd9xxx, c_reg, val_size, (void *) val,
 				 false);
 	if (ret < 0)
-		dev_err(dev, "%s: Codec write failed (%d)\n", __func__, ret);
+		dev_err(dev, "%s: Codec write failed (%d), reg:0x%x, size:%zd\n",
+			__func__, ret, rreg, val_size);
 
 err:
 	mutex_unlock(&wcd9xxx->io_lock);
@@ -847,14 +852,14 @@ static int wcd9xxx_slim_write_device(struct wcd9xxx *wcd9xxx,
  * @wcd9xxx: Handle to the wcd9xxx core
  * @wcd9xxx_reg_val: structure holding register and values to be written
  * @size: Indicates number of messages to be written with one descriptor
- * @interface: Indicates whether the register is for slim interface or for
+ * @is_interface: Indicates whether the register is for slim interface or for
  *	       general registers.
  * @return: returns 0 if success or error information to the caller in case
  *	    of failure.
  */
 int wcd9xxx_slim_bulk_write(struct wcd9xxx *wcd9xxx,
 			    struct wcd9xxx_reg_val *bulk_reg,
-			    unsigned int size, bool interface)
+			    unsigned int size, bool is_interface)
 {
 	int ret, i;
 	struct slim_val_inf *msgs;
@@ -887,7 +892,7 @@ int wcd9xxx_slim_bulk_write(struct wcd9xxx *wcd9xxx,
 		goto err;
 	}
 
-	ret = slim_bulk_msg_write(interface ?
+	ret = slim_bulk_msg_write(is_interface ?
 				  wcd9xxx->slim_slave : wcd9xxx->slim,
 				  SLIM_MSG_MT_CORE,
 				  SLIM_MSG_MC_CHANGE_VALUE, msgs, size,
@@ -1886,17 +1891,11 @@ static int wcd9xxx_enable_static_supplies(struct wcd9xxx *wcd9xxx,
 	return ret;
 }
 
-/*
- * wcd9xxx_disable_supplies: to disable static regulators
- * @wcd9xxx: Handle to the wcd9xxx core
- * @pdata: Handle for pdata
- * @return: void
- */
-void wcd9xxx_disable_supplies(struct wcd9xxx *wcd9xxx, void *data)
+static void wcd9xxx_disable_supplies(struct wcd9xxx *wcd9xxx,
+				     struct wcd9xxx_pdata *pdata)
 {
 	int i;
 	int rc;
-	struct wcd9xxx_pdata *pdata = (struct wcd9xxx_pdata *)data;
 
 	for (i = 0; i < wcd9xxx->num_of_supplies; i++) {
 		if (pdata->regulator[i].ondemand)
@@ -1911,10 +1910,9 @@ void wcd9xxx_disable_supplies(struct wcd9xxx *wcd9xxx, void *data)
 		}
 	}
 }
-EXPORT_SYMBOL(wcd9xxx_disable_supplies);
 
 static void wcd9xxx_release_supplies(struct wcd9xxx *wcd9xxx,
-					struct wcd9xxx_pdata *pdata)
+				     struct wcd9xxx_pdata *pdata)
 {
 	int i;
 
@@ -2715,6 +2713,7 @@ static void wcd9xxx_set_codec_specific_param(struct wcd9xxx *wcd9xxx)
 
 	switch (wcd9xxx->type) {
 	case WCD9335:
+	case WCD9330:
 		wcd9xxx->using_regmap = true;
 		wcd9xxx->prev_pg_valid = false;
 		break;
@@ -3010,82 +3009,9 @@ static int wcd9xxx_slim_device_down(struct slim_device *sldev)
 	return 0;
 }
 
-/*
- * wcd9xxx_disable_static_supplies_to_optimum: to set supplies to optimum mode
- * @wcd9xxx: Handle to the wcd9xxx core
- * @pdata: Handle for pdata
- * @return: returns 0 if success or error information to the caller in case
- *	    of failure.
- */
-int wcd9xxx_disable_static_supplies_to_optimum(struct wcd9xxx *wcd9xxx,
-						void *data)
-{
-	int i;
-	int ret = 0;
-	struct wcd9xxx_pdata *pdata = (struct wcd9xxx_pdata *)data;
-
-	for (i = 0; i < wcd9xxx->num_of_supplies; i++) {
-		if (pdata->regulator[i].ondemand)
-			continue;
-		if (regulator_count_voltages(wcd9xxx->supplies[i].consumer) <=
-			0)
-			continue;
-		regulator_set_voltage(wcd9xxx->supplies[i].consumer, 0,
-			pdata->regulator[i].max_uV);
-		regulator_set_optimum_mode(wcd9xxx->supplies[i].consumer, 0);
-		dev_dbg(wcd9xxx->dev, "Regulator %s set optimum mode\n",
-				 wcd9xxx->supplies[i].supply);
-	}
-	return ret;
-}
-EXPORT_SYMBOL(wcd9xxx_disable_static_supplies_to_optimum);
-
-/*
- * wcd9xxx_enable_static_supplies_to_optimum(): to set supplies to optimum mode
- * @wcd9xxx: Handle to the wcd9xxx core
- * @pdata: Handle for pdata
- *
- * To set all the static supplied to optimum mode so as to save power
- *
- * Return: returns 0 if success or error information to the caller in case
- *	    of failure.
- */
-int wcd9xxx_enable_static_supplies_to_optimum(
-			struct wcd9xxx *wcd9xxx, void *data)
-{
-	int i;
-	int ret = 0;
-	struct wcd9xxx_pdata *pdata = (struct wcd9xxx_pdata *)data;
-
-	for (i = 0; i < wcd9xxx->num_of_supplies; i++) {
-		if (pdata->regulator[i].ondemand)
-			continue;
-		if (regulator_count_voltages(wcd9xxx->supplies[i].consumer) <=
-			0)
-			continue;
-
-		ret = regulator_set_voltage(wcd9xxx->supplies[i].consumer,
-			pdata->regulator[i].min_uV,
-			pdata->regulator[i].max_uV);
-		if (ret) {
-			dev_err(wcd9xxx->dev,
-				"Setting volt failed for regulator %s err %d\n",
-				wcd9xxx->supplies[i].supply, ret);
-		}
-
-		ret = regulator_set_optimum_mode(wcd9xxx->supplies[i].consumer,
-			pdata->regulator[i].optimum_uA);
-		dev_dbg(wcd9xxx->dev, "Regulator %s set optimum mode\n",
-			 wcd9xxx->supplies[i].supply);
-	}
-	return ret;
-}
-EXPORT_SYMBOL(wcd9xxx_enable_static_supplies_to_optimum);
-
 static int wcd9xxx_slim_resume(struct slim_device *sldev)
 {
 	struct wcd9xxx *wcd9xxx = slim_get_devicedata(sldev);
-
 	return wcd9xxx_core_res_resume(&wcd9xxx->core_res);
 }
 
@@ -3101,7 +3027,6 @@ static int wcd9xxx_i2c_resume(struct i2c_client *i2cdev)
 static int wcd9xxx_slim_suspend(struct slim_device *sldev, pm_message_t pmesg)
 {
 	struct wcd9xxx *wcd9xxx = slim_get_devicedata(sldev);
-
 	return wcd9xxx_core_res_suspend(&wcd9xxx->core_res, pmesg);
 }
 

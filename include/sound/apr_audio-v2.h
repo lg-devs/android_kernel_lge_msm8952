@@ -103,6 +103,9 @@ struct adm_cmd_matrix_map_routings_v5 {
 /* Definition for a ultra low latency stream session. */
 #define ADM_ULTRA_LOW_LATENCY_DEVICE_SESSION		0x4000
 
+/* Definition for a ultra low latency with Post Processing stream session. */
+#define ADM_ULL_POST_PROCESSING_DEVICE_SESSION		0x8000
+
 /* Definition for a legacy device session. */
 #define ADM_LEGACY_DEVICE_SESSION                                      0
 
@@ -861,17 +864,13 @@ struct adm_cmd_connect_afe_port_v5 {
 #define AFE_PORT_ID_SECONDARY_PCM_TX        0x100D
 #define AFE_PORT_ID_MULTICHAN_HDMI_RX       0x100E
 #define AFE_PORT_ID_SECONDARY_MI2S_RX_SD1	0x1010
+#define AFE_PORT_ID_QUINARY_MI2S_RX		0x1016
+#define AFE_PORT_ID_QUINARY_MI2S_TX		0x1017
 /* ID of the senary MI2S Rx port. */
 #define AFE_PORT_ID_SENARY_MI2S_RX		0x1018
 /* ID of the senary MI2S Tx port. */
 #define AFE_PORT_ID_SENARY_MI2S_TX		0x1019
-
 #define AFE_PORT_ID_SPDIF_RX                0x5000
-/* ID of the Quinary MI2S Rx port. */
-#define AFE_PORT_ID_QUINARY_MI2S_RX		0x1016
-/* ID of the Quinary MI2S Tx port. */
-#define AFE_PORT_ID_QUINARY_MI2S_TX		0x1017
-#define AFE_PORT_ID_MI2S_HDMI_RX	AFE_PORT_ID_QUINARY_MI2S_RX
 #define  AFE_PORT_ID_RT_PROXY_PORT_001_RX   0x2000
 #define  AFE_PORT_ID_RT_PROXY_PORT_001_TX   0x2001
 #define AFE_PORT_ID_INTERNAL_BT_SCO_RX      0x3000
@@ -2525,7 +2524,7 @@ struct afe_lpass_core_shared_clk_config_command {
 
 #define NULL_POPP_TOPOLOGY				0x00010C68
 #define NULL_COPP_TOPOLOGY				0x00010312
-#define DEFAULT_COPP_TOPOLOGY				0x00010BE3
+#define DEFAULT_COPP_TOPOLOGY				0x00010314
 #define DEFAULT_POPP_TOPOLOGY				0x00010BE4
 #define COMPRESSED_PASSTHROUGH_DEFAULT_TOPOLOGY         0x0001076B
 #define VPM_TX_SM_ECNS_COPP_TOPOLOGY			0x00010F71
@@ -2812,6 +2811,11 @@ struct asm_softvolume_params {
 
 #define ASM_MEDIA_FMT_MULTI_CHANNEL_PCM_V2 0x00010DA5
 
+#if defined(CONFIG_SND_LGE_EFFECT) || defined(CONFIG_SND_LGE_NORMALIZER) || defined(CONFIG_SND_LGE_MABL)
+#define ASM_STREAM_POSTPROC_TOPO_ID_DEFAULT_LGE 0x10009009
+#define ASM_STREAM_POSTPROC_TOPO_ID_OFFLOAD_LGE 0x10009010
+#endif
+
 #define ASM_MEDIA_FMT_EVRCB_FS 0x00010BEF
 
 #define ASM_MEDIA_FMT_EVRCWB_FS 0x00010BF0
@@ -2915,7 +2919,7 @@ struct asm_dec_ddp_endp_param_v2 {
 } __packed;
 
 /* @brief Multichannel PCM encoder configuration structure used
- * in the #ASM_STREAM_CMD_OPEN_READ_V2 command.
+ * in the #ASM_PARAM_ID_ENCDEC_ENC_CFG_BLK_V2 command.
  */
 
 struct asm_multi_channel_pcm_enc_cfg_v2 {
@@ -3395,7 +3399,7 @@ struct asm_v13k_enc_cfg {
 #define ASM_MEDIA_FMT_EVRC_FS                   0x00010BEE
 
 /*  EVRC encoder configuration structure used in the
- * #ASM_STREAM_CMD_OPEN_READ_V2 command.
+ * #ASM_PARAM_ID_ENCDEC_ENC_CFG_BLK_V2 command.
  */
 struct asm_evrc_enc_cfg {
 	struct apr_hdr hdr;
@@ -3604,8 +3608,8 @@ struct asm_amrwbplus_fmt_blk_v2 {
 
 } __packed;
 
-#define ASM_MEDIA_FMT_AC3_DEC                0x00010BF6
-#define ASM_MEDIA_FMT_EAC3_DEC               0x00010C3C
+#define ASM_MEDIA_FMT_AC3			0x00010DEE
+#define ASM_MEDIA_FMT_EAC3			0x00010DEF
 #define ASM_MEDIA_FMT_DTS                    0x00010D88
 #define ASM_MEDIA_FMT_MP2                    0x00010DE9
 #define ASM_MEDIA_FMT_FLAC                   0x00010C16
@@ -4016,10 +4020,6 @@ struct asm_data_cmd_iec_60958_frame_rate {
 } __packed;
 
 /* adsp_asm_data_commands.h*/
-#define ASM_SVC_CMD_GET_STREAM_HANDLES         0x00010C0B
-
-#define ASM_SVC_CMDRSP_GET_STREAM_HANDLES      0x00010C1B
-
 /* Definition of the stream ID bitmask.*/
 #define ASM_BIT_MASK_STREAM_ID                 (0x000000FFUL)
 
@@ -4044,25 +4044,13 @@ struct asm_data_cmd_iec_60958_frame_rate {
 /* Definition of the domain ID shift value.*/
 #define ASM_SHIFT_DOMAIN_ID                    24
 
-/* Payload of the #ASM_SVC_CMDRSP_GET_STREAM_HANDLES message,
- * which returns a list of currently active stream handles.
- * Immediately following this structure are num_handles of uint32
- * stream handles.
- */
-
-
-struct asm_svc_cmdrsp_get_stream_handles {
-	u32                  num_handles;
-	/* Number of active stream handles.	*/
-} __packed;
-
 #define ASM_CMD_SHARED_MEM_MAP_REGIONS               0x00010D92
 #define ASM_CMDRSP_SHARED_MEM_MAP_REGIONS     0x00010D93
 #define ASM_CMD_SHARED_MEM_UNMAP_REGIONS              0x00010D94
 
 /* adsp_asm_service_commands.h */
 
-#define ASM_MAX_SESSION_ID  (8)
+#define ASM_MAX_SESSION_ID  (15)
 
 /* Maximum number of sessions.*/
 #define ASM_MAX_NUM_SESSIONS                ASM_MAX_SESSION_ID
@@ -4270,12 +4258,13 @@ struct asm_session_cmdrsp_get_path_delay_v2 {
 } __packed;
 
 /* adsp_asm_session_command.h*/
-#define ASM_STREAM_CMD_OPEN_WRITE_V2       0x00010D8F
 #define ASM_STREAM_CMD_OPEN_WRITE_V3       0x00010DB3
 
 #define ASM_LOW_LATENCY_STREAM_SESSION				0x10000000
 
 #define ASM_ULTRA_LOW_LATENCY_STREAM_SESSION			0x20000000
+
+#define ASM_ULL_POST_PROCESSING_STREAM_SESSION			0x40000000
 
 #define ASM_LEGACY_STREAM_SESSION                                      0
 
@@ -4350,8 +4339,8 @@ struct asm_stream_cmd_open_write_v3 {
  * - #ASM_MEDIA_FMT_SBC
  * - #ASM_MEDIA_FMT_WMA_V10PRO_V2
  * - #ASM_MEDIA_FMT_WMA_V9_V2
- * - #ASM_MEDIA_FMT_AC3_DEC
- * - #ASM_MEDIA_FMT_EAC3_DEC
+ * - #ASM_MEDIA_FMT_AC3
+ * - #ASM_MEDIA_FMT_EAC3
  * - #ASM_MEDIA_FMT_G711_ALAW_FS
  * - #ASM_MEDIA_FMT_G711_MLAW_FS
  * - #ASM_MEDIA_FMT_G729A_FS
@@ -4363,8 +4352,6 @@ struct asm_stream_cmd_open_write_v3 {
  * - #ASM_MEDIA_FMT_EXAMPLE
  */
 } __packed;
-
-#define ASM_STREAM_CMD_OPEN_READ_V2                 0x00010D8C
 
 #define ASM_STREAM_CMD_OPEN_READ_V3                 0x00010DB4
 
@@ -4470,7 +4457,6 @@ struct asm_stream_cmd_open_read_v3 {
 
 #define ASM_STREAM_CMD_OPEN_READWRITE_V2        0x00010D8D
 #define ASM_STREAM_CMD_OPEN_READWRITE_V2        0x00010D8D
-#define ASM_STREAM_CMD_OPEN_READ_V2             0x00010D8C
 
 struct asm_stream_cmd_open_readwrite_v2 {
 	struct apr_hdr         hdr;
@@ -4522,7 +4508,7 @@ struct asm_stream_cmd_open_readwrite_v2 {
  * - #ASM_MEDIA_FMT_WMA_V10PRO_V2
  * - #ASM_MEDIA_FMT_WMA_V9_V2
  * - #ASM_MEDIA_FMT_AMR_WB_PLUS_V2
- * - #ASM_MEDIA_FMT_AC3_DEC
+ * - #ASM_MEDIA_FMT_AC3
  * - #ASM_MEDIA_FMT_G711_ALAW_FS
  * - #ASM_MEDIA_FMT_G711_MLAW_FS
  * - #ASM_MEDIA_FMT_G729A_FS
@@ -5136,8 +5122,8 @@ struct asm_stream_cmd_open_write_compressed {
 	u32                    fmt_id;
 /* Specifies the media type of the HDMI stream to be opened.
  * Supported values:
- * - #ASM_MEDIA_FMT_AC3_DEC
- * - #ASM_MEDIA_FMT_EAC3_DEC
+ * - #ASM_MEDIA_FMT_AC3
+ * - #ASM_MEDIA_FMT_EAC3
  * - #ASM_MEDIA_FMT_DTS
  * - #ASM_MEDIA_FMT_ATRAC
  * - #ASM_MEDIA_FMT_MAT
@@ -5957,7 +5943,7 @@ struct audproc_topology_module_id_info_t {
  * ID of the Volume Control module pre/postprocessing block.
  * This module supports the following parameter IDs:
  * - #ASM_PARAM_ID_VOL_CTRL_MASTER_GAIN
- * - #ASM_PARAM_ID_VOL_CTRL_LR_CHANNEL_GAIN
+ * - #ASM_PARAM_ID_MULTICHANNEL_GAIN
  * - #ASM_PARAM_ID_VOL_CTRL_MUTE_CONFIG
  * - #ASM_PARAM_ID_SOFT_VOL_STEPPING_PARAMETERS
  * - #ASM_PARAM_ID_SOFT_PAUSE_PARAMETERS
@@ -5984,7 +5970,7 @@ struct audproc_topology_module_id_info_t {
  * @messagepayload
  * @structure{asm_volume_ctrl_lr_chan_gain}
  * @tablespace
- * @inputtable{Audio_Postproc_ASM_PARAM_ID_VOL_CTRL_LR_CHANNEL_GAIN.tex}
+ * @inputtable{Audio_Postproc_ASM_PARAM_ID_MULTICHANNEL_GAIN.tex}
  */
 #define ASM_PARAM_ID_VOL_CTRL_LR_CHANNEL_GAIN     0x00010C00
 
@@ -6047,17 +6033,6 @@ struct asm_volume_ctrl_master_gain {
 	/*< Clients must set this field to zero.
 		*/
 } __packed;
-
-
-/* Structure for the left/right channel gain parameter for a
- * volume control module.
- */
-
-
-/* @brief Payload of the #ASM_PARAM_ID_VOL_CTRL_LR_CHANNEL_GAIN
- * parameters used by the Volume Control module.
- */
-
 
 
 struct asm_volume_ctrl_lr_chan_gain {
@@ -6188,44 +6163,43 @@ struct asm_soft_pause_params {
  */
 
 
-struct asm_volume_ctrl_channelype_gain_pair {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-	uint8_t                   channelype;
-/*< Channel type for which the gain setting is to be applied.
- * Supported values:
- * - #PCM_CHANNEL_L
- * - #PCM_CHANNEL_R
- * - #PCM_CHANNEL_C
- * - #PCM_CHANNEL_LS
- * - #PCM_CHANNEL_RS
- * - #PCM_CHANNEL_LFE
- * - #PCM_CHANNEL_CS
- * - #PCM_CHANNEL_LB
- * - #PCM_CHANNEL_RB
- * - #PCM_CHANNELS
- * - #PCM_CHANNEL_CVH
- * - #PCM_CHANNEL_MS
- * - #PCM_CHANNEL_FLC
- * - #PCM_CHANNEL_FRC
- * - #PCM_CHANNEL_RLC
- * - #PCM_CHANNEL_RRC
- */
+struct asm_volume_ctrl_channeltype_gain_pair {
+	uint8_t                   channeltype;
+	/*
+	 * Channel type for which the gain setting is to be applied.
+	 * Supported values:
+	 * - #PCM_CHANNEL_L
+	 * - #PCM_CHANNEL_R
+	 * - #PCM_CHANNEL_C
+	 * - #PCM_CHANNEL_LS
+	 * - #PCM_CHANNEL_RS
+	 * - #PCM_CHANNEL_LFE
+	 * - #PCM_CHANNEL_CS
+	 * - #PCM_CHANNEL_LB
+	 * - #PCM_CHANNEL_RB
+	 * - #PCM_CHANNELS
+	 * - #PCM_CHANNEL_CVH
+	 * - #PCM_CHANNEL_MS
+	 * - #PCM_CHANNEL_FLC
+	 * - #PCM_CHANNEL_FRC
+	 * - #PCM_CHANNEL_RLC
+	 * - #PCM_CHANNEL_RRC
+	 */
 
 	uint8_t                   reserved1;
-	/*< Clients must set this field to zero. */
+	/* Clients must set this field to zero. */
 
 	uint8_t                   reserved2;
-	/*< Clients must set this field to zero. */
+	/* Clients must set this field to zero. */
 
 	uint8_t                   reserved3;
-	/*< Clients must set this field to zero. */
+	/* Clients must set this field to zero. */
 
 	uint32_t                  gain;
-/*< Gain value for this channel in Q28 format.
- * Supported values: Any
- */
+	/*
+	 * Gain value for this channel in Q28 format.
+	 * Supported values: Any
+	 */
 } __packed;
 
 
@@ -6242,16 +6216,16 @@ struct asm_volume_ctrl_multichannel_gain {
 	struct asm_stream_cmd_set_pp_params_v2 param;
 	struct asm_stream_param_data_v2 data;
 	uint32_t                  num_channels;
-/*< Number of channels for which gain values are provided. Any
- * channels present in the data for which gain is not provided are
- * set to unity gain.
- * Supported values: 1 to 8
- */
+	/*
+	 * Number of channels for which gain values are provided. Any
+	 * channels present in the data for which gain is not provided are
+	 * set to unity gain.
+	 * Supported values: 1 to 8
+	 */
 
-
-	struct asm_volume_ctrl_channelype_gain_pair
+	struct asm_volume_ctrl_channeltype_gain_pair
 		gain_data[VOLUME_CONTROL_MAX_CHANNELS];
-	/*< Array of channel type/gain pairs.*/
+	/* Array of channel type/gain pairs.*/
 } __packed;
 
 
@@ -7462,6 +7436,7 @@ struct afe_param_id_clip_bank_sel {
 #define Q6AFE_LPASS_OSR_CLK_DISABLE		     0x0
 
 /* Supported Bit clock values */
+#define Q6AFE_LPASS_IBIT_CLK_11_P2896_MHZ		0xAC4400
 #define Q6AFE_LPASS_IBIT_CLK_8_P192_MHZ		0x7D0000
 #define Q6AFE_LPASS_IBIT_CLK_6_P144_MHZ		0x5DC000
 #define Q6AFE_LPASS_IBIT_CLK_4_P096_MHZ		0x3E8000
@@ -7487,6 +7462,134 @@ enum afe_lpass_clk_mode {
 	Q6AFE_LPASS_MODE_CLK2_VALID,
 	Q6AFE_LPASS_MODE_BOTH_VALID,
 } __packed;
+
+/* Clock ID Enumeration Define. */
+/* Clock ID for Primary I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT                          0x100
+/* Clock ID for Primary I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_PRI_MI2S_EBIT                          0x101
+/* Clock ID for Secondary I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_SEC_MI2S_IBIT                          0x102
+/* Clock ID for Secondary I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_SEC_MI2S_EBIT                          0x103
+/* Clock ID for Tertiary I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_TER_MI2S_IBIT                          0x104
+/* Clock ID for Tertiary I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_TER_MI2S_EBIT                          0x105
+/* Clock ID for Quartnery I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_QUAD_MI2S_IBIT                         0x106
+/* Clock ID for Quartnery I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_QUAD_MI2S_EBIT                         0x107
+/* Clock ID for Speaker I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_SPEAKER_I2S_IBIT                       0x108
+/* Clock ID for Speaker I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_SPEAKER_I2S_EBIT                       0x109
+/* Clock ID for Speaker I2S OSR */
+#define Q6AFE_LPASS_CLK_ID_SPEAKER_I2S_OSR                        0x10A
+
+/* Clock ID for QUINARY  I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_QUI_MI2S_IBIT			0x10B
+/* Clock ID for QUINARY  I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_QUI_MI2S_EBIT			0x10C
+/* Clock ID for SENARY  I2S IBIT */
+#define Q6AFE_LPASS_CLK_ID_SEN_MI2S_IBIT			0x10D
+/* Clock ID for SENARY  I2S EBIT */
+#define Q6AFE_LPASS_CLK_ID_SEN_MI2S_EBIT			0x10E
+
+/* Clock ID for Primary PCM IBIT */
+#define Q6AFE_LPASS_CLK_ID_PRI_PCM_IBIT                           0x200
+/* Clock ID for Primary PCM EBIT */
+#define Q6AFE_LPASS_CLK_ID_PRI_PCM_EBIT                           0x201
+/* Clock ID for Secondary PCM IBIT */
+#define Q6AFE_LPASS_CLK_ID_SEC_PCM_IBIT                           0x202
+/* Clock ID for Secondary PCM EBIT */
+#define Q6AFE_LPASS_CLK_ID_SEC_PCM_EBIT                           0x203
+/* Clock ID for Tertiary PCM IBIT */
+#define Q6AFE_LPASS_CLK_ID_TER_PCM_IBIT                           0x204
+/* Clock ID for Tertiary PCM EBIT */
+#define Q6AFE_LPASS_CLK_ID_TER_PCM_EBIT                           0x205
+/* Clock ID for Quartery PCM IBIT */
+#define Q6AFE_LPASS_CLK_ID_QUAD_PCM_IBIT                          0x206
+/* Clock ID for Quartery PCM EBIT */
+#define Q6AFE_LPASS_CLK_ID_QUAD_PCM_EBIT                          0x207
+
+/* Clock ID for MCLK1 */
+#define Q6AFE_LPASS_CLK_ID_MCLK_1                                 0x300
+/* Clock ID for MCLK2 */
+#define Q6AFE_LPASS_CLK_ID_MCLK_2                                 0x301
+/* Clock ID for MCLK3 */
+#define Q6AFE_LPASS_CLK_ID_MCLK_3                                 0x302
+/* Clock ID for Internal Digital Codec Core */
+#define Q6AFE_LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE            0x303
+
+/* Clock ID for AHB HDMI input */
+#define Q6AFE_LPASS_CLK_ID_AHB_HDMI_INPUT                         0x400
+
+/* Clock ID for SPDIF core */
+#define Q6AFE_LPASS_CLK_ID_SPDIF_CORE                             0x500
+
+
+/* Clock attribute for invalid use (reserved for internal usage) */
+#define Q6AFE_LPASS_CLK_ATTRIBUTE_INVALID		0x0
+/* Clock attribute for no couple case */
+#define Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO		0x1
+/* Clock attribute for dividend couple case */
+#define Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_DIVIDEND	0x2
+/* Clock attribute for divisor couple case */
+#define Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR	0x3
+/* Clock set API version */
+#define Q6AFE_LPASS_CLK_CONFIG_API_VERSION		0x1
+
+struct afe_clk_set {
+	/*
+	 * Minor version used for tracking clock set.
+	 *	@values #AFE_API_VERSION_CLOCK_SET
+	 */
+	uint32_t clk_set_minor_version;
+
+	/*
+	 * Clock ID
+	 *	@values
+	 *	- 0x100 to 0x10A - MSM8996
+	 *	- 0x200 to 0x207 - MSM8996
+	 *	- 0x300 to 0x302 - MSM8996 @tablebulletend
+	 */
+	uint32_t clk_id;
+
+	/*
+	 * Clock frequency  (in Hertz) to be set.
+	 *	@values
+	 *	- >= 0 for clock frequency to set @tablebulletend
+	 */
+	uint32_t clk_freq_in_hz;
+
+	/* Use to specific divider for two clocks if needed.
+	 *	Set to Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO for no divider
+	 *	relation clocks
+	 *	@values
+	 *	- #Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO
+	 *	- #Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_DIVIDEND
+	 *	- #Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR @tablebulletend
+	 */
+	uint16_t clk_attri;
+
+	/*
+	 * Specifies the root clock source.
+	 *	Currently, only Q6AFE_LPASS_CLK_ROOT_DEFAULT is valid
+	 *	@values
+	 *	- 0 @tablebulletend
+	 */
+	uint16_t clk_root;
+
+	/*
+	 * for enable and disable clock.
+	 *	"clk_freq_in_hz", "clk_attri", and "clk_root"
+	 *	are ignored in disable clock case.
+	 *	@values?	 *	- 0 -- Disabled
+	 *	- 1 -- Enabled  @tablebulletend
+	 */
+	uint32_t enable;
+};
 
 struct afe_clk_cfg {
 /* Minor version used for tracking the version of the I2S
@@ -7525,7 +7628,8 @@ struct afe_clk_cfg {
 
 /* This param id is used to configure I2S clk */
 #define AFE_PARAM_ID_LPAIF_CLK_CONFIG	0x00010238
-
+#define AFE_MODULE_CLOCK_SET		0x0001028F
+#define AFE_PARAM_ID_CLOCK_SET		0x00010290
 
 struct afe_lpass_clk_config_command {
 	struct apr_hdr			 hdr;
@@ -7692,6 +7796,13 @@ struct afe_svc_cmd_set_param {
 	uint32_t mem_map_handle;
 } __packed;
 
+struct afe_svc_param_data {
+	uint32_t module_id;
+	uint32_t param_id;
+	uint16_t param_size;
+	uint16_t reserved;
+} __packed;
+
 struct afe_param_hw_mad_ctrl {
 	uint32_t minor_version;
 	uint16_t mad_type;
@@ -7719,8 +7830,15 @@ struct afe_cmd_sw_mad_enable {
 } __packed;
 
 struct afe_param_cdc_reg_cfg_payload {
-	struct afe_port_param_data_v2 common;
+	struct afe_svc_param_data     common;
 	struct afe_param_cdc_reg_cfg  reg_cfg;
+} __packed;
+
+struct afe_lpass_clk_config_command_v2 {
+	struct apr_hdr			hdr;
+	struct afe_svc_cmd_set_param	param;
+	struct afe_svc_param_data	pdata;
+	struct afe_clk_set		clk_cfg;
 } __packed;
 
 /*
@@ -7941,6 +8059,117 @@ struct asm_mtmx_strtr_params {
 	u32 window_lsw;
 	u32 window_msw;
 } __packed;
+
+#define ASM_SESSION_CMD_GET_MTMX_STRTR_PARAMS_V2 0x00010DCF
+#define ASM_SESSION_CMDRSP_GET_MTMX_STRTR_PARAMS_V2 0x00010DD0
+
+#define ASM_SESSION_MTMX_STRTR_PARAM_SESSION_TIME_V3 0x00012F0B
+#define ASM_SESSION_MTMX_STRTR_PARAM_STIME_TSTMP_FLG_BMASK (0x80000000UL)
+
+struct asm_session_cmd_get_mtmx_strstr_params_v2 {
+	uint32_t                  data_payload_addr_lsw;
+	/* Lower 32 bits of the 64-bit data payload address. */
+
+	uint32_t                  data_payload_addr_msw;
+	/*
+	 * Upper 32 bits of the 64-bit data payload address.
+	 * If the address is not sent (NULL), the message is in the payload.
+	 * If the address is sent (non-NULL), the parameter data payloads
+	 * begin at the specified address.
+	 */
+
+	uint32_t                  mem_map_handle;
+	/*
+	 * Unique identifier for an address. This memory map handle is returned
+	 * by the aDSP through the #ASM_CMD_SHARED_MEM_MAP_REGIONS command.
+	 * values
+	 * - NULL -- Parameter data payloads are within the message payload
+	 * (in-band).
+	 * - Non-NULL -- Parameter data payloads begin at the address specified
+	 * in the data_payload_addr_lsw and data_payload_addr_msw fields
+	 * (out-of-band).
+	 */
+	uint32_t                  direction;
+	/*
+	 * Direction of the entity (matrix mixer or stream router) on which
+	 * the parameter is to be set.
+	 * values
+	 * - 0 -- Rx (for Rx stream router or Rx matrix mixer)
+	 * - 1 -- Tx (for Tx stream router or Tx matrix mixer)
+	 */
+	uint32_t                  module_id;
+	/* Unique module ID. */
+
+	uint32_t                  param_id;
+	/* Unique parameter ID. */
+
+	uint32_t                  param_max_size;
+};
+
+struct asm_session_mtmx_strtr_param_session_time_v3_t {
+	uint32_t                  session_time_lsw;
+	/* Lower 32 bits of the current session time in microseconds */
+
+	uint32_t                  session_time_msw;
+	/*
+	 * Upper 32 bits of the current session time in microseconds.
+	 * The 64-bit number formed by session_time_lsw and session_time_msw
+	 * is treated as signed.
+	 */
+
+	uint32_t                  absolute_time_lsw;
+	/*
+	 * Lower 32 bits of the 64-bit absolute time in microseconds.
+	 * This is the time when the sample corresponding to the
+	 * session_time_lsw is rendered to the hardware. This absolute
+	 * time can be slightly in the future or past.
+	 */
+
+	uint32_t                  absolute_time_msw;
+	/*
+	 * Upper 32 bits of the 64-bit absolute time in microseconds.
+	 * This is the time when the sample corresponding to the
+	 * session_time_msw is rendered to hardware. This absolute
+	 * time can be slightly in the future or past. The 64-bit number
+	 * formed by absolute_time_lsw and absolute_time_msw is treated as
+	 * unsigned.
+	 */
+
+	uint32_t                  time_stamp_lsw;
+	/* Lower 32 bits of the last processed timestamp in microseconds */
+
+	uint32_t                  time_stamp_msw;
+	/*
+	 * Upper 32 bits of the last processed timestamp in microseconds.
+	 * The 64-bit number formed by time_stamp_lsw and time_stamp_lsw
+	 * is treated as unsigned.
+	 */
+
+	uint32_t                  flags;
+	/*
+	 * Keeps track of any additional flags needed.
+	 * @values{for bit 31}
+	 * - 0 -- Uninitialized/invalid
+	 * - 1 -- Valid
+	 * All other bits are reserved; clients must set them to zero.
+	 */
+};
+
+union asm_session_mtmx_strtr_data_type {
+	struct asm_session_mtmx_strtr_param_session_time_v3_t session_time;
+};
+
+struct asm_mtmx_strtr_get_params {
+	struct apr_hdr hdr;
+	struct asm_session_cmd_get_mtmx_strstr_params_v2 param_info;
+} __packed;
+
+struct asm_mtmx_strtr_get_params_cmdrsp {
+	uint32_t err_code;
+	struct asm_stream_param_data_v2 param_info;
+	union asm_session_mtmx_strtr_data_type param_data;
+} __packed;
+
 #define AUDPROC_MODULE_ID_RESAMPLER 0x00010719
 
 enum {

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2013, Intel Corp.
+ * Copyright (C) 2000 - 2014, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -222,10 +222,11 @@ acpi_ut_check_address_range(acpi_adr_space_type space_id,
 
 	while (range_info) {
 		/*
-		 * Check if the requested Address/Length overlaps this address_range.
-		 * Four cases to consider:
+		 * Check if the requested address/length overlaps this
+		 * address range. There are four cases to consider:
 		 *
-		 * 1) Input address/length is contained completely in the address range
+		 * 1) Input address/length is contained completely in the
+		 *    address range
 		 * 2) Input address/length overlaps range at the range start
 		 * 3) Input address/length overlaps range at the range end
 		 * 4) Input address/length completely encompasses the range
@@ -242,11 +243,15 @@ acpi_ut_check_address_range(acpi_adr_space_type space_id,
 								  region_node);
 
 				ACPI_WARNING((AE_INFO,
-					      "0x%8.8X%8.8X-0x%8.8X%8.8X %s conflicts with Region %s %d",
+					      "%s range 0x%8.8X%8.8X-0x%8.8X%8.8X conflicts with OpRegion 0x%8.8X%8.8X-0x%8.8X%8.8X (%s)",
+					      acpi_ut_get_region_name(space_id),
 					      ACPI_FORMAT_UINT64(address),
 					      ACPI_FORMAT_UINT64(end_address),
-					      acpi_ut_get_region_name(space_id),
-					      pathname, overlap_count));
+					      ACPI_FORMAT_UINT64(range_info->
+								 start_address),
+					      ACPI_FORMAT_UINT64(range_info->
+								 end_address),
+					      pathname));
 				ACPI_FREE(pathname);
 			}
 		}

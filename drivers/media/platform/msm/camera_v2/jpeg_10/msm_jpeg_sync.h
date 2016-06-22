@@ -29,6 +29,7 @@
 #define JPEG_8974_V2 0x10010000
 #define JPEG_8994 0x10020000
 #define JPEG_CLK_MAX 16
+#define JPEG_REGULATOR_MAX 3
 
 enum msm_jpeg_state {
 	MSM_JPEG_INIT,
@@ -64,7 +65,8 @@ struct msm_jpeg_device {
 	struct clk *jpeg_clk[JPEG_CLK_MAX];
 	struct msm_cam_clk_info jpeg_clk_info[JPEG_CLK_MAX];
 
-	struct regulator *jpeg_fs;
+	struct regulator *jpeg_fs[JPEG_REGULATOR_MAX];
+	const char *regulator_names[JPEG_REGULATOR_MAX];
 	uint32_t hw_version;
 
 	struct device *device;
@@ -107,7 +109,6 @@ struct msm_jpeg_device {
 	int idx;
 	int iommu_hdl;
 	int decode_flag;
-	struct ion_client *jpeg_client;
 	void *jpeg_vbif;
 	int release_buf;
 	struct msm_jpeg_hw_pingpong fe_pingpong_buf;
@@ -119,6 +120,7 @@ struct msm_jpeg_device {
 	uint32_t res_size;
 	uint32_t jpeg_bus_client;
 	uint32_t num_clk;
+	uint32_t num_regulator;
 	enum msm_jpeg_state state;
 	enum msm_jpeg_core_type core_type;
 };

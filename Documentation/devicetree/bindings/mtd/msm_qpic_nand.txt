@@ -1,4 +1,4 @@
-Qualcomm Parallel Interface controller (QPIC) for NAND devices
+Qualcomm Technologies, Inc. Parallel Interface controller (QPIC) for NAND devices
 
 Required properties:
 - compatible : "qcom,msm-nand".

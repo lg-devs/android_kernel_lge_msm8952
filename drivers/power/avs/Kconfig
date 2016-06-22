@@ -11,11 +11,10 @@ menuconfig POWER_AVS
 
 	  Say Y here to enable Adaptive Voltage Scaling class support.
 
-config POWER_AVS_MSM
-	bool "Enable Adaptive Voltage Scaling (AVS) for QCOM chipsets"
-	default n
-	help
-	  Enable AVS hardware to fine tune voltage at each frequency. The
-	  AVS hardware blocks associated with each Qualcomm ARMv7 cores can
-	  fine tune the voltages based on the feedback from the ring
-	  oscillators.
+config ROCKCHIP_IODOMAIN
+        tristate "Rockchip IO domain support"
+        depends on ARCH_ROCKCHIP && OF
+        help
+          Say y here to enable support io domains on Rockchip SoCs. It is
+          necessary for the io domain setting of the SoC to match the
+          voltage supplied by the regulators.

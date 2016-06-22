@@ -19,9 +19,18 @@
 #include <media/v4l2-subdev.h>
 #include <media/msm_cam_sensor.h>
 #include "msm_sd.h"
+#include "msm_camera_io_util.h"
+/* LGE_CHANGE, CST, added csiphy timer for enableing/disable irq */
+#include <linux/timer.h>
+#define CSIPHY_ENABLE_IRQ_TIMEOUT	2000
 
 #define MAX_CSIPHY 3
 #define CSIPHY_NUM_CLK_MAX  16
+
+struct msm_csiphy_timer_t {
+	atomic_t used;
+	struct timer_list timer;
+};	/* LGE_CHANGE, CST, added csiphy timer for enableing/disable irq */
 
 struct csiphy_reg_parms_t {
 /*MIPI CSI PHY registers*/
@@ -33,7 +42,7 @@ struct csiphy_reg_parms_t {
 	uint32_t mipi_csiphy_lnck_cfg1_addr;
 	uint32_t mipi_csiphy_lnck_cfg2_addr;
 	uint32_t mipi_csiphy_lnck_cfg3_addr;
-	uint32_t mipi_csiphy_glbl_pwg_cfg0_addr;
+	uint32_t mipi_csiphy_lnck_cfg4_addr;
 	uint32_t mipi_csiphy_lnn_test_imp;
 	uint32_t mipi_csiphy_lnn_misc1_addr;
 	uint32_t mipi_csiphy_glbl_reset_addr;
@@ -52,8 +61,75 @@ struct csiphy_reg_parms_t {
 	uint32_t csiphy_version;
 };
 
+struct csiphy_reg_3ph_parms_t {
+/*MIPI CSI PHY registers*/
+	uint32_t mipi_csiphy_3ph_cmn_ctrl5_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl6_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl34_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl35_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl36_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl1_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl2_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl3_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl5_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl6_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl7_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl8_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl9_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl10_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl11_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl12_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl13_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl14_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl15_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl16_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl17_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl18_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl19_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl21_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl23_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl24_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl25_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl26_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl27_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl28_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl29_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl30_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl31_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl32_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl33_addr;
+	uint32_t mipi_csiphy_3ph_lnn_ctrl51_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl7_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl11_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl12_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl13_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl14_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl15_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl16_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl17_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl18_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl19_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl20_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl21_addr;
+	uint32_t mipi_csiphy_2ph_lnn_misc1_addr;
+	uint32_t mipi_csiphy_3ph_cmn_ctrl0_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg1_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg2_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg3_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg4_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg5_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg6_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg7_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg8_addr;
+	uint32_t mipi_csiphy_2ph_lnn_cfg9_addr;
+	uint32_t mipi_csiphy_2ph_lnn_ctrl15_addr;
+	uint32_t mipi_csiphy_2ph_lnn_test_imp_addr;
+	uint32_t mipi_csiphy_2ph_lnn_test_force;
+};
+
 struct csiphy_ctrl_t {
 	struct csiphy_reg_parms_t csiphy_reg;
+	struct csiphy_reg_3ph_parms_t csiphy_3ph_reg;
 };
 
 enum msm_csiphy_state_t {
@@ -79,12 +155,17 @@ struct csiphy_device {
 	struct csiphy_ctrl_t *ctrl_reg;
 	uint32_t num_clk;
 	struct clk *csiphy_clk[CSIPHY_NUM_CLK_MAX];
+	struct msm_cam_clk_info csiphy_clk_info[CSIPHY_NUM_CLK_MAX];
 	int32_t ref_count;
 	uint16_t lane_mask[MAX_CSIPHY];
 	uint32_t is_3_1_20nm_hw;
 	uint32_t csiphy_clk_index;
 	uint32_t csiphy_max_clk;
+	uint8_t csiphy_3phase;
+	uint8_t num_irq_registers;
 	uint32_t csiphy_sof_debug;
+	struct regulator* csiphy_reg;    /* LGE_CHANGE, CST, added gdsc regulator */
+	struct msm_csiphy_timer_t csiphy_timer;	/* LGE_CHANGE, CST, added csiphy timer */
 };
 
 #define VIDIOC_MSM_CSIPHY_RELEASE \

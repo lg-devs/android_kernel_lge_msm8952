@@ -194,11 +194,11 @@ struct cpu_efficiency {
  * Table of relative efficiency of each processors
  * The efficiency value must fit in 20bit and the final
  * cpu_scale value must be in the range
- *   0 < cpu_scale < 3*SCHED_POWER_SCALE/2
+ *   0 < cpu_scale < 3*SCHED_CAPACITY_SCALE/2
  * in order to return at most 1 when DIV_ROUND_CLOSEST
  * is used to compute the capacity of a CPU.
  * Processors that are not defined in the table,
- * use the default SCHED_POWER_SCALE value for cpu_scale.
+ * use the default SCHED_CAPACITY_SCALE value for cpu_scale.
  */
 static const struct cpu_efficiency table_efficiency[] = {
 	{ "arm,cortex-a57", 3891 },
@@ -211,7 +211,7 @@ static unsigned long *__cpu_capacity;
 
 static unsigned long middle_capacity = 1;
 
-static DEFINE_PER_CPU(unsigned long, cpu_efficiency) = SCHED_POWER_SCALE;
+static DEFINE_PER_CPU(unsigned long, cpu_efficiency) = SCHED_CAPACITY_SCALE;
 
 unsigned long arch_get_cpu_efficiency(int cpu)
 {
@@ -254,13 +254,9 @@ static int __init parse_dt_topology(void)
 	 * Check that all cores are in the topology; the SMP code will
 	 * only mark cores described in the DT as possible.
 	 */
-	for_each_possible_cpu(cpu) {
-		if (cpu_topology[cpu].cluster_id == -1) {
-			pr_err("CPU%d: No topology information specified\n",
-			       cpu);
+	for_each_possible_cpu(cpu)
+		if (cpu_topology[cpu].cluster_id == -1)
 			ret = -EINVAL;
-		}
-	}
 
 out_map:
 	of_node_put(map);
@@ -284,7 +280,6 @@ static void __init parse_dt_cpu_power(void)
 	for_each_possible_cpu(cpu) {
 		const u32 *rate;
 		int len;
-		u32 efficiency;
 
 		/* Too early to use cpu->of_node */
 		cn = of_get_cpu_node(cpu, NULL);
@@ -293,29 +288,16 @@ static void __init parse_dt_cpu_power(void)
 			continue;
 		}
 
-		/*
-		 * The CPU efficiency value passed from the device tree
-		 * overrides the value defined in the table_efficiency[]
-		 */
-		if (of_property_read_u32(cn, "efficiency", &efficiency) < 0) {
+		for (cpu_eff = table_efficiency; cpu_eff->compatible; cpu_eff++)
+			if (of_device_is_compatible(cn, cpu_eff->compatible))
+				break;
 
-			for (cpu_eff = table_efficiency;
-					cpu_eff->compatible; cpu_eff++)
-
-				if (of_device_is_compatible(cn,
-						cpu_eff->compatible))
-					break;
-
-			if (cpu_eff->compatible == NULL) {
-				pr_warn("%s: Unknown CPU type\n",
-						cn->full_name);
-				continue;
-			}
-
-			efficiency = cpu_eff->efficiency;
+		if (cpu_eff->compatible == NULL) {
+			pr_warn("%s: Unknown CPU type\n", cn->full_name);
+			continue;
 		}
 
-		per_cpu(cpu_efficiency, cpu) = efficiency;
+		per_cpu(cpu_efficiency, cpu) = cpu_eff->efficiency;
 
 		rate = of_get_property(cn, "clock-frequency", &len);
 		if (!rate || len != 4) {
@@ -324,7 +306,7 @@ static void __init parse_dt_cpu_power(void)
 			continue;
 		}
 
-		capacity = ((be32_to_cpup(rate)) >> 20) * efficiency;
+		capacity = ((be32_to_cpup(rate)) >> 20) * cpu_eff->efficiency;
 
 		/* Save min capacity of the system */
 		if (capacity < min_capacity)
@@ -341,17 +323,17 @@ static void __init parse_dt_cpu_power(void)
 	 * cpu_scale because all CPUs have the same capacity. Otherwise, we
 	 * compute a middle_capacity factor that will ensure that the capacity
 	 * of an 'average' CPU of the system will be as close as possible to
-	 * SCHED_POWER_SCALE, which is the default value, but with the
+	 * SCHED_CAPACITY_SCALE, which is the default value, but with the
 	 * constraint explained near table_efficiency[].
 	 */
 	if (min_capacity == max_capacity)
 		return;
 	else if (4 * max_capacity < (3 * (max_capacity + min_capacity)))
 		middle_capacity = (min_capacity + max_capacity)
-				>> (SCHED_POWER_SHIFT+1);
+				>> (SCHED_CAPACITY_SHIFT+1);
 	else
 		middle_capacity = ((max_capacity / 3)
-				>> (SCHED_POWER_SHIFT-1)) + 1;
+				>> (SCHED_CAPACITY_SHIFT-1)) + 1;
 }
 
 /*
@@ -416,28 +398,24 @@ void store_cpu_topology(unsigned int cpuid)
 
 	mpidr = read_cpuid_mpidr();
 
+	/* Uniprocessor systems can rely on default topology values */
+	if (mpidr & MPIDR_UP_BITMASK)
+		return;
+
 	/* Create cpu topology mapping based on MPIDR. */
-	if (mpidr & MPIDR_UP_BITMASK) {
-		/* Uniprocessor system */
-		cpuid_topo->thread_id  = -1;
-		cpuid_topo->core_id    = MPIDR_AFFINITY_LEVEL(mpidr, 0);
-		cpuid_topo->cluster_id = 0;
-	} else if (mpidr & MPIDR_MT_BITMASK) {
+	if (mpidr & MPIDR_MT_BITMASK) {
 		/* Multiprocessor system : Multi-threads per core */
 		cpuid_topo->thread_id  = MPIDR_AFFINITY_LEVEL(mpidr, 0);
 		cpuid_topo->core_id    = MPIDR_AFFINITY_LEVEL(mpidr, 1);
-		cpuid_topo->cluster_id = MPIDR_AFFINITY_LEVEL(mpidr, 2) |
-					 MPIDR_AFFINITY_LEVEL(mpidr, 3) << 8;
+		cpuid_topo->cluster_id = MPIDR_AFFINITY_LEVEL(mpidr, 2);
 	} else {
 		/* Multiprocessor system : Single-thread per core */
 		cpuid_topo->thread_id  = -1;
 		cpuid_topo->core_id    = MPIDR_AFFINITY_LEVEL(mpidr, 0);
-		cpuid_topo->cluster_id = MPIDR_AFFINITY_LEVEL(mpidr, 1) |
-					 MPIDR_AFFINITY_LEVEL(mpidr, 2) << 8 |
-					 MPIDR_AFFINITY_LEVEL(mpidr, 3) << 16;
+		cpuid_topo->cluster_id = MPIDR_AFFINITY_LEVEL(mpidr, 1);
 	}
 
-	pr_debug("CPU%u: cluster %d core %d thread %d mpidr %llx\n",
+	pr_debug("CPU%u: cluster %d core %d thread %d mpidr %#016llx\n",
 		 cpuid, cpuid_topo->cluster_id, cpuid_topo->core_id,
 		 cpuid_topo->thread_id, mpidr);
 
@@ -469,7 +447,7 @@ static void __init reset_cpu_power(void)
 	unsigned int cpu;
 
 	for_each_possible_cpu(cpu)
-		set_power_scale(cpu, SCHED_POWER_SCALE);
+		set_power_scale(cpu, SCHED_CAPACITY_SCALE);
 }
 
 void __init init_cpu_topology(void)

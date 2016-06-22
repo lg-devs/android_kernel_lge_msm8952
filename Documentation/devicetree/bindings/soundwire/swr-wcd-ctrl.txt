@@ -1,4 +1,4 @@
-Qualcomm Technologies Inc WCD Codec SoundWire controller
+Qualcomm WCD Codec SoundWire controller
 
 Required properties:
 

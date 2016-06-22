@@ -608,10 +608,10 @@ struct slim_controller {
 	int			(*xfer_user_msg)(struct slim_controller *ctrl,
 				u8 la, u8 mt, u8 mc,
 				struct slim_ele_access *msg, u8 *buf, u8 len);
-	int (*xfer_bulk_wr)(struct slim_controller *ctrl,
-			u8 la, u8 mt, u8 mc, struct slim_val_inf msgs[],
-			int n, int (*comp_cb)(void *ctx, int err),
-			void *ctx);
+	int			(*xfer_bulk_wr)(struct slim_controller *ctrl,
+				u8 la, u8 mt, u8 mc, struct slim_val_inf msgs[],
+				int n, int (*comp_cb)(void *ctx, int err),
+				void *ctx);
 };
 #define to_slim_controller(d) container_of(d, struct slim_controller, dev)
 

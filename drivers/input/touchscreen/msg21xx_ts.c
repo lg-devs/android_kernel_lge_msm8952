@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2012 Bruce Ding <bruce.ding@mstarsemi.com>
  *
- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -214,13 +214,17 @@ static void _CRC_initTable(void)
 
 static void msg21xx_reset_hw(struct msg21xx_ts_platform_data *pdata)
 {
+	unsigned int delay;
+
 	gpio_direction_output(pdata->reset_gpio, 1);
 	gpio_set_value_cansleep(pdata->reset_gpio, 0);
 	/* Note that the RST must be in LOW 10ms at least */
-	usleep(pdata->hard_reset_delay_ms * 1000);
+	delay = pdata->hard_reset_delay_ms * 1000;
+	usleep_range(delay, delay + 1);
 	gpio_set_value_cansleep(pdata->reset_gpio, 1);
 	/* Enable the interrupt service thread/routine for INT after 50ms */
-	usleep(pdata->post_hard_reset_delay_ms * 1000);
+	delay = pdata->post_hard_reset_delay_ms * 1000;
+	usleep_range(delay, delay + 1);
 }
 
 static int read_i2c_seq(struct msg21xx_ts_data *ts_data, unsigned char addr,
@@ -300,6 +304,7 @@ static void write_reg(struct msg21xx_ts_data *ts_data, unsigned char bank,
 						unsigned short data)
 {
 	unsigned char tx_data[5] = {0x10, bank, addr, data & 0xFF, data >> 8};
+
 	write_i2c_seq(ts_data, SLAVE_I2C_ID_DBBUS, tx_data, sizeof(tx_data));
 }
 
@@ -308,6 +313,7 @@ static void write_reg_8bit(struct msg21xx_ts_data *ts_data, unsigned char bank,
 						unsigned char data)
 {
 	unsigned char tx_data[4] = {0x10, bank, addr, data};
+
 	write_i2c_seq(ts_data, SLAVE_I2C_ID_DBBUS, tx_data, sizeof(tx_data));
 }
 
@@ -493,7 +499,7 @@ static ssize_t firmware_update_c33(struct device *dev,
 
 	/*
 	 * Program
-	*/
+	 */
 
 	/* polling 0x3CE4 is 0x1C70 */
 	if ((emem_type == EMEM_ALL) || (emem_type == EMEM_MAIN)) {
@@ -739,6 +745,7 @@ static ssize_t firmware_update_show(struct device *dev,
 						char *buf)
 {
 	struct msg21xx_ts_data *ts_data = dev_get_drvdata(dev);
+
 	return snprintf(buf, 3, "%d\n", ts_data->pdata->updating_fw);
 }
 
@@ -857,6 +864,7 @@ static ssize_t firmware_version_show(struct device *dev,
 					char *buf)
 {
 	struct msg21xx_ts_data *ts_data = dev_get_drvdata(dev);
+
 	msg21xx_read_firmware_id(ts_data);
 	return snprintf(buf, sizeof(char) * 8, "%03d%03d\n",
 			ts_data->pdata->fw_version_major,
@@ -872,6 +880,7 @@ static ssize_t msg21xx_fw_name_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct msg21xx_ts_data *ts_data = dev_get_drvdata(dev);
+
 	return snprintf(buf, MSTAR_FW_NAME_MAX_LEN - 1,
 				"%s\n", ts_data->pdata->fw_name);
 }
@@ -919,6 +928,7 @@ static ssize_t tp_print_show(struct device *dev,
 				char *buf)
 {
 	struct msg21xx_ts_data *ts_data = dev_get_drvdata(dev);
+
 	tp_print_proc_read(ts_data);
 
 	return snprintf(buf, 3, "%d\n", ts_data->suspended);
@@ -1730,10 +1740,8 @@ static int msg21xx_ts_probe(struct i2c_client *client,
 	if (client->dev.of_node) {
 		pdata = devm_kzalloc(&client->dev,
 			sizeof(struct msg21xx_ts_platform_data), GFP_KERNEL);
-		if (!pdata) {
-			dev_err(&client->dev, "Failed to allocate memory\n");
+		if (!pdata)
 			return -ENOMEM;
-		}
 
 		ret = msg21xx_parse_dt(&client->dev, pdata);
 		if (ret) {
@@ -1750,10 +1758,8 @@ static int msg21xx_ts_probe(struct i2c_client *client,
 
 	ts_data = devm_kzalloc(&client->dev,
 			sizeof(struct msg21xx_ts_data), GFP_KERNEL);
-	if (!ts_data) {
-		dev_err(&client->dev, "Not enough memory\n");
+	if (!ts_data)
 		return -ENOMEM;
-	}
 
 	ts_data->client = client;
 	ts_data->info.point = devm_kzalloc(&client->dev,

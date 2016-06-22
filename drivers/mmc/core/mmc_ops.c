@@ -23,6 +23,44 @@
 
 #define MMC_OPS_TIMEOUT_MS	(10 * 60 * 1000) /* 10 minute timeout */
 
+static inline int __mmc_send_status(struct mmc_card *card, u32 *status,
+				    bool ignore_crc)
+{
+	int err;
+	struct mmc_command cmd = {0};
+
+	BUG_ON(!card);
+	BUG_ON(!card->host);
+
+	cmd.opcode = MMC_SEND_STATUS;
+	if (!mmc_host_is_spi(card->host))
+		cmd.arg = card->rca << 16;
+	cmd.flags = MMC_RSP_SPI_R2 | MMC_RSP_R1 | MMC_CMD_AC;
+	if (ignore_crc)
+		cmd.flags &= ~MMC_RSP_CRC;
+
+	err = mmc_wait_for_cmd(card->host, &cmd, MMC_CMD_RETRIES);
+	if (err)
+		return err;
+
+	/* NOTE: callers are required to understand the difference
+	 * between "native" and SPI format status words!
+	 */
+	if (status)
+		*status = cmd.resp[0];
+
+	return 0;
+}
+
+int mmc_send_status(struct mmc_card *card, u32 *status)
+{
+	return __mmc_send_status(card, status, false);
+}
+
+#ifdef CONFIG_MACH_LGE
+EXPORT_SYMBOL(mmc_send_status);
+#endif
+
 static int _mmc_select_card(struct mmc_host *host, struct mmc_card *card)
 {
 	int err;
@@ -59,38 +97,24 @@ int mmc_deselect_cards(struct mmc_host *host)
 	return _mmc_select_card(host, NULL);
 }
 
-int mmc_card_sleepawake(struct mmc_host *host, int sleep)
+/*
+ * Write the value specified in the device tree or board code into the optional
+ * 16 bit Driver Stage Register. This can be used to tune raise/fall times and
+ * drive strength of the DAT and CMD outputs. The actual meaning of a given
+ * value is hardware dependant.
+ * The presence of the DSR register can be determined from the CSD register,
+ * bit 76.
+ */
+int mmc_set_dsr(struct mmc_host *host)
 {
 	struct mmc_command cmd = {0};
-	struct mmc_card *card = host->card;
-	int err;
 
-	if (sleep)
-		mmc_deselect_cards(host);
+	cmd.opcode = MMC_SET_DSR;
 
-	cmd.opcode = MMC_SLEEP_AWAKE;
-	cmd.arg = card->rca << 16;
-	if (sleep)
-		cmd.arg |= 1 << 15;
+	cmd.arg = (host->dsr << 16) | 0xffff;
+	cmd.flags = MMC_RSP_NONE | MMC_CMD_AC;
 
-	cmd.flags = MMC_RSP_R1B | MMC_CMD_AC;
-	err = mmc_wait_for_cmd(host, &cmd, 0);
-	if (err)
-		return err;
-
-	/*
-	 * If the host does not wait while the card signals busy, then we will
-	 * will have to wait the sleep/awake timeout.  Note, we cannot use the
-	 * SEND_STATUS command to poll the status because that command (and most
-	 * others) is invalid while the card sleeps.
-	 */
-	if (!(host->caps & MMC_CAP_WAIT_WHILE_BUSY))
-		mmc_delay(DIV_ROUND_UP(card->ext_csd.sa_timeout, 10000));
-
-	if (!sleep)
-		err = mmc_select_card(card);
-
-	return err;
+	return mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
 }
 
 int mmc_go_idle(struct mmc_host *host)
@@ -418,7 +442,7 @@ static inline void mmc_prepare_switch(struct mmc_command *cmd, u8 index,
 		  (value << 8) |
 		  set;
 	cmd->flags = MMC_CMD_AC;
-	cmd->cmd_timeout_ms = tout_ms;
+	cmd->busy_timeout = tout_ms;
 	if (use_busy_signal)
 		cmd->flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
 	else
@@ -443,30 +467,52 @@ EXPORT_SYMBOL(__mmc_switch_cmdq_mode);
  *	@timeout_ms: timeout (ms) for operation performed by register write,
  *                   timeout of zero implies maximum possible timeout
  *	@use_busy_signal: use the busy signal as response type
- *	@ignore_timeout: set this flag only for commands which can be HPIed
+ *	@send_status: send status cmd to poll for busy
+ *	@ignore_crc: ignore CRC errors when sending status cmd to poll for busy
  *
  *	Modifies the EXT_CSD register for selected card.
  */
 int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
-		 unsigned int timeout_ms, bool use_busy_signal,
-		 bool ignore_timeout)
+		unsigned int timeout_ms, bool use_busy_signal, bool send_status,
+		bool ignore_crc)
 {
+	struct mmc_host *host = card->host;
 	int err;
 	struct mmc_command cmd = {0};
 	unsigned long timeout;
-	u32 status;
+	u32 status = 0;
+	bool use_r1b_resp = use_busy_signal;
+	int retries = 5;
 
-	BUG_ON(!card);
-	BUG_ON(!card->host);
-
-
+	/*
+	 * If the cmd timeout and the max_busy_timeout of the host are both
+	 * specified, let's validate them. A failure means we need to prevent
+	 * the host from doing hw busy detection, which is done by converting
+	 * to a R1 response instead of a R1B.
+	 */
+	if (timeout_ms && host->max_busy_timeout &&
+		(timeout_ms > host->max_busy_timeout))
+		use_r1b_resp = false;
 
 	mmc_prepare_switch(&cmd, index, value, set, timeout_ms,
-			   use_busy_signal);
-	cmd.cmd_timeout_ms = timeout_ms;
-	cmd.ignore_timeout = ignore_timeout;
+			   use_r1b_resp);
+	if (use_r1b_resp) {
+		cmd.flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
+		/*
+		 * A busy_timeout of zero means the host can decide to use
+		 * whatever value it finds suitable.
+		 */
+		cmd.busy_timeout = timeout_ms;
+	} else {
+		cmd.flags |= MMC_RSP_SPI_R1 | MMC_RSP_R1;
+	}
 
-	err = mmc_wait_for_cmd(card->host, &cmd, MMC_CMD_RETRIES);
+	if (index == EXT_CSD_SANITIZE_START)
+		cmd.sanitize_busy = true;
+	else if (index == EXT_CSD_BKOPS_START)
+		cmd.bkops_busy = true;
+
+	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
 	if (err)
 		return err;
 
@@ -474,32 +520,61 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 	if (!use_busy_signal)
 		return 0;
 
-	/* Must check status to be sure of no errors */
-	timeout = jiffies + msecs_to_jiffies(MMC_OPS_TIMEOUT_MS);
+	/*
+	 * CRC errors shall only be ignored in cases were CMD13 is used to poll
+	 * to detect busy completion.
+	 */
+	if ((host->caps & MMC_CAP_WAIT_WHILE_BUSY) && use_r1b_resp)
+		ignore_crc = false;
+
+	/* We have an unspecified cmd timeout, use the fallback value. */
+	if (!timeout_ms)
+		timeout_ms = MMC_OPS_TIMEOUT_MS;
+
+	/* Must check status to be sure of no errors. */
+	timeout = jiffies + msecs_to_jiffies(timeout_ms);
 	do {
-		err = mmc_send_status(card, &status);
-		if (err)
-			return err;
-		if (card->host->caps & MMC_CAP_WAIT_WHILE_BUSY)
+		if (send_status) {
+			err = __mmc_send_status(card, &status, ignore_crc);
+			if (err)
+				return err;
+		}
+		if ((host->caps & MMC_CAP_WAIT_WHILE_BUSY) && use_r1b_resp)
 			break;
-		if (mmc_host_is_spi(card->host))
+		if (mmc_host_is_spi(host))
 			break;
+
+		/*
+		 * We are not allowed to issue a status command and the host
+		 * does'nt support MMC_CAP_WAIT_WHILE_BUSY, then we can only
+		 * rely on waiting for the stated timeout to be sufficient.
+		 */
+		if (!send_status) {
+			mmc_delay(timeout_ms);
+			return 0;
+		}
 
 		/* Timeout if the device never leaves the program state. */
 		if (time_after(jiffies, timeout)) {
-			pr_err("%s: Card stuck in programming state! %s\n",
-				mmc_hostname(card->host), __func__);
-			return -ETIMEDOUT;
+			pr_err("%s: Card stuck in programming state! %s, timeout:%ums, retries:%d\n",
+				mmc_hostname(host), __func__,
+				timeout_ms, retries);
+			if (retries)
+				timeout = jiffies +
+						msecs_to_jiffies(timeout_ms);
+			else
+				return -ETIMEDOUT;
+			retries--;
 		}
 	} while (R1_CURRENT_STATE(status) == R1_STATE_PRG);
 
-	if (mmc_host_is_spi(card->host)) {
+	if (mmc_host_is_spi(host)) {
 		if (status & R1_SPI_ILLEGAL_COMMAND)
 			return -EBADMSG;
 	} else {
 		if (status & 0xFDFFA000)
-			pr_warning("%s: unexpected status %#x after "
-			       "switch", mmc_hostname(card->host), status);
+			pr_warn("%s: unexpected status %#x after switch\n",
+				mmc_hostname(host), status);
 		if (status & R1_SWITCH_ERROR)
 			return -EBADMSG;
 	}
@@ -511,42 +586,10 @@ EXPORT_SYMBOL_GPL(__mmc_switch);
 int mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 		unsigned int timeout_ms)
 {
-	return __mmc_switch(card, set, index, value, timeout_ms, true, false);
+	return __mmc_switch(card, set, index, value, timeout_ms, true, true,
+				false);
 }
 EXPORT_SYMBOL_GPL(mmc_switch);
-
-int mmc_switch_ignore_timeout(struct mmc_card *card, u8 set, u8 index, u8 value,
-		unsigned int timeout_ms)
-{
-	return __mmc_switch(card, set, index, value, timeout_ms, true, true);
-}
-EXPORT_SYMBOL(mmc_switch_ignore_timeout);
-
-int mmc_send_status(struct mmc_card *card, u32 *status)
-{
-	int err;
-	struct mmc_command cmd = {0};
-
-	BUG_ON(!card);
-	BUG_ON(!card->host);
-
-	cmd.opcode = MMC_SEND_STATUS;
-	if (!mmc_host_is_spi(card->host))
-		cmd.arg = card->rca << 16;
-	cmd.flags = MMC_RSP_SPI_R2 | MMC_RSP_R1 | MMC_CMD_AC;
-
-	err = mmc_wait_for_cmd(card->host, &cmd, MMC_CMD_RETRIES);
-	if (err)
-		return err;
-
-	/* NOTE: callers are required to understand the difference
-	 * between "native" and SPI format status words!
-	 */
-	if (status)
-		*status = cmd.resp[0];
-
-	return 0;
-}
 
 static int
 mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
@@ -606,6 +649,7 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 	data.sg_len = 1;
 	data.timeout_ns = 1000000;
 	data.timeout_clks = 0;
+	mmc_set_data_timeout(&data, card);
 
 	sg_init_one(&sg, data_buf, len);
 	mmc_wait_for_req(host, &mrq);
@@ -656,8 +700,8 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 	int err;
 
 	if (!card->ext_csd.hpi_en) {
-		pr_warning("%s: Card didn't support HPI command\n",
-			   mmc_hostname(card->host));
+		pr_warn("%s: Card didn't support HPI command\n",
+			mmc_hostname(card->host));
 		return -EINVAL;
 	}
 
@@ -681,6 +725,11 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 		*status = cmd.resp[0];
 
 	return 0;
+}
+
+int mmc_can_ext_csd(struct mmc_card *card)
+{
+	return (card && card->csd.mmca_vsn > CSD_SPEC_VER_3);
 }
 
 int mmc_discard_queue(struct mmc_host *host, u32 tasks)

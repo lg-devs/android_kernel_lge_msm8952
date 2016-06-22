@@ -22,8 +22,14 @@
 #include "diag_dci.h"
 #include "diagmem.h"
 #include "diag_masks.h"
+#include "diag_ipc_logging.h"
+#include "diag_mux.h"
 
 #define FEATURE_SUPPORTED(x)	((feature_mask << (i * 8)) & (1 << x))
+
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
+extern int user_diag_enable;
+#endif
 
 /* tracks which peripheral is undergoing SSR */
 static uint16_t reg_dirty;
@@ -109,16 +115,20 @@ void diag_notify_md_client(uint8_t peripheral, int data)
 	int stat = 0;
 	struct siginfo info;
 
-	if (driver->logging_mode != MEMORY_DEVICE_MODE)
+	if (peripheral > NUM_PERIPHERALS)
+		return;
+
+	if (driver->logging_mode != DIAG_MEMORY_DEVICE_MODE)
 		return;
 
 	memset(&info, 0, sizeof(struct siginfo));
 	info.si_code = SI_QUEUE;
 	info.si_int = (PERIPHERAL_MASK(peripheral) | data);
 	info.si_signo = SIGCONT;
-	if (driver->md_proc[DIAG_LOCAL_PROC].mdlog_process) {
+	if (driver->md_session_map[peripheral] &&
+	    driver->md_session_map[peripheral]->task) {
 		stat = send_sig_info(info.si_signo, &info,
-			driver->md_proc[DIAG_LOCAL_PROC].mdlog_process);
+				     driver->md_session_map[peripheral]->task);
 		if (stat)
 			pr_err("diag: Err sending signal to memory device client, signal data: 0x%x, stat: %d\n",
 			       info.si_int, stat);
@@ -411,8 +421,6 @@ static void process_log_range_report(uint8_t *buf, uint32_t len,
 	int read_len = 0;
 	int header_len = sizeof(struct diag_ctrl_log_range_report);
 	uint8_t *ptr = buf;
-	uint8_t *temp = NULL;
-	uint32_t mask_size;
 	struct diag_ctrl_log_range_report *header = NULL;
 	struct diag_ctrl_log_range *log_range = NULL;
 	struct diag_log_mask_t *mask_ptr = NULL;
@@ -438,23 +446,10 @@ static void process_log_range_report(uint8_t *buf, uint32_t len,
 		}
 		mask_ptr = (struct diag_log_mask_t *)log_mask.ptr;
 		mask_ptr = &mask_ptr[log_range->equip_id];
-		mutex_lock(&(mask_ptr->lock));
-		mask_size = LOG_ITEMS_TO_SIZE(log_range->num_items);
-		if (mask_size < mask_ptr->range)
-			goto proceed;
 
-		temp = krealloc(mask_ptr->ptr, mask_size, GFP_KERNEL);
-		if (!temp) {
-			pr_err("diag: In %s, Unable to reallocate log mask ptr to size: %d, equip_id: %d\n",
-			       __func__, mask_size, log_range->equip_id);
-			mutex_unlock(&(mask_ptr->lock));
-			continue;
-		}
-		mask_ptr->ptr = temp;
-		mask_ptr->range = mask_size;
-proceed:
-		if (log_range->num_items > mask_ptr->num_items)
-			mask_ptr->num_items = log_range->num_items;
+		mutex_lock(&(mask_ptr->lock));
+		mask_ptr->num_items = log_range->num_items;
+		mask_ptr->range = LOG_ITEMS_TO_SIZE(log_range->num_items);
 		mutex_unlock(&(mask_ptr->lock));
 	}
 }
@@ -463,6 +458,7 @@ static int update_msg_mask_tbl_entry(struct diag_msg_mask_t *mask,
 				     struct diag_ssid_range_t *range)
 {
 	uint32_t temp_range;
+	uint32_t *temp = NULL;
 
 	if (!mask || !range)
 		return -EIO;
@@ -473,6 +469,11 @@ static int update_msg_mask_tbl_entry(struct diag_msg_mask_t *mask,
 	}
 	if (range->ssid_last >= mask->ssid_last) {
 		temp_range = range->ssid_last - mask->ssid_first + 1;
+		temp = krealloc(mask->ptr, temp_range * sizeof(uint32_t),
+				GFP_KERNEL);
+		if (!temp)
+			return -ENOMEM;
+		mask->ptr = temp;
 		mask->ssid_last = range->ssid_last;
 		mask->range = temp_range;
 	}
@@ -645,6 +646,10 @@ static void process_build_mask_report(uint8_t *buf, uint32_t len,
 	}
 }
 
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
+extern int set_diag_enable(int);
+#endif
+
 void diag_cntl_process_read_data(struct diagfwd_info *p_info, void *buf,
 				 int len)
 {
@@ -652,6 +657,9 @@ void diag_cntl_process_read_data(struct diagfwd_info *p_info, void *buf,
 	int header_len = sizeof(struct diag_ctrl_pkt_header_t);
 	uint8_t *ptr = buf;
 	struct diag_ctrl_pkt_header_t *ctrl_pkt = NULL;
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
+	struct diag_ctrl_cmd_reg *reg = NULL;
+#endif
 
 	if (!buf || len <= 0 || !p_info)
 		return;
@@ -697,6 +705,13 @@ void diag_cntl_process_read_data(struct diagfwd_info *p_info, void *buf,
 			process_pd_status(ptr, ctrl_pkt->len,
 						p_info->peripheral);
 			break;
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
+		case DIAG_CTRL_MSG_LGE_DIAG_ENABLE:
+			reg = (struct diag_ctrl_cmd_reg *)ptr;
+			user_diag_enable = reg->cmd_code;
+			pr_info("diag: In %s, diag_enable: %d\n", __func__, reg->cmd_code);
+			break;
+#endif
 		default:
 			pr_debug("diag: Control packet %d not supported\n",
 				 ctrl_pkt->pkt_id);
@@ -962,7 +977,7 @@ void diag_real_time_work_fn(struct work_struct *work)
 }
 #endif
 
-int diag_send_real_time_update(uint8_t peripheral, int real_time)
+static int __diag_send_real_time_update(uint8_t peripheral, int real_time)
 {
 	char buf[sizeof(struct diag_ctrl_msg_diagmode)];
 	int msg_size = sizeof(struct diag_ctrl_msg_diagmode);
@@ -1001,6 +1016,23 @@ int diag_send_real_time_update(uint8_t peripheral, int real_time)
 	return err;
 }
 
+int diag_send_real_time_update(uint8_t peripheral, int real_time)
+{
+	int i;
+
+	for (i = 0; i < NUM_PERIPHERALS; i++) {
+		if (!driver->buffering_flag[i])
+			continue;
+		/*
+		 * One of the peripherals is in buffering mode. Don't set
+		 * the RT value.
+		 */
+		return -EINVAL;
+	}
+
+	return __diag_send_real_time_update(peripheral, real_time);
+}
+
 int diag_send_peripheral_buffering_mode(struct diag_buffering_mode_t *params)
 {
 	int err = 0;
@@ -1016,6 +1048,9 @@ int diag_send_peripheral_buffering_mode(struct diag_buffering_mode_t *params)
 		       peripheral);
 		return -EINVAL;
 	}
+
+	if (!driver->buffering_flag[peripheral])
+		return -EINVAL;
 
 	switch (params->mode) {
 	case DIAG_BUFFERING_MODE_STREAMING:
@@ -1034,6 +1069,7 @@ int diag_send_peripheral_buffering_mode(struct diag_buffering_mode_t *params)
 	if (!driver->feature[peripheral].peripheral_buffering) {
 		pr_debug("diag: In %s, peripheral %d doesn't support buffering\n",
 			 __func__, peripheral);
+		driver->buffering_flag[peripheral] = 0;
 		return -EIO;
 	}
 
@@ -1065,7 +1101,7 @@ int diag_send_peripheral_buffering_mode(struct diag_buffering_mode_t *params)
 		       __func__, peripheral, err);
 		goto fail;
 	}
-	err = diag_send_real_time_update(peripheral, mode);
+	err = __diag_send_real_time_update(peripheral, mode);
 	if (err) {
 		pr_err("diag: In %s, unable to send mode update to peripheral %d, mode: %d, err: %d\n",
 		       __func__, peripheral, mode, err);
@@ -1075,6 +1111,8 @@ int diag_send_peripheral_buffering_mode(struct diag_buffering_mode_t *params)
 	driver->buffering_mode[peripheral].mode = params->mode;
 	driver->buffering_mode[peripheral].low_wm_val = params->low_wm_val;
 	driver->buffering_mode[peripheral].high_wm_val = params->high_wm_val;
+	if (mode == DIAG_BUFFERING_MODE_STREAMING)
+		driver->buffering_flag[peripheral] = 0;
 fail:
 	mutex_unlock(&driver->mode_lock);
 	return err;
@@ -1256,13 +1294,16 @@ int diag_send_buffering_wm_values(uint8_t peripheral,
 
 int diagfwd_cntl_init(void)
 {
-	uint8_t peripheral;
+	uint8_t peripheral = 0;
 
 	reg_dirty = 0;
 	driver->polling_reg_flag = 0;
 	driver->log_on_demand_support = 1;
 	driver->stm_peripheral = 0;
 	driver->close_transport = 0;
+	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++)
+		driver->buffering_flag[peripheral] = 0;
+
 	mutex_init(&driver->cntl_lock);
 	INIT_WORK(&(driver->stm_update_work), diag_stm_update_work_fn);
 	INIT_WORK(&(driver->mask_update_work), diag_mask_update_work_fn);
@@ -1273,12 +1314,17 @@ int diagfwd_cntl_init(void)
 	if (!driver->cntl_wq)
 		return -ENOMEM;
 
+	return 0;
+}
+
+void diagfwd_cntl_channel_init(void)
+{
+	uint8_t peripheral;
+
 	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
 		diagfwd_early_open(peripheral);
 		diagfwd_open(peripheral, TYPE_CNTL);
 	}
-
-	return 0;
 }
 
 void diagfwd_cntl_exit(void)

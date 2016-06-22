@@ -24,6 +24,7 @@
 #include "msm_jpeg_core.h"
 #include "msm_jpeg_platform.h"
 #include "msm_jpeg_common.h"
+#include "cam_hw_ops.h"
 
 #define JPEG_REG_SIZE 0x308
 #define JPEG_DEV_CNT 4
@@ -491,6 +492,7 @@ int msm_jpeg_output_buf_enqueue(struct msm_jpeg_device *pgmn_dev,
 	buf_p->ion_fd = buf_cmd.fd;
 	buf_p->y_buffer_addr = msm_jpeg_platform_v2p(pgmn_dev, buf_cmd.fd,
 		total_len, pgmn_dev->iommu_hdl);
+
 	if (!buf_p->y_buffer_addr) {
 		JPEG_PR_ERR("%s:%d] v2p wrong\n", __func__, __LINE__);
 		kfree(buf_p);
@@ -732,6 +734,12 @@ int __msm_jpeg_open(struct msm_jpeg_device *pgmn_dev)
 
 	mutex_unlock(&pgmn_dev->lock);
 
+	rc = cam_config_ahb_clk(CAM_AHB_CLIENT_JPEG, CAMERA_AHB_SVS_VOTE);
+	if (rc < 0) {
+		pr_err("%s: failed to vote for AHB\n", __func__);
+		return rc;
+	}
+
 	msm_jpeg_core_irq_install(msm_jpeg_irq);
 	if (pgmn_dev->core_type == MSM_JPEG_CORE_CODEC)
 		core_irq = msm_jpeg_core_irq;
@@ -744,7 +752,7 @@ int __msm_jpeg_open(struct msm_jpeg_device *pgmn_dev)
 	if (rc) {
 		JPEG_PR_ERR("%s:%d] platform_init fail %d\n", __func__,
 			__LINE__, rc);
-		return rc;
+		goto platform_init_fail;
 	}
 
 	JPEG_DBG("%s:%d] platform resources - mem %p, base %p, irq %d\n",
@@ -760,6 +768,12 @@ int __msm_jpeg_open(struct msm_jpeg_device *pgmn_dev)
 	msm_jpeg_core_init(pgmn_dev);
 
 	JPEG_DBG("%s:%d] success\n", __func__, __LINE__);
+	return rc;
+
+platform_init_fail:
+	if (cam_config_ahb_clk(CAM_AHB_CLIENT_JPEG,
+		CAMERA_AHB_SUSPEND_VOTE) < 0)
+		pr_err("%s: failed to remove vote for AHB\n", __func__);
 	return rc;
 }
 
@@ -790,6 +804,11 @@ int __msm_jpeg_release(struct msm_jpeg_device *pgmn_dev)
 		pgmn_dev->irq, pgmn_dev);
 
 	JPEG_DBG("%s:%d]\n", __func__, __LINE__);
+
+	if (cam_config_ahb_clk(CAM_AHB_CLIENT_JPEG,
+		CAMERA_AHB_SUSPEND_VOTE) < 0)
+		pr_err("%s: failed to remove vote for AHB\n", __func__);
+
 	return 0;
 }
 
@@ -885,6 +904,8 @@ int msm_jpeg_start(struct msm_jpeg_device *pgmn_dev, void * __user arg,
 
 	JPEG_DBG("%s:%d] Enter\n", __func__, __LINE__);
 
+	msm_jpeg_platform_set_dt_config(pgmn_dev);
+
 	msm_bus_scale_client_update_request(
 		pgmn_dev->jpeg_bus_client, 1);
 	JPEG_BUS_VOTED(pgmn_dev);
@@ -922,8 +943,10 @@ int msm_jpeg_start(struct msm_jpeg_device *pgmn_dev, void * __user arg,
 
 	JPEG_DBG_HIGH("%s:%d] START\n", __func__, __LINE__);
 	pgmn_dev->state = MSM_JPEG_EXECUTING;
+	/* ensure write is done */
 	wmb();
 	rc = hw_ioctl(pgmn_dev, arg);
+	/* ensure write is done */
 	wmb();
 	JPEG_DBG("%s:%d]", __func__, __LINE__);
 	return rc;
@@ -1506,10 +1529,10 @@ int __msm_jpeg_init(struct msm_jpeg_device *pgmn_dev)
 {
 	int rc = 0;
 	int idx = 0;
-#ifdef CONFIG_MSM_IOMMU
+
 	char *iommu_name[JPEG_DEV_CNT] = {"jpeg_enc0", "jpeg_enc1",
 		"jpeg_dec", "jpeg_dma"};
-#endif
+
 
 	mutex_init(&pgmn_dev->lock);
 
@@ -1525,7 +1548,6 @@ int __msm_jpeg_init(struct msm_jpeg_device *pgmn_dev)
 	msm_jpeg_q_init("input_rtn_q", &pgmn_dev->input_rtn_q);
 	msm_jpeg_q_init("input_buf_q", &pgmn_dev->input_buf_q);
 
-#ifdef CONFIG_MSM_IOMMU
 	/*get device context for IOMMU*/
 	rc = cam_smmu_get_handle(iommu_name[idx], &pgmn_dev->iommu_hdl);
 	JPEG_DBG("%s:%d] hdl %d", __func__, __LINE__,
@@ -1535,12 +1557,10 @@ int __msm_jpeg_init(struct msm_jpeg_device *pgmn_dev)
 				__func__);
 		goto error;
 	}
-#endif
 
 	return rc;
-#ifdef CONFIG_MSM_IOMMU
+
 error:
-#endif
 	mutex_destroy(&pgmn_dev->lock);
 	return -EFAULT;
 }

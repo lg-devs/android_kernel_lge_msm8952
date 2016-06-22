@@ -20,6 +20,7 @@
 #include <net/netfilter/nf_nat_helper.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_expect.h>
+#include <net/netfilter/nf_conntrack_seqadj.h>
 #include <linux/netfilter/nf_conntrack_sip.h>
 
 MODULE_LICENSE("GPL");
@@ -114,8 +115,8 @@ static int map_addr(struct sk_buff *skb, unsigned int protoff,
 	    ct->tuplehash[dir].tuple.src.u.udp.port != port) {
 		newaddr = ct->tuplehash[!dir].tuple.dst.u3;
 		newport = 0;
-	} else if (nf_inet_addr_cmp(&ct->tuplehash[dir].tuple.dst.u3, addr)
-		  && ct->tuplehash[dir].tuple.dst.u.udp.port != port) {
+	} else if (nf_inet_addr_cmp(&ct->tuplehash[dir].tuple.dst.u3, addr) &&
+		   ct->tuplehash[dir].tuple.dst.u.udp.port != port) {
 		newaddr = ct->tuplehash[!dir].tuple.src.u3;
 		newport = 0;
 	} else
@@ -128,7 +129,7 @@ static int map_addr(struct sk_buff *skb, unsigned int protoff,
 		buflen = sip_sprintf_addr(ct, buffer, &newaddr, false);
 	else
 		buflen = sip_sprintf_addr_port(ct, buffer, &newaddr,
-						ntohs(newport));
+					       ntohs(newport));
 
 	return mangle_packet(skb, protoff, dataoff, dptr, datalen,
 			     matchoff, matchlen, buffer, buflen);
@@ -167,7 +168,7 @@ static unsigned int nf_nat_sip(struct sk_buff *skb, unsigned int protoff,
 	int request, in_header;
 
 	/* Basic rules: requests and responses. */
-	if (strnicmp(*dptr, "SIP/2.0", strlen("SIP/2.0")) != 0) {
+	if (strncasecmp(*dptr, "SIP/2.0", strlen("SIP/2.0")) != 0) {
 		if (ct_sip_parse_request(ct, *dptr, *datalen,
 					 &matchoff, &matchlen,
 					 &addr, &port) > 0 &&
@@ -321,7 +322,7 @@ static void nf_nat_sip_seq_adjust(struct sk_buff *skb, unsigned int protoff,
 		return;
 
 	th = (struct tcphdr *)(skb->data + protoff);
-	nf_nat_set_seq_adjust(ct, ctinfo, th->seq, off);
+	nf_ct_seqadj_set(ct, ctinfo, th->seq, off);
 }
 
 /* Handles expected signalling connections and media streams */
@@ -637,33 +638,26 @@ static struct nf_ct_helper_expectfn sip_nat = {
 
 static void __exit nf_nat_sip_fini(void)
 {
-	RCU_INIT_POINTER(nf_nat_sip_hook, NULL);
-	RCU_INIT_POINTER(nf_nat_sip_seq_adjust_hook, NULL);
-	RCU_INIT_POINTER(nf_nat_sip_expect_hook, NULL);
-	RCU_INIT_POINTER(nf_nat_sdp_addr_hook, NULL);
-	RCU_INIT_POINTER(nf_nat_sdp_port_hook, NULL);
-	RCU_INIT_POINTER(nf_nat_sdp_session_hook, NULL);
-	RCU_INIT_POINTER(nf_nat_sdp_media_hook, NULL);
+	RCU_INIT_POINTER(nf_nat_sip_hooks, NULL);
+
 	nf_ct_helper_expectfn_unregister(&sip_nat);
 	synchronize_rcu();
 }
 
+static const struct nf_nat_sip_hooks sip_hooks = {
+	.msg		= nf_nat_sip,
+	.seq_adjust	= nf_nat_sip_seq_adjust,
+	.expect		= nf_nat_sip_expect,
+	.sdp_addr	= nf_nat_sdp_addr,
+	.sdp_port	= nf_nat_sdp_port,
+	.sdp_session	= nf_nat_sdp_session,
+	.sdp_media	= nf_nat_sdp_media,
+};
+
 static int __init nf_nat_sip_init(void)
 {
-	BUG_ON(nf_nat_sip_hook != NULL);
-	BUG_ON(nf_nat_sip_seq_adjust_hook != NULL);
-	BUG_ON(nf_nat_sip_expect_hook != NULL);
-	BUG_ON(nf_nat_sdp_addr_hook != NULL);
-	BUG_ON(nf_nat_sdp_port_hook != NULL);
-	BUG_ON(nf_nat_sdp_session_hook != NULL);
-	BUG_ON(nf_nat_sdp_media_hook != NULL);
-	RCU_INIT_POINTER(nf_nat_sip_hook, nf_nat_sip);
-	RCU_INIT_POINTER(nf_nat_sip_seq_adjust_hook, nf_nat_sip_seq_adjust);
-	RCU_INIT_POINTER(nf_nat_sip_expect_hook, nf_nat_sip_expect);
-	RCU_INIT_POINTER(nf_nat_sdp_addr_hook, nf_nat_sdp_addr);
-	RCU_INIT_POINTER(nf_nat_sdp_port_hook, nf_nat_sdp_port);
-	RCU_INIT_POINTER(nf_nat_sdp_session_hook, nf_nat_sdp_session);
-	RCU_INIT_POINTER(nf_nat_sdp_media_hook, nf_nat_sdp_media);
+	BUG_ON(nf_nat_sip_hooks != NULL);
+	RCU_INIT_POINTER(nf_nat_sip_hooks, &sip_hooks);
 	nf_ct_helper_expectfn_register(&sip_nat);
 	return 0;
 }

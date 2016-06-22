@@ -17,8 +17,8 @@
 #define A5XX_CP_CTXRECORD_MAGIC_REF     0x27C4BAFCUL
 /* Size of each CP preemption record */
 #define A5XX_CP_CTXRECORD_SIZE_IN_BYTES     0x100000
-/* Size of ctx_rec_PRCNT below */
-#define A5XX_CP_CTXRECORD_PREEMPTION_COUNTER_SIZE_IN_DWORDS       16
+/* Size of the preemption counter block (in bytes) */
+#define A5XX_CP_CTXRECORD_PREEMPTION_COUNTER_SIZE   (16 * 4)
 
 /**
  * struct a5xx_cp_preemption_record - CP context record for
@@ -64,7 +64,12 @@ struct a5xx_cp_smmu_info {
 	uint32_t  magic;
 	uint32_t  _pad4;
 	uint64_t  ttbr0;
+	uint32_t  asid;
 	uint32_t  context_idr;
 };
+
+void a5xx_snapshot(struct adreno_device *adreno_dev,
+		struct kgsl_snapshot *snapshot);
+unsigned int a5xx_num_registers(void);
 
 #endif

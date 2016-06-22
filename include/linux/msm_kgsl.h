@@ -14,8 +14,8 @@
 #define KGSL_CLK_RBBMTIMER	0x00000080
 #define KGSL_CLK_GFX_GTCU   0x00000100
 #define KGSL_CLK_GFX_GTBU   0x00000200
-#define KGSL_CLK_AON	0x00000400
-#define KGSL_CLK_GFX_GTBU1   0x00000800
+#define KGSL_CLK_MX	0x00000400
+#define KGSL_CLK_ALWAYSON   0x00000800
 
 #define KGSL_MAX_PWRLEVELS 10
 
@@ -47,11 +47,8 @@ struct kgsl_pwrlevel {
  * @idle_timeout:	Timeout for GPU to turn its resources off
  * @strtstp_sleepwake:  Flag to decide b/w SLEEP and SLUMBER
  * @bus_control:	Flag if independent bus voting is supported
- * @popp_enable:	Flag to enable POPP feature
  * @clk_map:		Clocks map per platform
  * @bus_scale_table:	Bus table with different b/w votes
- * @iommu_data:		Struct holding iommu context data
- * @iommu_count:	Number of IOMMU units for the GPU
  * @csdev:		Pointer to the coresight device for this device
  * @coresight_pdata:	Coresight configuration for specific device
  * @chipid:		Chip ID for the device's GPU
@@ -65,12 +62,9 @@ struct kgsl_device_platform_data {
 	unsigned int idle_timeout;
 	bool strtstp_sleepwake;
 	bool bus_control;
-	bool popp_enable;
 	unsigned int clk_map;
 	unsigned int step_mul;
 	struct msm_bus_scale_pdata *bus_scale_table;
-	struct kgsl_device_iommu_data *iommu_data;
-	int iommu_count;
 	struct coresight_device *csdev;
 	struct coresight_platform_data *coresight_pdata;
 	unsigned int chipid;
@@ -85,10 +79,4 @@ int kgsl_pwr_limits_set_freq(void *limit, unsigned int freq);
 void kgsl_pwr_limits_set_default(void *limit);
 unsigned int kgsl_pwr_limits_get_freq(enum kgsl_deviceid id);
 
-#ifdef CONFIG_MSM_KGSL_DRM
-int kgsl_gem_obj_addr(int drm_fd, int handle, unsigned long *start,
-			unsigned long *len);
-#else
-#define kgsl_gem_obj_addr(...) 0
-#endif
 #endif /* _MSM_KGSL_H */

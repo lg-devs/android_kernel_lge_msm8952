@@ -51,7 +51,6 @@ struct mmc_queue {
 	unsigned long		flags;
 #define MMC_QUEUE_SUSPENDED		0
 #define MMC_QUEUE_NEW_REQUEST		1
-#define MMC_QUEUE_URGENT_REQUEST	2
 
 	int (*issue_fn)(struct mmc_queue *, struct request *);
 	int (*cmdq_issue_fn)(struct mmc_queue *,
@@ -70,9 +69,9 @@ struct mmc_queue {
 	int			num_wr_reqs_to_start_packing;
 	bool			no_pack_for_random;
 	struct work_struct	cmdq_err_work;
-	struct completion	cmdq_shutdown_complete;
 
 	struct completion	cmdq_pending_req_done;
+	struct request		*cmdq_req_peeked;
 	int (*err_check_fn) (struct mmc_card *, struct mmc_async_req *);
 	void (*packed_test_fn) (struct request_queue *, struct mmc_queue_req *);
 	void (*cmdq_shutdown)(struct mmc_queue *);
@@ -92,11 +91,11 @@ extern void mmc_queue_bounce_post(struct mmc_queue_req *);
 extern int mmc_packed_init(struct mmc_queue *, struct mmc_card *);
 extern void mmc_packed_clean(struct mmc_queue *);
 
+extern int mmc_access_rpmb(struct mmc_queue *);
+
 extern void print_mmc_packing_stats(struct mmc_card *card);
 
 extern int mmc_cmdq_init(struct mmc_queue *mq, struct mmc_card *card);
 extern void mmc_cmdq_clean(struct mmc_queue *mq, struct mmc_card *card);
-
-extern int mmc_access_rpmb(struct mmc_queue *);
 
 #endif

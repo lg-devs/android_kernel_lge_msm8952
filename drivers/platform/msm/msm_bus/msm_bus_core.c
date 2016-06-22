@@ -41,6 +41,10 @@ int msm_bus_device_match(struct device *dev, void *id)
 	return fabdev->id == *(int *)id;
 }
 
+static void msm_bus_release(struct device *device)
+{
+}
+
 struct bus_type msm_bus_type = {
 	.name      = "msm-bus-type",
 };
@@ -72,11 +76,13 @@ int msm_bus_fabric_device_register(struct msm_bus_fabric_device *fabdev)
 {
 	int ret = 0;
 	fabdev->dev.bus = &msm_bus_type;
+	fabdev->dev.release = msm_bus_release;
 	ret = dev_set_name(&fabdev->dev, fabdev->name);
 	if (ret) {
 		MSM_BUS_ERR("error setting dev name\n");
 		goto err;
 	}
+
 	ret = device_register(&fabdev->dev);
 	if (ret < 0) {
 		MSM_BUS_ERR("error registering device%d %s\n",

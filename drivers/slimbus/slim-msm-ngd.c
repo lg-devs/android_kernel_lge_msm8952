@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -284,6 +284,21 @@ static int ngd_get_tid(struct slim_controller *ctrl, struct slim_msg_txn *txn,
 	spin_unlock_irqrestore(&ctrl->txn_lock, flags);
 	return 0;
 }
+
+static void slim_reinit_tx_msgq(struct msm_slim_ctrl *dev)
+{
+	/*
+	 * disconnect/recoonect pipe so that subsequent
+	 * transactions don't timeout due to unavailable
+	 * descriptors
+	 */
+	if (dev->state != MSM_CTRL_DOWN) {
+		msm_slim_disconnect_endp(dev, &dev->tx_msgq,
+					&dev->use_tx_msgqs);
+		msm_slim_connect_endp(dev, &dev->tx_msgq);
+	}
+}
+
 static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
@@ -395,7 +410,7 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		 * It also makes HW status cosistent with what SW has it here
 		 */
 		if ((pm_runtime_enabled(dev->dev) && ret < 0) ||
-				dev->state == MSM_CTRL_DOWN) {
+				dev->state >= MSM_CTRL_ASLEEP) {
 			SLIM_ERR(dev, "slim ctrl vote failed ret:%d, state:%d",
 					ret, dev->state);
 			pm_runtime_set_suspended(dev->dev);
@@ -570,19 +585,7 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 							i, *(pbuf + i));
 			if (idx < MSM_TX_BUFS)
 				dev->wr_comp[idx] = NULL;
-			/*
-			 * disconnect/recoonect pipe so that subsequent
-			 * transactions don't timeout due to unavailable
-			 * descriptors
-			 */
-			if (dev->state != MSM_CTRL_DOWN) {
-				/* print BAM debug info for TX pipe */
-				sps_get_bam_debug_info(dev->bam.hdl, 93,
-							SPS_BAM_PIPE(4), 0, 2);
-				msm_slim_disconnect_endp(dev, &dev->tx_msgq,
-							&dev->use_tx_msgqs);
-				msm_slim_connect_endp(dev, &dev->tx_msgq);
-			}
+			slim_reinit_tx_msgq(dev);
 		} else if (!timeout) {
 			ret = -ETIMEDOUT;
 			SLIM_WARN(dev, "timeout non-BAM TX,len:%d", txn->rl);
@@ -716,7 +719,7 @@ static int ngd_bulk_wr(struct slim_controller *ctrl, u8 la, u8 mt, u8 mc,
 	mutex_lock(&dev->tx_lock);
 
 	if ((pm_runtime_enabled(dev->dev) && ret < 0) ||
-			dev->state == MSM_CTRL_DOWN) {
+			dev->state >= MSM_CTRL_ASLEEP) {
 		SLIM_WARN(dev, "vote failed/SSR in-progress ret:%d, state:%d",
 				ret, dev->state);
 		pm_runtime_set_suspended(dev->dev);
@@ -791,11 +794,6 @@ static int ngd_bulk_wr(struct slim_controller *ctrl, u8 la, u8 mt, u8 mc,
 		}
 	}
 	header = dev->bulk.base;
-	/* SLIM_INFO only prints to internal buffer log, does not do pr_info */
-	for (i = 0; i < (dev->bulk.size); i += 16, header += 4)
-		SLIM_INFO(dev, "bulk sz:%d:0x%x, 0x%x, 0x%x, 0x%x",
-			  dev->bulk.size, *header, *(header+1), *(header+2),
-			  *(header+3));
 	if (comp_cb) {
 		dev->bulk.cb = comp_cb;
 		dev->bulk.ctx = ctx;
@@ -827,8 +825,12 @@ static int ngd_bulk_wr(struct slim_controller *ctrl, u8 la, u8 mt, u8 mc,
 		}
 	}
 retpath:
-	if (ret)
+	if (ret) {
 		dev->bulk.in_progress = false;
+		dev->bulk.ctx = NULL;
+		dev->bulk.wr_dma = 0;
+		slim_reinit_tx_msgq(dev);
+	}
 	mutex_unlock(&dev->tx_lock);
 	msm_slim_put_ctrl(dev);
 	return ret;
@@ -1291,6 +1293,7 @@ static int ngd_slim_enable(struct msm_slim_ctrl *dev, bool enable)
 	return ret;
 }
 
+#ifdef CONFIG_PM
 static int ngd_slim_power_down(struct msm_slim_ctrl *dev)
 {
 	unsigned long flags;
@@ -1309,6 +1312,7 @@ static int ngd_slim_power_down(struct msm_slim_ctrl *dev)
 	spin_unlock_irqrestore(&ctrl->txn_lock, flags);
 	return msm_slim_qmi_power_request(dev, false);
 }
+#endif
 
 static int ngd_slim_rx_msgq_thread(void *data)
 {
@@ -1524,6 +1528,7 @@ static int ngd_slim_probe(struct platform_device *pdev)
 	slim_set_ctrldata(&dev->ctrl, dev);
 
 	/* Create IPC log context */
+#ifdef CONFIG_IPC_LOGGING
 	dev->ipc_slimbus_log = ipc_log_context_create(IPC_SLIMBUS_LOG_PAGES,
 						dev_name(dev->dev), 0);
 	if (!dev->ipc_slimbus_log)
@@ -1535,6 +1540,9 @@ static int ngd_slim_probe(struct platform_device *pdev)
 		SLIM_INFO(dev, "start logging for slim dev %s\n",
 				dev_name(dev->dev));
 	}
+#else
+	dev->ipc_slimbus_log = NULL;
+#endif
 	ret = sysfs_create_file(&dev->dev->kobj, &dev_attr_debug_mask.attr);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to create dev. attr\n");
@@ -1703,7 +1711,6 @@ err_notify_thread_create_failed:
 err_rx_thread_create_failed:
 	free_irq(dev->irq, dev);
 err_request_irq_failed:
-	slim_del_controller(&dev->ctrl);
 err_ctrl_failed:
 	iounmap(dev->bam.base);
 err_ioremap_bam_failed:
@@ -1789,7 +1796,7 @@ static int ngd_slim_runtime_resume(struct device *device)
 	return ret;
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int ngd_slim_runtime_suspend(struct device *device)
 {
 	struct platform_device *pdev = to_platform_device(device);
@@ -1808,7 +1815,9 @@ static int ngd_slim_runtime_suspend(struct device *device)
 	SLIM_INFO(dev, "Slim runtime suspend: ret %d\n", ret);
 	return ret;
 }
+#endif
 
+#ifdef CONFIG_PM_SLEEP
 static int ngd_slim_suspend(struct device *dev)
 {
 	int ret = -EBUSY;

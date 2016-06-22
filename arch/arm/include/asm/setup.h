@@ -21,12 +21,7 @@
 #define __tagtable(tag, fn) \
 static const struct tagtable __tagtable_##fn __tag = { tag, fn }
 
-/*
- * Memory map description
- */
-#define NR_BANKS	CONFIG_ARM_NR_BANKS
-
-extern int arm_add_memory(phys_addr_t start, phys_addr_t size);
+extern int arm_add_memory(u64 start, u64 size);
 extern void early_print(const char *str, ...);
 extern void dump_machine_table(void);
 

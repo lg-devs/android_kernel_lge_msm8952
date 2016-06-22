@@ -2,17 +2,15 @@
 #define _NET_MAP_H_
 
 struct rmnet_map_header_s {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
+#ifndef RMNET_USE_BIG_ENDIAN_STRUCTS
 	uint8_t  pad_len:6;
 	uint8_t  reserved_bit:1;
 	uint8_t  cd_bit:1;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	uint8_t  cd_bit:1;
-	uint8_t  reserved_bit:1;
-	uint8_t  pad_len:6;
 #else
-#error "Please fix <asm/byteorder.h>"
-#endif
+	uint8_t  cd_bit:1;
+	uint8_t  reserved_bit:1;
+	uint8_t  pad_len:6;
+#endif /* RMNET_USE_BIG_ENDIAN_STRUCTS */
 	uint8_t  mux_id;
 	uint16_t pkt_len;
 }  __aligned(1);

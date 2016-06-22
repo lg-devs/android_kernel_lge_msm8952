@@ -72,6 +72,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/export.h>
+#include <linux/vmalloc.h>
 #include <net/net_namespace.h>
 #include <net/ip.h>
 #include <net/protocol.h>
@@ -762,12 +763,9 @@ static struct tnode *inflate(struct trie *t, struct tnode *tn)
 
 		if (IS_LEAF(node) || ((struct tnode *) node)->pos >
 		   tn->pos + tn->bits - 1) {
-			if (tkey_extract_bits(node->key,
-					      oldtnode->pos + oldtnode->bits,
-					      1) == 0)
-				put_child(tn, 2*i, node);
-			else
-				put_child(tn, 2*i+1, node);
+			put_child(tn,
+				tkey_extract_bits(node->key, oldtnode->pos, oldtnode->bits + 1),
+				node);
 			continue;
 		}
 
@@ -943,7 +941,7 @@ static void insert_leaf_info(struct hlist_head *head, struct leaf_info *new)
 			last = li;
 		}
 		if (last)
-			hlist_add_after_rcu(&last->hlist, &new->hlist);
+			hlist_add_behind_rcu(&new->hlist, &last->hlist);
 		else
 			hlist_add_before_rcu(&new->hlist, &li->hlist);
 	}
@@ -1120,12 +1118,8 @@ static struct list_head *fib_insert_node(struct trie *t, u32 key, int plen)
 		 *  first tnode need some special handling
 		 */
 
-		if (tp)
-			pos = tp->pos+tp->bits;
-		else
-			pos = 0;
-
 		if (n) {
+			pos = tp ? tp->pos+tp->bits : 0;
 			newpos = tkey_mismatch(key, pos, n->key);
 			tn = tnode_new(n->key, newpos, 1);
 		} else {
@@ -2130,7 +2124,7 @@ static void trie_show_stats(struct seq_file *seq, struct trie_stat *stat)
 		max--;
 
 	pointers = 0;
-	for (i = 1; i <= max; i++)
+	for (i = 1; i < max; i++)
 		if (stat->nodesizes[i] != 0) {
 			seq_printf(seq, "  %u: %u",  i, stat->nodesizes[i]);
 			pointers += (1<<i) * stat->nodesizes[i];

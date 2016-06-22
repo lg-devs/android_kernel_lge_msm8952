@@ -25,6 +25,7 @@
 #include <sound/lsm_params.h>
 #include <sound/cpe_core.h>
 #include <sound/cpe_cmi.h>
+#include <sound/cpe_err.h>
 #include <soc/qcom/pm.h>
 #include <linux/mfd/wcd9xxx/core.h>
 #include <linux/mfd/wcd9xxx/core-resource.h>
@@ -36,8 +37,6 @@
 #define CMI_CMD_TIMEOUT (10 * HZ)
 #define WCD_CPE_LSM_MAX_SESSIONS 1
 #define WCD_CPE_AFE_MAX_PORTS 4
-#define WCD_CPE_DRAM_SIZE 0x30000
-#define WCD_CPE_DRAM_OFFSET 0x50000
 #define AFE_SVC_EXPLICIT_PORT_START 1
 
 #define ELF_FLAG_EXECUTE (1 << 0)
@@ -105,15 +104,7 @@ static struct wcd_cmi_afe_port_data afe_ports[WCD_CPE_AFE_MAX_PORTS + 1];
 static void wcd_cpe_svc_event_cb(const struct cpe_svc_notification *param);
 static int wcd_cpe_setup_irqs(struct wcd_cpe_core *core);
 static void wcd_cpe_cleanup_irqs(struct wcd_cpe_core *core);
-static ssize_t cpe_ftm_test_trigger(struct file *file,
-				     const char __user *user_buf,
-				     size_t count, loff_t *ppos);
 static u32 ramdump_enable;
-static u32 cpe_ftm_test_status;
-static const struct file_operations cpe_ftm_test_trigger_fops = {
-	.open = simple_open,
-	.write = cpe_ftm_test_trigger,
-};
 
 static int wcd_cpe_afe_svc_cmd_mode(void *core_handle,
 				    u8 mode);
@@ -202,9 +193,17 @@ static int wcd_cpe_collect_ramdump(struct wcd_cpe_core *core)
 	struct cpe_svc_mem_segment dump_seg;
 	int rc;
 
+	if (!core->cpe_ramdump_dev || !core->cpe_dump_v_addr ||
+	    core->hw_info.dram_size == 0) {
+		dev_err(core->dev,
+			"%s: Ramdump devices not set up, size = %zu\n",
+			__func__, core->hw_info.dram_size);
+		return -EINVAL;
+	}
+
 	dump_seg.type = CPE_SVC_DATA_MEM;
-	dump_seg.cpe_addr = WCD_CPE_DRAM_OFFSET;
-	dump_seg.size = WCD_CPE_DRAM_SIZE;
+	dump_seg.cpe_addr = core->hw_info.dram_offset;
+	dump_seg.size = core->hw_info.dram_size;
 	dump_seg.data = core->cpe_dump_v_addr;
 
 	dev_dbg(core->dev,
@@ -224,7 +223,7 @@ static int wcd_cpe_collect_ramdump(struct wcd_cpe_core *core)
 		__func__);
 
 	core->cpe_ramdump_seg.address = (unsigned long) core->cpe_dump_addr;
-	core->cpe_ramdump_seg.size = WCD_CPE_DRAM_SIZE;
+	core->cpe_ramdump_seg.size = core->hw_info.dram_size;
 	core->cpe_ramdump_seg.v_address = core->cpe_dump_v_addr;
 
 	rc = do_ramdump(core->cpe_ramdump_dev,
@@ -377,25 +376,13 @@ static int wcd_cpe_enable_cpe_clks(struct wcd_cpe_core *core, bool enable)
 		return ret;
 	}
 
-	if (!enable && core->cpe_clk_ref > 0)
-		core->cpe_clk_ref--;
-
-	/*
-	 * CPE clk will be enabled at the first time
-	 * and be disabled at the last time.
-	 */
-	if (core->cpe_clk_ref == 0) {
-		ret = core->cpe_cdc_cb->cpe_clk_en(core->codec, enable);
-		if (ret) {
-			dev_err(core->dev,
-				"%s: cpe_clk_en() failed, err = %d\n",
-				__func__, ret);
-			goto cpe_clk_fail;
-		}
+	ret = core->cpe_cdc_cb->cpe_clk_en(core->codec, enable);
+	if (ret) {
+		dev_err(core->dev,
+			"%s: cpe_clk_en() failed, err = %d\n",
+			__func__, ret);
+		goto cpe_clk_fail;
 	}
-
-	if (enable)
-		core->cpe_clk_ref++;
 
 	return 0;
 
@@ -816,6 +803,15 @@ static int wcd_cpe_enable(struct wcd_cpe_core *core,
 	int ret = 0;
 
 	if (enable) {
+		/* Reset CPE first */
+		ret = cpe_svc_reset(core->cpe_handle);
+		if (IS_ERR_VALUE(ret)) {
+			dev_err(core->dev,
+				"%s: CPE Reset failed, error = %d\n",
+				__func__, ret);
+			goto done;
+		}
+
 		ret = wcd_cpe_setup_irqs(core);
 		if (ret) {
 			dev_err(core->dev,
@@ -878,11 +874,10 @@ static int wcd_cpe_enable(struct wcd_cpe_core *core,
 			goto done;
 		}
 
-		/* Reset CPE first */
-		ret = cpe_svc_reset(core->cpe_handle);
+		ret = cpe_svc_shutdown(core->cpe_handle);
 		if (IS_ERR_VALUE(ret)) {
 			dev_err(core->dev,
-				"%s: Failed to reset CPE with error %d\n",
+				"%s: CPE shutdown failed, error %d\n",
 				__func__, ret);
 			goto done;
 		}
@@ -1363,6 +1358,15 @@ static void wcd_cpe_svc_event_cb(const struct cpe_svc_notification *param)
 		complete(&core->online_compl);
 		break;
 	case CPE_SVC_OFFLINE:
+		/*
+		 * offline can happen during normal shutdown,
+		 * but we are interested in offline only during
+		 * SSR.
+		 */
+		if (core->ssr_type != WCD_CPE_SSR_EVENT &&
+		    core->ssr_type != WCD_CPE_BUS_DOWN_EVENT)
+			break;
+
 		active_sessions = wcd_cpe_lsm_session_active();
 		wcd_cpe_change_online_state(core, 0);
 		complete(&core->offline_compl);
@@ -1484,7 +1488,7 @@ static int wcd_cpe_get_cal_index(int32_t cal_type)
 	else if (cal_type == ULP_LSM_TOPOLOGY_ID_CAL_TYPE)
 		cal_index = WCD_CPE_LSM_CAL_TOPOLOGY_ID;
 	else
-		pr_debug("%s: invalid cal_type %d\n",
+		pr_err("%s: invalid cal_type %d\n",
 			__func__, cal_type);
 
 	return cal_index;
@@ -1667,22 +1671,6 @@ static int wcd_cpe_debugfs_init(struct wcd_cpe_core *core)
 		goto err_create_entry;
 	}
 
-	if (!debugfs_create_file("cpe_ftm_test_trigger", S_IWUSR,
-				dir, core, &cpe_ftm_test_trigger_fops)) {
-		dev_err(core->dev, "%s: Failed to create debugfs node %s\n",
-			__func__, "cpe_ftm_test_trigger");
-		rc = -ENODEV;
-		goto err_create_entry;
-	}
-
-	if (!debugfs_create_u32("cpe_ftm_test_status", S_IRUGO,
-				dir, &cpe_ftm_test_status)) {
-		dev_err(core->dev, "%s: Failed to create debugfs node %s\n",
-			__func__, "cpe_ftm_test_status");
-		rc = -ENODEV;
-		goto err_create_entry;
-	}
-
 err_create_entry:
 	debugfs_remove(dir);
 
@@ -1790,49 +1778,6 @@ done:
 	return rc;
 }
 
-static ssize_t cpe_ftm_test_trigger(struct file *file,
-				     const char __user *user_buf,
-				     size_t count, loff_t *ppos)
-{
-	struct wcd_cpe_core *core = file->private_data;
-	int ret = 0;
-
-	/* Enable the clks for cpe */
-	ret = wcd_cpe_enable_cpe_clks(core, true);
-	if (IS_ERR_VALUE(ret)) {
-		dev_err(core->dev,
-			"%s: CPE clk enable failed, err = %d\n",
-			__func__, ret);
-		goto done;
-	}
-
-	/* Get the CPE_STATUS */
-	ret = cpe_svc_ftm_test(core->cpe_handle, &cpe_ftm_test_status);
-	if (IS_ERR_VALUE(ret)) {
-		dev_err(core->dev,
-			"%s: CPE FTM test failed, err = %d\n",
-			__func__, ret);
-		if (ret == CPE_SVC_BUSY) {
-			cpe_ftm_test_status = 1;
-			ret = 0;
-		}
-	}
-
-	/* Disable the clks for cpe */
-	ret = wcd_cpe_enable_cpe_clks(core, false);
-	if (IS_ERR_VALUE(ret)) {
-		dev_err(core->dev,
-			"%s: CPE clk disable failed, err = %d\n",
-			__func__, ret);
-	}
-
-done:
-	if (ret < 0)
-		return ret;
-	else
-		return count;
-}
-
 static int wcd_cpe_validate_params(
 	struct snd_soc_codec *codec,
 	struct wcd_cpe_params *params)
@@ -1846,7 +1791,7 @@ static int wcd_cpe_validate_params(
 	if (!params) {
 		dev_err(codec->dev,
 			"%s: No params supplied for codec %s\n",
-			__func__, codec->name);
+			__func__, codec->component.name);
 		return -EINVAL;
 	}
 
@@ -1854,7 +1799,7 @@ static int wcd_cpe_validate_params(
 	    !params->cdc_cb) {
 		dev_err(codec->dev,
 			"%s: Invalid params for codec %s\n",
-			__func__, codec->name);
+			__func__, codec->component.name);
 		return -EINVAL;
 	}
 
@@ -1881,6 +1826,7 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 	char proc_name[WCD_CPE_STATE_MAX_LEN];
 	const char *cpe_name = "cpe";
 	const char *state_name = "_state";
+	const struct cpe_svc_hw_cfg *hw_info;
 	int id = 0;
 
 	if (wcd_cpe_validate_params(codec, params))
@@ -1920,7 +1866,6 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 	init_waitqueue_head(&core->ssr_entry.offline_poll_wait);
 	mutex_init(&core->ssr_lock);
 	core->cpe_users = 0;
-	core->cpe_clk_ref = 0;
 
 	/*
 	 * By default, during probe, it is assumed that
@@ -1951,7 +1896,7 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 		goto fail_cpe_register;
 	}
 
-	card = codec->card->snd_card;
+	card = codec->component.card->snd_card;
 	snprintf(proc_name, (sizeof("cpe") + sizeof("_state") +
 		 sizeof(id) - 2), "%s%d%s", cpe_name, id, state_name);
 	entry = snd_info_create_card_entry(card, proc_name,
@@ -1994,6 +1939,19 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 
 	wcd_cpe_sysfs_init(core, id);
 
+	hw_info = cpe_svc_get_hw_cfg(core->cpe_handle);
+	if (!hw_info) {
+		dev_err(core->dev,
+			"%s: hw info not available\n",
+			__func__);
+		goto schedule_dload_work;
+	} else {
+		core->hw_info.dram_offset = hw_info->DRAM_offset;
+		core->hw_info.dram_size = hw_info->DRAM_size;
+		core->hw_info.iram_offset = hw_info->IRAM_offset;
+		core->hw_info.iram_size = hw_info->IRAM_size;
+	}
+
 	/* Setup the ramdump device and buffer */
 	core->cpe_ramdump_dev = create_ramdump_device("cpe",
 						      core->dev);
@@ -2005,16 +1963,16 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 	}
 
 	core->cpe_dump_v_addr = dma_alloc_coherent(core->dev,
-						   WCD_CPE_DRAM_SIZE,
+						   core->hw_info.dram_size,
 						   &core->cpe_dump_addr,
 						   GFP_KERNEL);
 	if (!core->cpe_dump_v_addr) {
 		dev_err(core->dev,
-			"%s: Failed to alloc memory for cpe dump, size = %d\n",
-			__func__, WCD_CPE_DRAM_SIZE);
+			"%s: Failed to alloc memory for cpe dump, size = %zd\n",
+			__func__, core->hw_info.dram_size);
 		goto schedule_dload_work;
 	} else {
-		memset(core->cpe_dump_v_addr, 0, WCD_CPE_DRAM_SIZE);
+		memset(core->cpe_dump_v_addr, 0, core->hw_info.dram_size);
 	}
 
 schedule_dload_work:
@@ -2074,7 +2032,7 @@ void wcd_cpe_cmi_lsm_callback(const struct cmi_api_notification *param)
 
 		u8 *payload = ((u8 *)param->message) + (sizeof(struct cmi_hdr));
 		u8 result = payload[0];
-		lsm_session->cmd_err_code |= result;
+		lsm_session->cmd_err_code = result;
 		complete(&lsm_session->cmd_comp);
 
 	} else if (hdr->opcode == CPE_LSM_SESSION_CMDRSP_SHARED_MEM_ALLOC) {
@@ -2153,6 +2111,7 @@ static int wcd_cpe_cmi_send_lsm_msg(
 	if (CMI_HDR_GET_OBM_FLAG(hdr))
 		wcd_cpe_bus_vote_max_bw(core, true);
 
+	reinit_completion(&session->cmd_comp);
 	ret = cmi_send_msg(message);
 	if (ret) {
 		pr_err("%s: msg opcode (0x%x) send failed (%d)\n",
@@ -2165,7 +2124,13 @@ static int wcd_cpe_cmi_send_lsm_msg(
 	if (ret > 0) {
 		pr_debug("%s: command 0x%x, received response 0x%x\n",
 			__func__, hdr->opcode, session->cmd_err_code);
-		ret = session->cmd_err_code;
+		if (session->cmd_err_code == CMI_SHMEM_ALLOC_FAILED)
+			session->cmd_err_code = CPE_ENOMEMORY;
+		if (session->cmd_err_code > 0)
+			pr_err("%s: CPE returned error[%s]\n",
+				__func__, cpe_err_get_err_str(
+				session->cmd_err_code));
+		ret = cpe_err_get_lnx_err_code(session->cmd_err_code);
 		goto rel_bus_vote;
 	} else {
 		pr_err("%s: command (0x%x) send timed out\n",
@@ -2176,8 +2141,6 @@ static int wcd_cpe_cmi_send_lsm_msg(
 
 
 rel_bus_vote:
-
-	INIT_COMPLETION(session->cmd_comp);
 
 	if (CMI_HDR_GET_OBM_FLAG(hdr))
 		wcd_cpe_bus_vote_max_bw(core, false);
@@ -2662,7 +2625,7 @@ static int wcd_cpe_send_param_epd_thres(struct wcd_cpe_core *core,
 			       CPE_EPD_THRES_PARAM_SIZE,
 			       CPE_LSM_SESSION_CMD_SET_PARAMS_V2);
 
-	epd_cmd.minor_version = 0;
+	epd_cmd.minor_version = 1;
 	epd_cmd.epd_begin = ep_det_data->epd_begin;
 	epd_cmd.epd_end = ep_det_data->epd_end;
 
@@ -2702,7 +2665,7 @@ static int wcd_cpe_send_param_opmode(struct wcd_cpe_core *core,
 			       CPE_OPMODE_PARAM_SIZE,
 			       CPE_LSM_SESSION_CMD_SET_PARAMS_V2);
 
-	opmode_cmd.minor_version = 0;
+	opmode_cmd.minor_version = 1;
 	if (opmode_d->mode == LSM_MODE_KEYWORD_ONLY_DETECTION)
 		opmode_cmd.mode = 1;
 	else
@@ -2749,7 +2712,7 @@ static int wcd_cpe_send_param_gain(struct wcd_cpe_core *core,
 			       CPE_GAIN_PARAM_SIZE,
 			       CPE_LSM_SESSION_CMD_SET_PARAMS_V2);
 
-	gain_cmd.minor_version = 0;
+	gain_cmd.minor_version = 1;
 	gain_cmd.gain = gain_d->gain;
 	gain_cmd.reserved = 0;
 
@@ -2999,10 +2962,25 @@ static int wcd_cpe_set_one_param(void *core_handle,
 		rc = wcd_cpe_send_param_epd_thres(core, session,
 						data, &ids);
 		break;
-	case LSM_OPERATION_MODE:
+	case LSM_OPERATION_MODE: {
+		struct cpe_lsm_ids connectport_ids;
+
 		rc = wcd_cpe_send_param_opmode(core, session,
 					data, &ids);
+		if (rc)
+			break;
+
+		connectport_ids.module_id = LSM_MODULE_ID_FRAMEWORK;
+		connectport_ids.param_id = LSM_PARAM_ID_CONNECT_TO_PORT;
+
+		rc = wcd_cpe_send_param_connectport(core, session, NULL,
+				       &connectport_ids, CPE_AFE_PORT_1_TX);
+		if (rc)
+			dev_err(core->dev,
+				"%s: send_param_connectport failed, err %d\n",
+				__func__, rc);
 		break;
+	}
 	case LSM_GAIN:
 		rc = wcd_cpe_send_param_gain(core, session, data, &ids);
 		break;
@@ -3063,43 +3041,27 @@ static int wcd_cpe_lsm_set_params(struct wcd_cpe_core *core,
 	det_mode.detect_failure = detect_failure;
 	ret = wcd_cpe_send_param_opmode(core, session,
 					&det_mode, &ids);
-	if (ret)
+	if (ret) {
 		dev_err(core->dev,
 			"%s: Failed to set opmode, err=%d\n",
 			__func__, ret);
-	return ret;
-}
-
-/*
- * wcd_cpe_lsm_set_port: send the afe port connected
- * @core: handle to cpe core
- * @session: session for which the parameters are to be set
- */
-static int wcd_cpe_lsm_set_port(void *core_handle,
-		struct cpe_lsm_session *session)
-{
-	struct wcd_cpe_core *core = core_handle;
-	struct cpe_lsm_ids ids;
-	int ret = 0;
-
-	if (session->is_topology_used) {
-		ids.module_id = LSM_MODULE_ID_FRAMEWORK;
-		ids.param_id = CPE_LSM_PARAM_ID_CONNECT_TO_PORT;
-	} else {
-		ids.module_id = CPE_LSM_MODULE_ID_VOICE_WAKEUP;
-		ids.param_id = CPE_LSM_PARAM_ID_CONNECT_TO_PORT;
+		goto err_ret;
 	}
 
+	/* Send connect to port */
+	ids.module_id = CPE_LSM_MODULE_ID_VOICE_WAKEUP;
+	ids.param_id = CPE_LSM_PARAM_ID_CONNECT_TO_PORT;
 	ret = wcd_cpe_send_param_connectport(core, session,
-					NULL, &ids, CPE_AFE_PORT_1_TX);
+					     NULL, &ids, CPE_AFE_PORT_1_TX);
 	if (ret)
 		dev_err(core->dev,
 			"%s: Failed to set connectPort, err=%d\n",
 			__func__, ret);
+err_ret:
 	return ret;
 }
 
-int wcd_cpe_lsm_set_data(void *core_handle,
+static int wcd_cpe_lsm_set_data(void *core_handle,
 			struct cpe_lsm_session *session,
 			enum lsm_detection_mode detect_mode,
 			bool detect_failure)
@@ -3136,7 +3098,6 @@ int wcd_cpe_lsm_set_data(void *core_handle,
 err_ret:
 	return ret;
 }
-EXPORT_SYMBOL(wcd_cpe_lsm_set_data);
 
 /*
  * wcd_cpe_lsm_reg_snd_model: register the sound model for listen
@@ -3517,16 +3478,16 @@ static int wcd_cpe_lsm_config_lab_latency(
 
 	pr_debug("%s: Module 0x%x Param 0x%x size %ld pld_size 0x%x\n",
 		  __func__, lab_lat->param.module_id,
-		 lab_lat->param.param_id, (long int)PARAM_SIZE_LSM_LATENCY_SIZE,
+		 lab_lat->param.param_id, PARAM_SIZE_LSM_LATENCY_SIZE,
 		 pld_size);
 
+	WCD_CPE_GRAB_LOCK(&session->lsm_lock, "lsm");
 	ret = wcd_cpe_cmi_send_lsm_msg(core, session, &cpe_lab_latency);
-	if (ret != 0) {
+	if (ret != 0)
 		pr_err("%s: lsm_set_params failed, error = %d\n",
 		       __func__, ret);
-		return -EINVAL;
-	}
-	return 0;
+	WCD_CPE_REL_LOCK(&session->lsm_lock, "lsm");
+	return ret;
 }
 
 /*
@@ -3567,18 +3528,24 @@ static int wcd_cpe_lsm_lab_control(
 
 	pr_debug("%s: Module 0x%x, Param 0x%x size %ld pld_size 0x%x\n",
 		 __func__, lab_enable->param.module_id,
-		 lab_enable->param.param_id,
-		 (long int)PARAM_SIZE_LSM_CONTROL_SIZE, pld_size);
+		 lab_enable->param.param_id, PARAM_SIZE_LSM_CONTROL_SIZE,
+		 pld_size);
+
+	WCD_CPE_GRAB_LOCK(&session->lsm_lock, "lsm");
 	ret = wcd_cpe_cmi_send_lsm_msg(core, session, &cpe_lab_enable);
 	if (ret != 0) {
 		pr_err("%s: lsm_set_params failed, error = %d\n",
 			__func__, ret);
-		return -EINVAL;
+		WCD_CPE_REL_LOCK(&session->lsm_lock, "lsm");
+		goto done;
 	}
+	WCD_CPE_REL_LOCK(&session->lsm_lock, "lsm");
+
 	if (lab_enable->enable)
-		wcd_cpe_lsm_config_lab_latency(core, session,
+		ret = wcd_cpe_lsm_config_lab_latency(core, session,
 					       WCD_CPE_LAB_MAX_LATENCY);
-	return 0;
+done:
+	return ret;
 }
 
 /*
@@ -3597,12 +3564,14 @@ static int wcd_cpe_lsm_eob(
 		0, CPE_LSM_SESSION_CMD_EOB)) {
 		return -EINVAL;
 	}
+
+	WCD_CPE_GRAB_LOCK(&session->lsm_lock, "lsm");
 	ret = wcd_cpe_cmi_send_lsm_msg(core, session, &lab_eob);
-	if (ret != 0) {
+	if (ret != 0)
 		pr_err("%s: lsm_set_params failed\n", __func__);
-		return -EINVAL;
-	}
-	return 0;
+	WCD_CPE_REL_LOCK(&session->lsm_lock, "lsm");
+
+	return ret;
 }
 
 /*
@@ -3637,17 +3606,17 @@ static int wcd_cpe_dealloc_lsm_session(void *core_handle,
 	lsm_sessions[session->id] = NULL;
 	kfree(session);
 
-	ret = wcd_cpe_vote(core, false);
-	if (ret)
-		dev_dbg(core->dev,
-			"%s: Failed to un-vote cpe, err = %d\n",
-			__func__, ret);
-
 	if (!wcd_cpe_lsm_session_active()) {
 		cmi_deregister(core->cmi_afe_handle);
 		core->cmi_afe_handle = NULL;
 		wcd_cpe_deinitialize_afe_port_data();
 	}
+
+	ret = wcd_cpe_vote(core, false);
+	if (ret)
+		dev_dbg(core->dev,
+			"%s: Failed to un-vote cpe, err = %d\n",
+			__func__, ret);
 
 	return ret;
 }
@@ -3839,7 +3808,6 @@ int wcd_cpe_get_lsm_ops(struct wcd_cpe_lsm_ops *lsm_ops)
 	lsm_ops->lab_ch_setup = wcd_cpe_lab_ch_setup;
 	lsm_ops->lsm_set_data = wcd_cpe_lsm_set_data;
 	lsm_ops->lsm_set_fmt_cfg = wcd_cpe_lsm_set_fmt_cfg;
-	lsm_ops->lsm_set_port = wcd_cpe_lsm_set_port;
 	lsm_ops->lsm_set_one_param = wcd_cpe_set_one_param;
 	lsm_ops->lsm_get_snd_model_offset = wcd_cpe_snd_model_offset;
 	return 0;
@@ -3906,7 +3874,13 @@ static int wcd_cpe_cmi_send_afe_msg(
 	if (ret > 0) {
 		pr_debug("%s: command 0x%x, received response 0x%x\n",
 			 __func__, hdr->opcode, port_d->cmd_result);
-		ret = port_d->cmd_result;
+		if (port_d->cmd_result == CMI_SHMEM_ALLOC_FAILED)
+			port_d->cmd_result = CPE_ENOMEMORY;
+		if (port_d->cmd_result > 0)
+			pr_err("%s: CPE returned error[%s]\n",
+				__func__, cpe_err_get_err_str(
+				port_d->cmd_result));
+		ret = cpe_err_get_lnx_err_code(port_d->cmd_result);
 		goto rel_bus_vote;
 	} else {
 		pr_err("%s: command 0x%x send timed out\n",
@@ -3916,7 +3890,7 @@ static int wcd_cpe_cmi_send_afe_msg(
 	}
 
 rel_bus_vote:
-	INIT_COMPLETION(port_d->afe_cmd_complete);
+	reinit_completion(&port_d->afe_cmd_complete);
 
 	if (CMI_HDR_GET_OBM_FLAG(hdr))
 		wcd_cpe_bus_vote_max_bw(core, false);

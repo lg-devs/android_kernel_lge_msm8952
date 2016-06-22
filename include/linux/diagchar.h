@@ -33,6 +33,10 @@
 #define SOCKET_MODE			5
 #define CALLBACK_MODE			6
 
+#ifdef CONFIG_LGE_DM_APP
+#define DM_APP_MODE         10
+#endif
+
 /* different values that go in for diag_data_type */
 
 #define DATA_TYPE_EVENT         	0
@@ -45,6 +49,7 @@
 
 /* Different IOCTL values */
 #define DIAG_IOCTL_COMMAND_REG  	0
+#define DIAG_IOCTL_COMMAND_DEREG	1
 #define DIAG_IOCTL_SWITCH_LOGGING	7
 #define DIAG_IOCTL_GET_DELAYED_RSP_ID 	8
 #define DIAG_IOCTL_LSM_DEINIT		9
@@ -87,7 +92,7 @@
 #define MSM8909_TOOLS_ID	4108
 #define MSM8992_TOOLS_ID	4111
 #define MSM8952_TOOLS_ID	4110
-#define MSM8929_TOOLS_ID	4113
+#define MSM_8996_TOOLS_ID	4112
 
 #define MSG_MASK_0			(0x00000001)
 #define MSG_MASK_1			(0x00000002)

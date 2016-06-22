@@ -16,7 +16,6 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/ion.h>
-#include <linux/qcom_iommu.h>
 #include "msm_jpeg_sync.h"
 #define JPEG_CLK_RATE 266670000
 
@@ -33,9 +32,10 @@ int msm_jpeg_platform_init(struct platform_device *pdev,
 	struct resource **mem,
 	void **base,
 	int *irq,
-	irqreturn_t (*handler) (int, void *),
+	irqreturn_t (*handler)(int, void *),
 	void *context);
 int msm_jpeg_platform_release(struct resource *mem, void *base, int irq,
 	void *context);
+int msm_jpeg_platform_set_dt_config(struct msm_jpeg_device *pgmn_dev);
 
 #endif /* MSM_JPEG_PLATFORM_H */

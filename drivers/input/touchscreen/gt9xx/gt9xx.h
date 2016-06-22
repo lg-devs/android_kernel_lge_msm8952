@@ -1,6 +1,6 @@
 /* drivers/input/touchscreen/gt9xx.h
  *
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * Linux Foundation chooses to take subject only to the GPLv2 license
  * terms, and distributes only under these terms.

@@ -62,6 +62,14 @@
 #define USER_PTRS_PER_PGD	(PAGE_OFFSET / PGDIR_SIZE)
 
 /*
+ * Hugetlb definitions.
+ */
+#define HPAGE_SHIFT		PMD_SHIFT
+#define HPAGE_SIZE		(_AC(1, UL) << HPAGE_SHIFT)
+#define HPAGE_MASK		(~(HPAGE_SIZE - 1))
+#define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
+
+/*
  * "Linux" PTE definitions for LPAE.
  *
  * These bits overlap with the hardware bits but the naming is preserved for
@@ -79,10 +87,11 @@
 #define L_PTE_NONE		(_AT(pteval_t, 1) << 57)	/* PROT_NONE */
 #define L_PTE_RDONLY		(_AT(pteval_t, 1) << 58)	/* READ ONLY */
 
-#define PMD_SECT_VALID		(_AT(pmdval_t, 1) << 0)
-#define PMD_SECT_DIRTY		(_AT(pmdval_t, 1) << 55)
-#define PMD_SECT_SPLITTING	(_AT(pmdval_t, 1) << 56)
-#define PMD_SECT_NONE		(_AT(pmdval_t, 1) << 57)
+#define L_PMD_SECT_VALID	(_AT(pmdval_t, 1) << 0)
+#define L_PMD_SECT_DIRTY	(_AT(pmdval_t, 1) << 55)
+#define L_PMD_SECT_SPLITTING	(_AT(pmdval_t, 1) << 56)
+#define L_PMD_SECT_NONE		(_AT(pmdval_t, 1) << 57)
+#define L_PMD_SECT_RDONLY	(_AT(pteval_t, 1) << 58)
 
 /*
  * To be used in assembly code with the upper page attributes.
@@ -112,13 +121,16 @@
 /*
  * 2nd stage PTE definitions for LPAE.
  */
-#define L_PTE_S2_MT_UNCACHED	 (_AT(pteval_t, 0x5) << 2) /* MemAttr[3:0] */
-#define L_PTE_S2_MT_WRITETHROUGH (_AT(pteval_t, 0xa) << 2) /* MemAttr[3:0] */
-#define L_PTE_S2_MT_WRITEBACK	 (_AT(pteval_t, 0xf) << 2) /* MemAttr[3:0] */
-#define L_PTE_S2_RDONLY		 (_AT(pteval_t, 1) << 6)   /* HAP[1]   */
-#define L_PTE_S2_RDWR		 (_AT(pteval_t, 3) << 6)   /* HAP[2:1] */
+#define L_PTE_S2_MT_UNCACHED		(_AT(pteval_t, 0x0) << 2) /* strongly ordered */
+#define L_PTE_S2_MT_WRITETHROUGH	(_AT(pteval_t, 0xa) << 2) /* normal inner write-through */
+#define L_PTE_S2_MT_WRITEBACK		(_AT(pteval_t, 0xf) << 2) /* normal inner write-back */
+#define L_PTE_S2_MT_DEV_SHARED		(_AT(pteval_t, 0x1) << 2) /* device */
+#define L_PTE_S2_MT_MASK		(_AT(pteval_t, 0xf) << 2)
 
-#define L_PMD_S2_RDWR		 (_AT(pmdval_t, 3) << 6)   /* HAP[2:1] */
+#define L_PTE_S2_RDONLY			(_AT(pteval_t, 1) << 6)   /* HAP[1]   */
+#define L_PTE_S2_RDWR			(_AT(pteval_t, 3) << 6)   /* HAP[2:1] */
+
+#define L_PMD_S2_RDWR			(_AT(pmdval_t, 3) << 6)   /* HAP[2:1] */
 
 /*
  * Hyp-mode PL2 PTE definitions for LPAE.
@@ -193,24 +205,50 @@ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long addr)
 
 #define set_pte_ext(ptep,pte,ext) cpu_set_pte_ext(ptep,__pte(pte_val(pte)|(ext)))
 
-#define pmd_young(pmd)		(pmd_val(pmd) & PMD_SECT_AF)
+#define pte_huge(pte)		(pte_val(pte) && !(pte_val(pte) & PTE_TABLE_BIT))
+#define pte_mkhuge(pte)		(__pte(pte_val(pte) & ~PTE_TABLE_BIT))
+
+#define pmd_isset(pmd, val)	((u32)(val) == (val) ? pmd_val(pmd) & (val) \
+						: !!(pmd_val(pmd) & (val)))
+#define pmd_isclear(pmd, val)	(!(pmd_val(pmd) & (val)))
+
+#define pmd_young(pmd)		(pmd_isset((pmd), PMD_SECT_AF))
+#define pte_special(pte)	(pte_isset((pte), L_PTE_SPECIAL))
+static inline pte_t pte_mkspecial(pte_t pte)
+{
+	pte_val(pte) |= L_PTE_SPECIAL;
+	return pte;
+}
+#define	__HAVE_ARCH_PTE_SPECIAL
 
 #define __HAVE_ARCH_PMD_WRITE
-#define pmd_write(pmd)		(!(pmd_val(pmd) & PMD_SECT_RDONLY))
+#define pmd_write(pmd)		(pmd_isclear((pmd), L_PMD_SECT_RDONLY))
+#define pmd_dirty(pmd)		(pmd_isset((pmd), L_PMD_SECT_DIRTY))
+#define pud_page(pud)		pmd_page(__pmd(pud_val(pud)))
+#define pud_write(pud)		pmd_write(__pmd(pud_val(pud)))
+
+#define pmd_hugewillfault(pmd)	(!pmd_young(pmd) || !pmd_write(pmd))
+#define pmd_thp_or_huge(pmd)	(pmd_huge(pmd) || pmd_trans_huge(pmd))
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-#define pmd_trans_huge(pmd)	(pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT))
-#define pmd_trans_splitting(pmd) (pmd_val(pmd) & PMD_SECT_SPLITTING)
+#define pmd_trans_huge(pmd)	(pmd_val(pmd) && !pmd_table(pmd))
+#define pmd_trans_splitting(pmd) (pmd_isset((pmd), L_PMD_SECT_SPLITTING))
+
+#ifdef CONFIG_HAVE_RCU_TABLE_FREE
+#define __HAVE_ARCH_PMDP_SPLITTING_FLUSH
+void pmdp_splitting_flush(struct vm_area_struct *vma, unsigned long address,
+			  pmd_t *pmdp);
+#endif
 #endif
 
 #define PMD_BIT_FUNC(fn,op) \
 static inline pmd_t pmd_##fn(pmd_t pmd) { pmd_val(pmd) op; return pmd; }
 
-PMD_BIT_FUNC(wrprotect,	|= PMD_SECT_RDONLY);
+PMD_BIT_FUNC(wrprotect,	|= L_PMD_SECT_RDONLY);
 PMD_BIT_FUNC(mkold,	&= ~PMD_SECT_AF);
-PMD_BIT_FUNC(mksplitting, |= PMD_SECT_SPLITTING);
-PMD_BIT_FUNC(mkwrite,   &= ~PMD_SECT_RDONLY);
-PMD_BIT_FUNC(mkdirty,   |= PMD_SECT_DIRTY);
+PMD_BIT_FUNC(mksplitting, |= L_PMD_SECT_SPLITTING);
+PMD_BIT_FUNC(mkwrite,   &= ~L_PMD_SECT_RDONLY);
+PMD_BIT_FUNC(mkdirty,   |= L_PMD_SECT_DIRTY);
 PMD_BIT_FUNC(mkyoung,   |= PMD_SECT_AF);
 
 #define pmd_mkhuge(pmd)		(__pmd(pmd_val(pmd) & ~PMD_TABLE_BIT))
@@ -224,8 +262,8 @@ PMD_BIT_FUNC(mkyoung,   |= PMD_SECT_AF);
 
 static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
 {
-	const pmdval_t mask = PMD_SECT_USER | PMD_SECT_XN | PMD_SECT_RDONLY |
-				PMD_SECT_VALID | PMD_SECT_NONE;
+	const pmdval_t mask = PMD_SECT_USER | PMD_SECT_XN | L_PMD_SECT_RDONLY |
+				L_PMD_SECT_VALID | L_PMD_SECT_NONE;
 	pmd_val(pmd) = (pmd_val(pmd) & ~mask) | (pgprot_val(newprot) & mask);
 	return pmd;
 }
@@ -236,8 +274,13 @@ static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
 	BUG_ON(addr >= TASK_SIZE);
 
 	/* create a faulting entry if PROT_NONE protected */
-	if (pmd_val(pmd) & PMD_SECT_NONE)
-		pmd_val(pmd) &= ~PMD_SECT_VALID;
+	if (pmd_val(pmd) & L_PMD_SECT_NONE)
+		pmd_val(pmd) &= ~L_PMD_SECT_VALID;
+
+	if (pmd_write(pmd) && pmd_dirty(pmd))
+		pmd_val(pmd) &= ~PMD_SECT_AP2;
+	else
+		pmd_val(pmd) |= PMD_SECT_AP2;
 
 	*pmdp = __pmd(pmd_val(pmd) | PMD_SECT_nG);
 	flush_pmd_entry(pmdp);

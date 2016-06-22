@@ -33,7 +33,6 @@
 #include <linux/uaccess.h>
 #include <linux/suspend.h>
 #include <linux/rwsem.h>
-#include <linux/mfd/pm8xxx/misc.h>
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pm_qos.h>
@@ -100,6 +99,7 @@ static DEFINE_SPINLOCK(reg_spinlock);
 #define PRONTO_PMU_WLAN_GDSCR_OFFSET       0x0054
 #define PRONTO_PMU_WLAN_GDSCR_SW_COLLAPSE  BIT(0)
 
+#define PRONTO_PMU_WDOG_CTL		0x0068
 
 #define PRONTO_PMU_CBCR_OFFSET        0x0008
 #define PRONTO_PMU_CBCR_CLK_EN        BIT(0)
@@ -152,6 +152,14 @@ static DEFINE_SPINLOCK(reg_spinlock);
 #define CCU_PRONTO_A2AB_ERR_ADDR_OFFSET		0x18
 
 #define PRONTO_SAW2_SPM_STS_OFFSET		0x0c
+#define PRONTO_SAW2_SPM_CTL		0x30
+#define PRONTO_SAW2_SAW2_VERSION		0xFD0
+#define PRONTO_SAW2_MAJOR_VER_OFFSET		0x1C
+#define PRONTO_SAW2_MAJOR_VER_3		0x3
+#define PRONTO_SAW2_SPM_SLP_SEQ		0x80
+#define PRONTO_SAW2_SPM_SLP_SEQ_2		0x400
+#define PRONTO_SAW2_SPM_SLP_SEQ_OFFSET		0x04
+#define PRONTO_SAW2_SPM_SLP_SEQ_COUNT		0x08
 
 #define PRONTO_PLL_STATUS_OFFSET		0x1c
 #define PRONTO_PLL_MODE_OFFSET			0x1c0
@@ -232,16 +240,6 @@ struct wcnss_version {
 struct wcnss_pmic_dump {
 	char reg_name[10];
 	u16 reg_addr;
-};
-
-static struct wcnss_pmic_dump wcnss_pmic_reg_dump[] = {
-	{"S2", 0x1D8},
-	{"L4", 0xB4},
-	{"L10", 0xC0},
-	{"LVS2", 0x62},
-	{"S4", 0x1E8},
-	{"LVS7", 0x06C},
-	{"LVS1", 0x060},
 };
 
 static int wcnss_notif_cb(struct notifier_block *this, unsigned long code,
@@ -541,25 +539,6 @@ static ssize_t wcnss_version_show(struct device *dev,
 static DEVICE_ATTR(wcnss_version, S_IRUSR,
 		wcnss_version_show, NULL);
 
-void wcnss_riva_dump_pmic_regs(void)
-{
-	int i, rc;
-	u8  val;
-
-	for (i = 0; i < ARRAY_SIZE(wcnss_pmic_reg_dump); i++) {
-		val = 0;
-		rc = pm8xxx_read_register(wcnss_pmic_reg_dump[i].reg_addr,
-				&val);
-		if (rc)
-			pr_err("PMIC READ: Failed to read addr = %d\n",
-					wcnss_pmic_reg_dump[i].reg_addr);
-		else
-			pr_info_ratelimited("PMIC READ: %s addr = %x, value = %x\n",
-				wcnss_pmic_reg_dump[i].reg_name,
-				wcnss_pmic_reg_dump[i].reg_addr, val);
-	}
-}
-
 /* wcnss_reset_fiq() is invoked when host drivers fails to
  * communicate with WCNSS over SMD; so logging these registers
  * helps to know WCNSS failure reason
@@ -584,7 +563,6 @@ void wcnss_riva_log_debug_regs(void)
 	ccu_reg = penv->riva_ccu_base + CCU_RIVA_LAST_ADDR2_OFFSET;
 	reg = readl_relaxed(ccu_reg);
 	pr_info_ratelimited("%s: CCU_CCPU_LAST_ADDR2 %08x\n", __func__, reg);
-	wcnss_riva_dump_pmic_regs();
 
 }
 EXPORT_SYMBOL(wcnss_riva_log_debug_regs);
@@ -617,12 +595,9 @@ void wcnss_pronto_is_a2xb_bus_stall(void *tst_addr, u32 fifo_mask, char *type)
 void wcnss_pronto_log_debug_regs(void)
 {
 	void __iomem *reg_addr, *tst_addr, *tst_ctrl_addr;
-	u32 reg = 0, reg2 = 0, reg3 = 0, reg4 = 0;
+	u32 reg = 0, reg2 = 0, reg3 = 0, reg4 = 0, offset_addr = 0;
+	int i;
 
-	if (!penv || !penv->triggered || !penv->msm_wcnss_base) {
-		pr_info(DEVICE " WCNSS driver is not triggered by userspace\n");
-		return;
-	}
 
 	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_SPARE_OFFSET;
 	reg = readl_relaxed(reg_addr);
@@ -648,9 +623,34 @@ void wcnss_pronto_log_debug_regs(void)
 	reg = readl_relaxed(reg_addr);
 	pr_err("PRONTO_PMU_SOFT_RESET %08x\n", reg);
 
+	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_WDOG_CTL;
+	reg = readl_relaxed(reg_addr);
+	pr_err("PRONTO_PMU_WDOG_CTL %08x\n", reg);
+
 	reg_addr = penv->pronto_saw2_base + PRONTO_SAW2_SPM_STS_OFFSET;
 	reg = readl_relaxed(reg_addr);
 	pr_err("PRONTO_SAW2_SPM_STS %08x\n", reg);
+
+	reg_addr = penv->pronto_saw2_base + PRONTO_SAW2_SPM_CTL;
+	reg = readl_relaxed(reg_addr);
+	pr_err("PRONTO_SAW2_SPM_CTL %08x\n", reg);
+
+	reg_addr = penv->pronto_saw2_base + PRONTO_SAW2_SAW2_VERSION;
+	reg = readl_relaxed(reg_addr);
+	pr_err("PRONTO_SAW2_SAW2_VERSION %08x\n", reg);
+	reg >>= PRONTO_SAW2_MAJOR_VER_OFFSET;
+
+	if (reg >= PRONTO_SAW2_MAJOR_VER_3)
+		offset_addr = PRONTO_SAW2_SPM_SLP_SEQ_2;
+	else
+		offset_addr = PRONTO_SAW2_SPM_SLP_SEQ;
+
+	for (i = 0; i <= PRONTO_SAW2_SPM_SLP_SEQ_COUNT; i++) {
+		reg_addr = penv->pronto_saw2_base + offset_addr
+			+ (i * PRONTO_SAW2_SPM_SLP_SEQ_OFFSET);
+		reg = readl_relaxed(reg_addr);
+		pr_err("PRONTO_SAW2_SPM_SLP_SEQ_ENTRY_%d %08x\n", i, reg);
+	}
 
 	reg_addr = penv->pronto_pll_base + PRONTO_PLL_STATUS_OFFSET;
 	reg = readl_relaxed(reg_addr);
@@ -1061,7 +1061,7 @@ int wcnss_get_mux_control(void)
 	void __iomem *pmu_conf_reg;
 	u32 reg = 0;
 
-	if (!penv || !penv->triggered || !penv->msm_wcnss_base)
+	if (NULL == penv)
 		return 0;
 
 	pmu_conf_reg = penv->msm_wcnss_base + PRONTO_PMU_OFFSET;
@@ -1096,7 +1096,7 @@ void wcnss_log_debug_regs_on_bite(void)
 		}
 
 		clk_rate = clk_get_rate(measure);
-		pr_info("wcnss: clock frequency is: %luHz\n", clk_rate);
+		pr_debug("wcnss: clock frequency is: %luHz\n", clk_rate);
 
 		if (clk_rate) {
 			wcnss_pronto_log_debug_regs();
@@ -1219,8 +1219,7 @@ void wcnss_disable_pc_add_req(void)
 	if (!penv->pc_disabled) {
 		wcnss_pm_qos_add_request();
 		wcnss_prevent_suspend();
-		wcnss_pm_qos_update_request(penv->wlan_config.
-					    pc_disable_latency);
+		wcnss_pm_qos_update_request(WCNSS_DISABLE_PC_LATENCY);
 		penv->pc_disabled = 1;
 	}
 	mutex_unlock(&penv->pm_qos_mutex);
@@ -1537,7 +1536,7 @@ EXPORT_SYMBOL(wcnss_device_ready);
 bool wcnss_cbc_complete(void)
 {
 	if (penv && penv->pdev && penv->is_cbc_done &&
-		!wcnss_device_is_shutdown())
+	    !wcnss_device_is_shutdown())
 		return true;
 	return false;
 }
@@ -1846,12 +1845,12 @@ static int wcnss_get_battery_volt(int *result_uv)
 	rc = qpnp_vadc_read(penv->vadc_dev, VBAT_SNS, &adc_result);
 	if (rc) {
 		pr_err("error reading adc channel = %d, rc = %d\n",
-						VBAT_SNS, rc);
+		       VBAT_SNS, rc);
 		return rc;
 	}
 
 	pr_info("Battery mvolts phy=%lld meas=0x%llx\n", adc_result.physical,
-						adc_result.measurement);
+		adc_result.measurement);
 	*result_uv = (int)adc_result.physical;
 
 	return 0;
@@ -1889,13 +1888,13 @@ static void wcnss_notify_vbat(enum qpnp_tm_state state, void *ctx)
 			penv->vbat_monitor_params.high_thr);
 
 	rc = qpnp_adc_tm_channel_measure(penv->adc_tm_dev,
-			&penv->vbat_monitor_params);
+					 &penv->vbat_monitor_params);
 
 	if (rc)
 		pr_err("%s: tm setup failed: %d\n", __func__, rc);
 	else
 		schedule_delayed_work(&penv->vbatt_work,
-						msecs_to_jiffies(2000));
+				      msecs_to_jiffies(2000));
 
 	mutex_unlock(&penv->vbat_monitor_mutex);
 }
@@ -1945,12 +1944,11 @@ static void wcnss_send_vbatt_indication(struct work_struct *work)
 	vbatt_msg.vbatt.curr_volt = penv->wlan_config.vbatt;
 	mutex_unlock(&penv->vbat_monitor_mutex);
 	pr_debug("wcnss: send curr_volt: %d to FW\n",
-			vbatt_msg.vbatt.curr_volt);
+		 vbatt_msg.vbatt.curr_volt);
 
 	ret = wcnss_smd_tx(&vbatt_msg, vbatt_msg.hdr.msg_len);
 	if (ret < 0)
 		pr_err("wcnss: smd tx failed\n");
-	return;
 }
 
 static void wcnss_update_vbatt(struct work_struct *work)
@@ -2676,8 +2674,8 @@ static struct miscdevice wcnss_usr_ctrl = {
 
 static int
 wcnss_dt_parse_vreg_level(struct device *dev, int index,
-			const char *current_vreg_name, const char *vreg_name,
-			struct vregs_level *vlevel)
+			  const char *current_vreg_name, const char *vreg_name,
+			  struct vregs_level *vlevel)
 {
 	int ret = 0;
 	/* array used to store nominal, low and high voltage values
@@ -2685,8 +2683,8 @@ wcnss_dt_parse_vreg_level(struct device *dev, int index,
 	u32 voltage_levels[3], current_vreg;
 
 	ret = of_property_read_u32_array(dev->of_node, vreg_name,
-					voltage_levels,
-					ARRAY_SIZE(voltage_levels));
+					 voltage_levels,
+					 ARRAY_SIZE(voltage_levels));
 	if (ret) {
 		dev_err(dev, "error reading %s property\n", vreg_name);
 		return ret;
@@ -2697,7 +2695,7 @@ wcnss_dt_parse_vreg_level(struct device *dev, int index,
 	vlevel[index].max_voltage = voltage_levels[2];
 
 	ret = of_property_read_u32(dev->of_node, current_vreg_name,
-					&current_vreg);
+				   &current_vreg);
 	if (ret) {
 		dev_err(dev, "error reading %s property\n", current_vreg_name);
 		return ret;
@@ -2713,7 +2711,6 @@ wcnss_trigger_config(struct platform_device *pdev)
 {
 	int ret;
 	int rc, index = 0;
-	struct clk *snoc_qosgen;
 	struct qcom_wcnss_opts *pdata;
 	struct resource *res;
 	int is_pronto_vadc;
@@ -2723,21 +2720,20 @@ wcnss_trigger_config(struct platform_device *pdev)
 							"qcom,has-pronto-hw");
 
 	is_pronto_vadc = of_property_read_bool(pdev->dev.of_node,
-							"qcom,is-pronto-vadc");
+					       "qcom,is-pronto-vadc");
 
 	is_pronto_v3 = of_property_read_bool(pdev->dev.of_node,
 							"qcom,is-pronto-v3");
 
-	penv->is_vsys_adc_channel = of_property_read_bool(pdev->dev.of_node,
-						"qcom,has-vsys-adc-channel");
 	if (of_property_read_u32(pdev->dev.of_node,
 			"qcom,wlan-rx-buff-count", &penv->wlan_rx_buff_count)) {
 		penv->wlan_rx_buff_count = WCNSS_DEF_WLAN_RX_BUFF_COUNT;
 	}
 
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,pronto-vddmx-current", "qcom,vddmx-voltage-level",
-			penv->wlan_config.pronto_vlevel);
+					"qcom,pronto-vddmx-current",
+					"qcom,vddmx-voltage-level",
+					penv->wlan_config.pronto_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
@@ -2746,8 +2742,9 @@ wcnss_trigger_config(struct platform_device *pdev)
 
 	index++;
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,pronto-vddcx-current", "qcom,vddcx-voltage-level",
-			penv->wlan_config.pronto_vlevel);
+					"qcom,pronto-vddcx-current",
+					"qcom,vddcx-voltage-level",
+					penv->wlan_config.pronto_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
@@ -2756,8 +2753,9 @@ wcnss_trigger_config(struct platform_device *pdev)
 
 	index++;
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,pronto-vddpx-current", "qcom,vddpx-voltage-level",
-			penv->wlan_config.pronto_vlevel);
+					"qcom,pronto-vddpx-current",
+					"qcom,vddpx-voltage-level",
+					penv->wlan_config.pronto_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
@@ -2769,9 +2767,9 @@ wcnss_trigger_config(struct platform_device *pdev)
 	 */
 	index = 0;
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,iris-vddxo-current",
-			"qcom,iris-vddxo-voltage-level",
-			penv->wlan_config.iris_vlevel);
+					"qcom,iris-vddxo-current",
+					"qcom,iris-vddxo-voltage-level",
+					penv->wlan_config.iris_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
@@ -2780,9 +2778,9 @@ wcnss_trigger_config(struct platform_device *pdev)
 
 	index++;
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,iris-vddrfa-current",
-			"qcom,iris-vddrfa-voltage-level",
-			penv->wlan_config.iris_vlevel);
+					"qcom,iris-vddrfa-current",
+					"qcom,iris-vddrfa-voltage-level",
+					penv->wlan_config.iris_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
@@ -2791,9 +2789,9 @@ wcnss_trigger_config(struct platform_device *pdev)
 
 	index++;
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,iris-vddpa-current",
-			"qcom,iris-vddpa-voltage-level",
-			penv->wlan_config.iris_vlevel);
+					"qcom,iris-vddpa-current",
+					"qcom,iris-vddpa-voltage-level",
+					penv->wlan_config.iris_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
@@ -2802,19 +2800,13 @@ wcnss_trigger_config(struct platform_device *pdev)
 
 	index++;
 	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-			"qcom,iris-vdddig-current",
-			"qcom,iris-vdddig-voltage-level",
-			penv->wlan_config.iris_vlevel);
+					"qcom,iris-vdddig-current",
+					"qcom,iris-vdddig-voltage-level",
+					penv->wlan_config.iris_vlevel);
 
 	if (ret) {
 		dev_err(&pdev->dev, "error reading voltage-level property\n");
 		goto fail;
-	}
-
-	if (of_property_read_u32(pdev->dev.of_node,
-				 "qcom,pc-disable-latency",
-				 &penv->wlan_config.pc_disable_latency)) {
-		penv->wlan_config.pc_disable_latency = WCNSS_DISABLE_PC_LATENCY;
 	}
 
 	/* make sure we are only triggered once */
@@ -2898,7 +2890,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap;
 		}
 		penv->msm_wcnss_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 	} else {
 		res = platform_get_resource_byname(pdev,
 			IORESOURCE_MEM, "riva_phy_base");
@@ -2909,7 +2901,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap;
 		}
 		penv->msm_wcnss_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 	}
 
 	if (!penv->msm_wcnss_base) {
@@ -2929,7 +2921,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap;
 		}
 		penv->riva_ccu_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->riva_ccu_base) {
 			ret = -ENOMEM;
@@ -2947,7 +2939,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap;
 		}
 		penv->pronto_a2xb_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->pronto_a2xb_base) {
 			ret = -ENOMEM;
@@ -2965,7 +2957,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap;
 		}
 		penv->pronto_ccpu_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->pronto_ccpu_base) {
 			ret = -ENOMEM;
@@ -2999,7 +2991,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->pronto_saw2_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->pronto_saw2_base) {
 			pr_err("%s: ioremap wcnss physical(saw2) failed\n",
@@ -3026,7 +3018,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->wlan_tx_phy_aborts =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->wlan_tx_phy_aborts) {
 			ret = -ENOMEM;
@@ -3043,7 +3035,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->wlan_brdg_err_source =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->wlan_brdg_err_source) {
 			ret = -ENOMEM;
@@ -3060,7 +3052,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->wlan_tx_status =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->wlan_tx_status) {
 			ret = -ENOMEM;
@@ -3077,7 +3069,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->alarms_txctl =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->alarms_txctl) {
 			ret = -ENOMEM;
@@ -3094,7 +3086,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->alarms_tactl =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->alarms_tactl) {
 			ret = -ENOMEM;
@@ -3111,7 +3103,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			goto fail_ioremap2;
 		}
 		penv->pronto_mcu_base =
-			devm_request_and_ioremap(&pdev->dev, res);
+			devm_ioremap_resource(&pdev->dev, res);
 
 		if (!penv->pronto_mcu_base) {
 			ret = -ENOMEM;
@@ -3130,18 +3122,6 @@ wcnss_trigger_config(struct platform_device *pdev)
 		penv->fw_vbatt_state = WCNSS_CONFIG_UNSPECIFIED;
 	}
 
-	snoc_qosgen = clk_get(&pdev->dev, "snoc_qosgen");
-
-	if (IS_ERR(snoc_qosgen)) {
-		pr_err("Couldn't get snoc_qosgen\n");
-	} else {
-		if (clk_prepare_enable(snoc_qosgen)) {
-			pr_err("snoc_qosgen enable failed\n");
-		} else {
-			pr_info("snoc_qosgen configured successfully\n");
-		}
-	}
-
 	if (penv->wlan_config.is_pronto_vadc) {
 		penv->vadc_dev = qpnp_get_vadc(&penv->pdev->dev, "wcnss");
 
@@ -3151,11 +3131,11 @@ wcnss_trigger_config(struct platform_device *pdev)
 		} else {
 			rc = wcnss_get_battery_volt(&penv->wlan_config.vbatt);
 			INIT_WORK(&penv->wcnss_vadc_work,
-					wcnss_send_vbatt_indication);
+				  wcnss_send_vbatt_indication);
 
 			if (rc < 0)
 				pr_err("Failed to get battery voltage with error= %d\n",
-									rc);
+				       rc);
 		}
 	}
 
@@ -3180,10 +3160,6 @@ wcnss_trigger_config(struct platform_device *pdev)
 	}
 	/* Remove pm_qos request */
 	wcnss_disable_pc_remove_req();
-
-	if (of_property_read_bool(pdev->dev.of_node,
-		"qcom,wlan-indication-enabled"))
-		wcnss_en_wlan_led_trigger();
 
 	return 0;
 
@@ -3219,16 +3195,6 @@ void wcnss_flush_work(struct work_struct *work)
 		cancel_work_sync(cnss_work);
 }
 EXPORT_SYMBOL(wcnss_flush_work);
-
-/* wlan prop driver cannot invoke show_stack
- * function directly, so to invoke this function it
- * call wcnss_dump_stack function
- */
-void wcnss_dump_stack(struct task_struct *task)
-{
-	show_stack(task, NULL);
-}
-EXPORT_SYMBOL(wcnss_dump_stack);
 
 /* wlan prop driver cannot invoke cancel_delayed_work_sync
  * function directly, so to invoke this function it call

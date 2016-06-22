@@ -30,6 +30,7 @@
 #include "diagfwd_socket.h"
 #include "diag_mux.h"
 #include "diag_ipc_logging.h"
+#include "mts_tty.h"
 
 struct data_header {
 	uint8_t control_char;
@@ -219,7 +220,8 @@ static void diagfwd_data_read_done(struct diagfwd_info *fwd_info,
 	int write_len = 0;
 	unsigned char *write_buf = NULL;
 	struct diagfwd_buf_t *temp_buf = NULL;
-
+	struct diag_md_session_t *session_info = NULL;
+	uint8_t hdlc_disabled = 0;
 	if (!fwd_info || !buf || len <= 0) {
 		diag_ws_release();
 		return;
@@ -239,6 +241,12 @@ static void diagfwd_data_read_done(struct diagfwd_info *fwd_info,
 
 	mutex_lock(&driver->hdlc_disable_mutex);
 	mutex_lock(&fwd_info->data_mutex);
+	session_info = diag_md_session_get_peripheral(fwd_info->peripheral);
+	if (session_info)
+		hdlc_disabled = session_info->hdlc_disabled;
+	else
+		hdlc_disabled = driver->hdlc_disabled;
+
 	if (!driver->feature[fwd_info->peripheral].encode_hdlc) {
 		if (fwd_info->buf_1 && fwd_info->buf_1->data == buf) {
 			temp_buf = fwd_info->buf_1;
@@ -253,7 +261,7 @@ static void diagfwd_data_read_done(struct diagfwd_info *fwd_info,
 			goto end;
 		}
 		write_len = len;
-	} else if (driver->hdlc_disabled) {
+	} else if (hdlc_disabled) {
 		/* The data is raw and and on APPS side HDLC is disabled */
 		if (fwd_info->buf_1 && fwd_info->buf_1->data_raw == buf) {
 			temp_buf = fwd_info->buf_1;
@@ -282,8 +290,8 @@ static void diagfwd_data_read_done(struct diagfwd_info *fwd_info,
 			temp_buf = fwd_info->buf_2;
 		} else {
 			pr_err("diag: In %s, no match for non encode buffer %p, peripheral %d, type: %d\n",
-			       __func__, buf, fwd_info->peripheral,
-			       fwd_info->type);
+				__func__, buf, fwd_info->peripheral,
+				fwd_info->type);
 			goto end;
 		}
 		write_len = check_bufsize_for_encoding(temp_buf, len);
@@ -300,6 +308,11 @@ static void diagfwd_data_read_done(struct diagfwd_info *fwd_info,
 	}
 
 	if (write_len > 0) {
+		if (mts_tty->run) {
+			if (fwd_info->type == TYPE_DATA)
+				mts_tty_process(write_buf, write_len);
+			goto end;
+		}
 		err = diag_mux_write(DIAG_LOCAL_PROC, write_buf, write_len,
 				     temp_buf->ctxt);
 		if (err) {
@@ -435,8 +448,6 @@ int diagfwd_peripheral_init(void)
 
 	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
 		for (type = 0; type < NUM_TYPES; type++) {
-			if (type == TYPE_CNTL)
-				continue;
 			fwd_info = &peripheral_info[type][peripheral];
 			fwd_info->peripheral = peripheral;
 			fwd_info->type = type;
@@ -445,11 +456,16 @@ int diagfwd_peripheral_init(void)
 			fwd_info->ch_open = 0;
 			fwd_info->read_bytes = 0;
 			fwd_info->write_bytes = 0;
-			fwd_info->inited = 1;
 			spin_lock_init(&fwd_info->buf_lock);
 			mutex_init(&fwd_info->data_mutex);
+			/*
+			 * This state shouldn't be set for Control channels
+			 * during initialization. This is set when the feature
+			 * mask is received for the first time.
+			 */
+			if (type != TYPE_CNTL)
+				fwd_info->inited = 1;
 		}
-
 		driver->diagfwd_data[peripheral] =
 			&peripheral_info[TYPE_DATA][peripheral];
 		driver->diagfwd_cntl[peripheral] =
@@ -609,6 +625,7 @@ void diagfwd_close_transport(uint8_t transport, uint8_t peripheral)
 	struct diagfwd_info *dest_info = NULL;
 	int (*init_fn)(uint8_t) = NULL;
 	void (*invalidate_fn)(void *, struct diagfwd_info *) = NULL;
+	int (*check_channel_state)(void *) = NULL;
 	uint8_t transport_open = 0;
 
 	if (peripheral >= NUM_PERIPHERALS)
@@ -619,24 +636,42 @@ void diagfwd_close_transport(uint8_t transport, uint8_t peripheral)
 		transport_open = TRANSPORT_SOCKET;
 		init_fn = diag_socket_init_peripheral;
 		invalidate_fn = diag_socket_invalidate;
+		check_channel_state = diag_socket_check_state;
 		break;
 	case TRANSPORT_SOCKET:
 		transport_open = TRANSPORT_SMD;
 		init_fn = diag_smd_init_peripheral;
 		invalidate_fn = diag_smd_invalidate;
+		check_channel_state = diag_smd_check_state;
 		break;
 	default:
 		return;
 
 	}
 
+	fwd_info = &early_init_info[transport][peripheral];
+	if (fwd_info->p_ops && fwd_info->p_ops->close)
+		fwd_info->p_ops->close(fwd_info->ctxt);
 	fwd_info = &early_init_info[transport_open][peripheral];
 	dest_info = &peripheral_info[TYPE_CNTL][peripheral];
-	memcpy(dest_info, fwd_info, sizeof(struct diagfwd_info));
+	dest_info->inited = 1;
+	dest_info->ctxt = fwd_info->ctxt;
+	dest_info->p_ops = fwd_info->p_ops;
+	dest_info->c_ops = fwd_info->c_ops;
+	dest_info->ch_open = fwd_info->ch_open;
+	dest_info->read_bytes = fwd_info->read_bytes;
+	dest_info->write_bytes = fwd_info->write_bytes;
+	dest_info->inited = fwd_info->inited;
+	dest_info->buf_1 = fwd_info->buf_1;
+	dest_info->buf_2 = fwd_info->buf_2;
+	dest_info->transport = fwd_info->transport;
 	invalidate_fn(dest_info->ctxt, dest_info);
-	diagfwd_queue_read(dest_info);
+	if (!check_channel_state(dest_info->ctxt))
+		diagfwd_late_open(dest_info);
+	diagfwd_cntl_open(dest_info);
 	init_fn(peripheral);
-	diag_cntl_channel_open(dest_info);
+	diagfwd_queue_read(&peripheral_info[TYPE_DATA][peripheral]);
+	diagfwd_queue_read(&peripheral_info[TYPE_CMD][peripheral]);
 }
 
 int diagfwd_write(uint8_t peripheral, uint8_t type, void *buf, int len)
@@ -1067,18 +1102,26 @@ static void diagfwd_buffers_exit(struct diagfwd_info *fwd_info)
 
 	spin_lock_irqsave(&fwd_info->buf_lock, flags);
 	if (fwd_info->buf_1) {
-		kfree(fwd_info->buf_1->data);
-		fwd_info->buf_1->data = NULL;
-		kfree(fwd_info->buf_1->data_raw);
-		fwd_info->buf_1->data_raw = NULL;
+		if (fwd_info->buf_1->data) {
+			kfree(fwd_info->buf_1->data);
+			fwd_info->buf_1->data = NULL;
+		}
+		if (fwd_info->buf_1->data_raw) {
+			kfree(fwd_info->buf_1->data_raw);
+			fwd_info->buf_1->data_raw = NULL;
+		}
 		kfree(fwd_info->buf_1);
 		fwd_info->buf_1 = NULL;
 	}
 	if (fwd_info->buf_2) {
-		kfree(fwd_info->buf_2->data);
-		fwd_info->buf_2->data = NULL;
-		kfree(fwd_info->buf_2->data_raw);
-		fwd_info->buf_2->data_raw = NULL;
+		if (fwd_info->buf_2->data) {
+			kfree(fwd_info->buf_2->data);
+			fwd_info->buf_2->data = NULL;
+		}
+		if (fwd_info->buf_2->data_raw) {
+			kfree(fwd_info->buf_2->data_raw);
+			fwd_info->buf_2->data_raw = NULL;
+		}
 		kfree(fwd_info->buf_2);
 		fwd_info->buf_2 = NULL;
 	}

@@ -5,11 +5,7 @@ drive user interface to different panel interfaces. MDP driver is the core of
 MDSS which manage all data paths to different panel interfaces.
 
 Required properties
-- compatible :		A string which indicates mdp hardware version used.
-			Based on current mdp hardware versions available,
-			Possible values are,
-			- "qcom,mdss_mdp" for mdp5
-			- "qcom,mdss_mdp3" for mdp3
+- compatible :		Must be "qcom,mdss_mdp"
 - reg :			offset and length of the register set for the device.
 - reg-names :		names to refer to register sets related to this device
 - interrupts :		Interrupt associated with MDSS.
@@ -34,10 +30,7 @@ Required properties
 - qcom,mdss-pipe-vig-clk-ctrl-off: Array of offsets describing clk control
 				offsets for dynamic clock gating. 1st value
 				in the array represents offset of the control
-				register. The offsets are calculated from
-				"mdp_phys" + mdp-reg-offset that are defined
-				in reg property and mdss-mdp-reg-offset respectively.
-				2nd value represents bit offset within
+				register. 2nd value represents bit offset within
 				control register and 3rd value represents bit
 				offset within status register. Number of tuples
 				defined should match the number of offsets
@@ -60,10 +53,7 @@ Required properties
 - qcom,mdss-pipe-rgb-clk-ctrl-off: Array of offsets describing clk control
 				offsets for dynamic clock gating. 1st value
 				in the array represents offset of the control
-				register. The offsets are calculated from
-				"mdp_phys" + mdp-reg-offset that are defined
-				in reg property and mdss-mdp-reg-offset respectively.
-				2nd value represents bit offset within
+				register. 2nd value represents bit offset within
 				control register and 3rd value represents bit
 				offset within status register. Number of tuples
 				defined should match the number of offsets
@@ -86,10 +76,7 @@ Required properties
 - qcom,mdss-pipe-dma-clk-ctrl-off: Array of offsets describing clk control
 				offsets for dynamic clock gating. 1st value
 				in the array represents offset of the control
-				register. The offsets are calculated from
-				"mdp_phys" + mdp-reg-offset that are defined
-				in reg property and mdss-mdp-reg-offset respectively.
-				2nd value represents bit offset within
+				register. 2nd value represents bit offset within
 				control register and 3rd value represents bit
 				offset within status register. Number of tuples
 				defined should match the number of offsets
@@ -181,7 +168,8 @@ Bus Scaling Data:
 - qcom,msm-bus,num-paths:	This represents the number of paths in each
 				Bus Scaling Usecase. This value depends on
 				how many number of AXI master ports are
-				dedicated to MDSS for particular chipset.
+				dedicated to MDSS for particular chipset. This
+				value represents the RT + NRT AXI master ports.
 - qcom,msm-bus,vectors-KBps:	* A series of 4 cell properties, with a format
 				of (src, dst, ab, ib) which is defined at
 				Documentation/devicetree/bindings/arm/msm/msm_bus.txt
@@ -312,9 +300,6 @@ Optional properties:
 - qcom,mdss-no-hist-vote	Boolean property to indicate histogram reads
 				and histogram LUT writes do not need additional
 				bandwidth voting.
-- qcom,mdss-has-10bit-pa:	Boolean property to indicate PA block is 10 bit
-				rather than 8 bit. This is required for
-				calculating shift while programming PA LUT.
 - qcom,mdss-mdp-wfd-mode:	A string that specifies what is the mode of
 				   writeback wfd block.
 				"intf" = Writeback wfd block is
@@ -323,9 +308,6 @@ Optional properties:
 				   between wfd and rotator.
 				"dedicated" = Dedicated writeback
 				   block for wfd using writeback mixer.
-				"intf_no_dspp" = Writeback wfd block is
-				  connected to the interface mixer without
-				  dspp.
 - qcom,mdss-smp-mb-per-pipe:	Maximum number of shared memory pool blocks
 				restricted for a source surface pipe. If this
 				property is not specified, no such restriction
@@ -359,7 +341,7 @@ Optional properties:
 				   defined should match the number of offsets
 				   defined in property: qcom,mdss-pipe-dma-off
 - qcom,mdss-default-ot-wr-limit: This integer value indicates maximum number of pending
-				writes that can be allowed from non real time client.
+				writes that can be allowed on each WR xin.
 				This value can be used to reduce the pending writes
 				limit and can be tuned to match performance
 				requirements depending upon system state.
@@ -369,7 +351,7 @@ Optional properties:
 				operations in the platforms that require these
 				limits.
 - qcom,mdss-default-ot-rd-limit: This integer value indicates the default number of pending
-				reads that can be allowed for the real time clients.
+				reads that can be allowed on each RD xin.
 				Some platforms require a dynamic ot limiting in
 				some cases. Setting this default ot read limit
 				will enable this dynamic limiting for the read
@@ -391,10 +373,6 @@ Optional properties:
 				    clients.
 - qcom,mdss-dram-channels:	This represents the number of channels in the
 				Bus memory controller.
-- qcom,mdss-ppb-off:		Array of offset addresses of ping pong buffer control registers.
-				The offsets are calculated from the "mdp_phys" base address
-				specified. The number of offsets should match the
-				number of ping pong buffers available in the hardware.
 - qcom,regs-dump-mdp:		This array represents the registers offsets that
 				will be dumped from the mdp when the debug logging
 				is enabled; each entry in the table is an start and
@@ -430,8 +408,6 @@ Fudge Factors:			Fudge factors are used to boost demand for
 				values when the overlap bandwidth is the
 				predominant value compared to prefill bandwidth
 				value.
-- qcom,mdss-ib-factor-cmd:	This fudge factor is applied to calculated ib
-				values in case of command mode.
 - qcom,mdss-clk-factor:		This fudge factor is applied to calculated mdp
 				clk rate in default conditions.
 
@@ -448,12 +424,12 @@ Fudge Factors:			Fudge factors are used to boost demand for
 				be more tolerant to memory latency such as
 				command mode panels.
 - qcom,max-bandwidth-per-pipe-kbps: A two dimensional array indicating the max
-				bandwidth in KB that a single pipe can support without
-				underflow for various usecases. The first
-				parameter indicates the usecase and the second
-				parameter gives the max bw allowed for the
-				usecase. Following are the enum values for modes
-				in different cases:
+				bandwidth in KB that a single pipe can support
+				without underflow for various usecases. The
+				first parameter indicates the usecase and the
+				second parameter gives the max bw allowed for
+				the usecase. Following are the enum values for
+				modes in different cases:
 				For default case, mode = 1
 				camera usecase, mode = 2
 				hflip usecase, mode = 4
@@ -496,8 +472,34 @@ Fudge Factors:			Fudge factors are used to boost demand for
 				Number of signal offsets should match the
 				number of offsets defined in property:
 				qcom,mdss-pipe-dma-off
-- qcom,mdss-has-dst-split:	Boolean property to indicate if destination
+- qcom,mdss-per-pipe-panic-luts: Array to configure the panic/robust luts for
+				each rt and nrt clients. This property is
+				for the MDPv1.7 and above, which configures
+				the panic independently on each client.
+				Each element of the array corresponds to:
+				First element - panic for linear formats
+				Second element - panic for tile formats
+				Third element - robust for linear formats
+				Fourth element - robust for tile formats
+- qcom,mdss-has-pingpong-split:	Boolean property to indicate if destination
 				split feature is available or not in the target.
+- qcom,mdss-slave-pingpong-off:	Offset address for the extra TE block which needs
+				to be programmed when pingpong split feature is enabled.
+				Offset is calculated from the "mdp_phys"
+				register value. Mandatory when qcom,mdss-has-pingpong-split
+				is enabled.
+- qcom,mdss-ppb-off:		Array of offset addresses of ping pong buffer control registers.
+				The offsets are calculated from the "mdp_phys" base address
+				specified. The number of offsets should match the
+				number of ping pong buffers available in the hardware.
+				Mandatory when qcom,mdss-has-pingpong-split is enabled.
+- qcom,mdss-cdm-off:            Array of offset addresses for the available
+				chroma down modules that can convert RGB data
+				to YUV before sending it to the interface
+				block. These offsets will be calculated from
+				register "mdp_phys" define in reg property. The
+				number of cdm offsets should reflect the number
+				of cdm blocks present in hardware.
 - qcom,mdss-dsc-off:            Array of offset addresses for the available
 				display stream compression module block.
 				These offsets will be calculated from
@@ -507,14 +509,9 @@ Fudge Factors:			Fudge factors are used to boost demand for
 - qcom,max-pipe-width:		This value specifies the maximum MDP SSPP width
 				the device supports. If not specified, a default value
 				of 2048 will be applied.
-- qcom,mdss-slave-pingpong-off:	Offset address for the extra TE block which needs
-				to be programmed when pingpong split feature is enabled.
-				Offset is calculated from the "mdp_phys"
-				register value. Mandatory when qcom,mdss-has-dst-split
-				is enabled.
 
 Optional subnodes:
-Child nodes representing the frame buffer virtual devices.
+- mdss_fb:		Child nodes representing the frame buffer virtual devices.
 
 Subnode properties:
 - compatible :		Must be "qcom,mdss-fb"
@@ -522,20 +519,6 @@ Subnode properties:
 - qcom,mdss-mixer-swap: A boolean property that indicates if the mixer muxes
 			 need to be swapped based on the target panel.
 			 By default the property is not defined.
-- qcom,mdss-fb-split:	 Array of splitted framebuffer size. There should
-			 be only two values in this property. The values
-			 correspond to the left and right size respectively.
-			 MDP muxes two mixer output together before sending to
-			 the panel interface and these values are used to set
-			 each mixer width, so the sum of these two values
-			 should be equal to the panel x-resolution.
-
-			 Note that if the sum of two values is not equal to
-			 x-resolution or this subnode itself is not defined
-			 in device tree there are two cases: 1)split is not
-			 enabled if framebuffer size is less than max mixer
-			 width; 2) the defaut even split is enabled if frambuffer
-			 size is greater than max mixer width.
 - qcom,memblock-reserve: Specifies the memory location and the size reserved
 			 for the framebuffer used to display the splash screen.
 			 This property is required whenever the continuous splash
@@ -568,22 +551,44 @@ Subnode properties:
 - qcom,boot-indication-enabled: Boolean property that enables turning on the blue
 				LED for notifying that the device is in boot
 				process.
-- qcom,mdss-needs-iommu-bw-vote: Boolean property to indicate if minimum bus
-				bandwidth vote is needed for MDSS to perform
-				IOMMU transactions.
-- qcom,mdss-fb-format:	String property describing MDSS frame buffer format.
-			Based on the current software implementation,
-			possible values are,
-			- "rgba8888"
-			- "rgb888"
-			- "rgb565"
+
+- qcom,mdss-pp-offets: A node that lists the offsets of post processing blocks
+		       from base module.
+		       -- qcom,mdss-mdss-sspp-igc-lut-off: This 32 bit value provides the
+		              offset to the IGC lut rams from mdp_phys base.
+		       -- qcom,mdss-sspp-vig-pcc-off: This 32 bit value provides the offset
+		              to PCC block from the VIG pipe base address.
+		       -- qcom,mdss-sspp-rgb-pcc-off: This 32 bit value provides the offset
+		              to PCC block from the RGB pipe base address.
+		       -- qcom,mdss-sspp-dma-pcc-off: This 32 bit value provides the offset
+		              to PCC block from the DMA pipe base address.
+		       -- qcom,mdss-dspp-pcc-off: This 32 bit value provides the offset
+		              to PCC block from the DSPP pipe base address.
+		       -- qcom,mdss-lm-pgc-off: This 32 bit value provides the offset
+		               to PGC block from the layer mixer base address.
+		       -- qcom,mdss-dspp-gamut-off: This 32 bit value provides the offset
+		               to gamut block from DSPP base address.
+		       -- qcom,mdss-dspp-pgc-off: This 32 bit value provides the offset to
+		               PGC block from the DSPP base address.
+
+- smmu_mdp_***:	Child nodes representing the mdss smmu virtual devices.
+		Mandatory smmu v2 and not required for smmu v1.
 
 Subnode properties:
-Required properties:
-- compatible :          Must be "qcom,mdss_wb"
-- qcom,mdss_pan_res:    Specifies size of writeback buffer.
-- qcom,mdss_pan_bpp:    Specifies bits per pixel for writeback buffer.
-- qcom,mdss-fb-map:     Specific framebuffer number.
+- compatible :		Compatible name used in smmu v2.
+			smmu_v2 names should be:
+			"qcom,smmu_mdp_unsec" 	- smmu context bank device for
+						unsecure mdp domain.
+			"qcom,smmu_rot_unsec"	- smmu context bank device for
+						unsecure rotation domain.
+			"qcom,smmu_mdp_sec" 	- smmu context bank device for
+						secure mdp domain.
+			"qcom,smmu_rot_sec"	- smmu context bank device for
+						secure rotation domain.
+- gdsc-mmagic-mdss-supply: Phandle for mmagic mdss supply regulator device node.
+- clocks:		List of Phandles for clock device nodes
+			needed by the device.
+- clock-names:		List of clock names needed by the device.
 
 Example:
 	mdss_mdp: qcom,mdss_mdp@fd900000 {
@@ -611,6 +616,7 @@ Example:
 		/* Fudge factors */
 		qcom,mdss-ab-factor = <2 1>;		/* 2 times    */
 		qcom,mdss-ib-factor = <3 2>;		/* 1.5 times  */
+		qcom,mdss-high-ib-factor = <2 1>;	/* 2 times    */
 		qcom,mdss-clk-factor = <5 4>;		/* 1.25 times */
 
 		/* Clock levels */
@@ -622,8 +628,8 @@ Example:
 
 		qcom,max-bandwidth-low-kbps = <2300000>;
 		qcom,max-bandwidth-high-kbps = <3000000>;
-		qcom,max-bandwidth-per-pipe-kbps = <0 2100000>,
-						   <1 1800000>;
+		qcom,max-bandwidth-per-pipe-kbps = <4 2100000>,
+						   <8 1800000>;
 		qcom,max-bw-settings = <1 2300000>,
 				       <2 1700000>,
 				       <4 2300000>,
@@ -669,11 +675,10 @@ Example:
 		qcom,mdss-wfd-mode = "intf";
 		qcom,mdss-no-lut-read;
 		qcom,mdss-no-hist-vote;
-		qcom,mdss-has-10bit-pa;
 		qcom,mdss-traffic-shaper-enabled;
 		qcom,mdss-has-rotator-downscale;
 
-		qcom,mdss-has-dst-split;
+		qcom,mdss-has-pingpong-split;
 		qcom,mdss-pipe-vig-xin-id = <0 4 8>;
 		qcom,mdss-pipe-rgb-xin-id = <1 5 9>;
 		qcom,mdss-pipe-dma-xin-id = <2 10>;
@@ -691,6 +696,11 @@ Example:
 
 		qcom,mdss-pipe-dma-clk-ctrl-offsets = <0x3AC 8 12>,
 						      <0x3B4 8 12>;
+
+		qcom,mdss-per-pipe-panic-luts = <0x000f>,
+						<0xffff>,
+						<0xfffc>,
+						<0xff00>;
 
 		qcom,mdss-has-panic-ctrl;
 		qcom,mdss-pipe-vig-panic-ctrl-offsets = <0 1 2 3>;
@@ -713,6 +723,7 @@ Example:
 				    0x00017100 0x00019100>;
 		qcom,mdss-intf-off = <0x00021100 0x00021300
 					   0x00021500 0x00021700>;
+		qcom,mdss-cdm-off = <0x0007A200>;
 		qcom,mdss-ppb-off = <0x0000420>;
 		qcom,mdss-slave-pingpong-off = <0x00073000>
 
@@ -725,26 +736,36 @@ Example:
 		qcom,mdss-prefill-pingpong-buffer-pixels = <5120>;
 		qcom,mdss-prefill-fbc-lines = <2>;
 		qcom,mdss-idle-power-collapse-enabled;
-		qcom,mdss-needs-iommu-bw-vote;
 
 		mdss_fb0: qcom,mdss_fb_primary {
 			cell-index = <0>;
 			compatible = "qcom,mdss-fb";
 			qcom,mdss-mixer-swap;
-			qcom,mdss-fb-split = <480 240>
 			linux,contiguous-region = <&fb_mem>;
 			qcom,mdss-fb-splash-logo-enabled:
-			qcom,mdss-fb-format = "rgba8888";
 			qcom,cont-splash-memory {
 				linux,contiguous-region = <&cont_splash_mem>;
 			};
 		};
 
-		qcom,mdss_wb_panel {
-			compatible = "qcom,mdss_wb";
-			qcom,mdss_pan_res = <1280 720>;
-			qcom,mdss_pan_bpp = <24>;
-			qcom,mdss-fb-map = <&mdss_fb1>;
+		qcom,mdss-pp-offsets {
+			qcom,mdss-sspp-mdss-igc-lut-off = <0x3000>;
+			qcom,mdss-sspp-vig-pcc-off = <0x1580>;
+			qcom,mdss-sspp-rgb-pcc-off = <0x180>;
+			qcom,mdss-sspp-dma-pcc-off = <0x180>;
+			qcom,mdss-lm-pgc-off = <0x3C0>;
+			qcom,mdss-dspp-gamut-off = <0x1600>;
+			qcom,mdss-dspp-pcc-off = <0x1700>;
+			qcom,mdss-dspp-pgc-off = <0x17C0>;
+		};
+
+		smmu_mdp_sec: qcom,smmu_mdp_sec_cb {
+			compatible = "qcom,smmu_mdp_sec";
+			iommus = <&mdp_smmu 1>;
+			gdsc-mmagic-mdss-supply = <&gdsc_mmagic_mdss>;
+			clocks = <&clock_mmss clk_smmu_mdp_ahb_clk>,
+				<&clock_mmss clk_smmu_mdp_axi_clk>;
+			clock-names = "dummy_clk", "dummy_clk";
 		};
 	};
 

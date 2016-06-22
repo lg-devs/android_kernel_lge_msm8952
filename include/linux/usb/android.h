@@ -17,9 +17,7 @@
 #ifndef	__LINUX_USB_ANDROID_H
 #define	__LINUX_USB_ANDROID_H
 
-#include <linux/usb/composite.h>
-
-#define MAX_STREAMING_FUNCS 3
+#define MAX_STREAMING_FUNCS 6
 #define FUNC_NAME_LEN 10
 
 enum android_pm_qos_state {
@@ -36,27 +34,7 @@ struct android_usb_platform_data {
 	u8 usb_core_id;
 	char streaming_func[MAX_STREAMING_FUNCS][FUNC_NAME_LEN];
 	int  streaming_func_count;
-	u8 uicc_nluns;
-	bool cdrom;
 };
-
-#ifndef CONFIG_TARGET_CORE
-static inline int f_tcm_init(int (*connect_cb)(bool connect))
-{
-	/*
-	 * Fail bind() not init(). If a function init() returns error
-	 * android composite registration would fail.
-	 */
-	return 0;
-}
-static inline void f_tcm_exit(void)
-{
-}
-static inline int tcm_bind_config(struct usb_configuration *c)
-{
-	return -ENODEV;
-}
-#endif
 
 extern int gport_setup(struct usb_configuration *c);
 extern void gport_cleanup(void);

@@ -25,7 +25,7 @@
 #if !defined(CONFIG_SMP)
 #define msm_secondary_startup NULL
 #elif defined(CONFIG_CPU_V7)
-extern void msm_secondary_startup(void);
+#define msm_secondary_startup secondary_startup
 #else
 #define msm_secondary_startup secondary_holding_pen
 #endif
@@ -35,6 +35,7 @@ enum msm_pm_sleep_mode {
 	MSM_PM_SLEEP_MODE_RETENTION,
 	MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE,
 	MSM_PM_SLEEP_MODE_POWER_COLLAPSE,
+	MSM_PM_SLEEP_MODE_FASTPC,
 	MSM_PM_SLEEP_MODE_POWER_COLLAPSE_SUSPEND,
 	MSM_PM_SLEEP_MODE_NR,
 	MSM_PM_SLEEP_MODE_NOT_SELECTED,
@@ -43,8 +44,7 @@ enum msm_pm_sleep_mode {
 enum msm_pm_l2_scm_flag {
 	MSM_SCM_L2_ON = 0,
 	MSM_SCM_L2_OFF = 1,
-	MSM_SCM_L2_RET = 2,
-	MSM_SCM_L2_GDHS = 3,
+	MSM_SCM_L2_GDHS = 2,
 	MSM_SCM_L3_PC_OFF = 4,
 };
 

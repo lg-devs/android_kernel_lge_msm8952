@@ -52,7 +52,7 @@ ENDPROC(fpsimd_load_state)
 ENTRY(fpsimd_save_partial_state)
 	fpsimd_save_partial x0, 1, 8, 9
 	ret
-ENDPROC(fpsimd_load_partial_state)
+ENDPROC(fpsimd_save_partial_state)
 
 /*
  * Load the bottom n FP registers.
@@ -63,5 +63,37 @@ ENTRY(fpsimd_load_partial_state)
 	fpsimd_restore_partial x0, 8, 9
 	ret
 ENDPROC(fpsimd_load_partial_state)
+
+#ifdef CONFIG_ENABLE_FP_SIMD_SETTINGS
+ENTRY(fpsimd_enable_trap)
+	mrs x0, cpacr_el1
+	bic x0, x0, #(3 << 20)
+	orr x0, x0, #(1 << 20)
+	msr cpacr_el1, x0
+	ret
+ENDPROC(fpsimd_enable_trap)
+ENTRY(fpsimd_disable_trap)
+	mrs x0, cpacr_el1
+	orr x0, x0, #(3 << 20)
+	msr cpacr_el1, x0
+	ret
+ENDPROC(fpsimd_disable_trap)
+ENTRY(fpsimd_settings_enable)
+	mrs x0, s3_1_c15_c15_0
+	orr x0, x0, #(1 << 31)
+	isb
+	msr s3_1_c15_c15_0, x0
+	isb
+	ret
+ENDPROC(fpsimd_settings_enable)
+ENTRY(fpsimd_settings_disable)
+	mrs x0, s3_1_c15_c15_0
+	bic x0, x0, #(1 << 31)
+	isb
+	msr s3_1_c15_c15_0, x0
+	isb
+	ret
+ENDPROC(fpsimd_settings_disable)
+#endif
 
 #endif

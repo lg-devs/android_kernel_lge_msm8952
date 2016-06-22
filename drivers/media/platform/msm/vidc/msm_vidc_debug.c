@@ -15,22 +15,23 @@
 #include "msm_vidc_debug.h"
 #include "vidc_hfi_api.h"
 
-#define MAX_DBG_BUF_SIZE 4096
 int msm_vidc_debug = VIDC_ERR | VIDC_WARN;
 int msm_vidc_debug_out = VIDC_OUT_PRINTK;
-int msm_fw_debug = 0x18;
-int msm_fw_debug_mode = 0x1;
-int msm_fw_low_power_mode = 0x1;
+int msm_vidc_fw_debug = 0x18;
+int msm_vidc_fw_debug_mode = 1;
+int msm_vidc_fw_low_power_mode = 1;
 int msm_vidc_hw_rsp_timeout = 1000;
-u32 msm_fw_coverage = 0x0;
-int msm_vidc_reset_clock_control = 0x0;
-int msm_vidc_regulator_scaling = 0x0;
-int msm_vidc_vpe_csc_601_to_709 = 0x0;
-int msm_vidc_dec_dcvs_mode = 0x1;
-int msm_vidc_enc_dcvs_mode = 0x1;
-int msm_vidc_sys_idle_indicator = 0x0;
-u32 msm_vidc_firmware_unload_delay = 15000;
-int msm_vidc_thermal_mitigation_disabled = 0x0;
+int msm_vidc_fw_coverage = 0;
+int msm_vidc_vpe_csc_601_to_709 = 0;
+int msm_vidc_dec_dcvs_mode = 1;
+int msm_vidc_enc_dcvs_mode = 1;
+int msm_vidc_sys_idle_indicator = 0;
+int msm_vidc_firmware_unload_delay = 15000;
+int msm_vidc_thermal_mitigation_disabled = 0;
+int msm_vidc_bitrate_clock_scaling = 1;
+int msm_vidc_debug_timeout = 0;
+
+#define MAX_DBG_BUF_SIZE 4096
 
 struct debug_buffer {
 	char ptr[MAX_DBG_BUF_SIZE];
@@ -82,7 +83,7 @@ static ssize_t core_info_read(struct file *file, char __user *buf,
 	hdev = core->device;
 	INIT_DBG_BUF(dbg_buf);
 	write_str(&dbg_buf, "===============================\n");
-	write_str(&dbg_buf, "CORE %d: 0x%p\n", core->id, core);
+	write_str(&dbg_buf, "CORE %d: %p\n", core->id, core);
 	write_str(&dbg_buf, "===============================\n");
 	write_str(&dbg_buf, "Core state: %d\n", core->state);
 	rc = call_hfi_op(hdev, get_fw_info, hdev->hfi_device_data, &fw_info);
@@ -141,92 +142,53 @@ static const struct file_operations ssr_fops = {
 
 struct dentry *msm_vidc_debugfs_init_drv(void)
 {
+	bool ok = false;
 	struct dentry *dir = debugfs_create_dir("msm_vidc", NULL);
 	if (IS_ERR_OR_NULL(dir)) {
 		dir = NULL;
 		goto failed_create_dir;
 	}
 
-	if (!debugfs_create_u32("debug_level", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_debug)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
+#define __debugfs_create(__type, __name, __value) ({                          \
+	struct dentry *f = debugfs_create_##__type(__name, S_IRUGO | S_IWUSR, \
+		dir, __value);                                                \
+	if (IS_ERR_OR_NULL(f)) {                                              \
+		dprintk(VIDC_ERR, "Failed creating debugfs file '%pd/%s'\n",  \
+			dir, __name);                                         \
+		f = NULL;                                                     \
+	}                                                                     \
+	f;                                                                    \
+})
+
+	ok =
+	__debugfs_create(x32, "debug_level", &msm_vidc_debug) &&
+	__debugfs_create(x32, "fw_level", &msm_vidc_fw_debug) &&
+	__debugfs_create(u32, "fw_debug_mode", &msm_vidc_fw_debug_mode) &&
+	__debugfs_create(bool, "fw_coverage", &msm_vidc_fw_coverage) &&
+	__debugfs_create(bool, "dcvs_dec_mode", &msm_vidc_dec_dcvs_mode) &&
+	__debugfs_create(bool, "dcvs_enc_mode", &msm_vidc_enc_dcvs_mode) &&
+	__debugfs_create(u32, "fw_low_power_mode",
+			&msm_vidc_fw_low_power_mode) &&
+	__debugfs_create(u32, "debug_output", &msm_vidc_debug_out) &&
+	__debugfs_create(u32, "hw_rsp_timeout", &msm_vidc_hw_rsp_timeout) &&
+	__debugfs_create(bool, "enable_vpe_csc_601_709",
+			&msm_vidc_vpe_csc_601_to_709) &&
+	__debugfs_create(bool, "sys_idle_indicator",
+			&msm_vidc_sys_idle_indicator) &&
+	__debugfs_create(u32, "firmware_unload_delay",
+			&msm_vidc_firmware_unload_delay) &&
+	__debugfs_create(bool, "disable_thermal_mitigation",
+			&msm_vidc_thermal_mitigation_disabled) &&
+	__debugfs_create(bool, "bitrate_clock_scaling",
+			&msm_vidc_bitrate_clock_scaling) &&
+	__debugfs_create(bool, "debug_timeout",
+			&msm_vidc_debug_timeout);
+
+#undef __debugfs_create
+
+	if (!ok)
 		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("fw_level", S_IRUGO | S_IWUSR,
-			dir, &msm_fw_debug)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("fw_debug_mode", S_IRUGO | S_IWUSR,
-			dir, &msm_fw_debug_mode)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("fw_coverage", S_IRUGO | S_IWUSR,
-			dir, &msm_fw_coverage)) {
-		dprintk(VIDC_WARN, "debugfs_create_file fw_coverage: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("dcvs_dec_mode", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_dec_dcvs_mode)) {
-		dprintk(VIDC_WARN, "debugfs_create_file dcvs_dec_mode: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("dcvs_enc_mode", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_enc_dcvs_mode)) {
-		dprintk(VIDC_WARN, "debugfs_create_file dcvs_enc_mode: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("fw_low_power_mode", S_IRUGO | S_IWUSR,
-			dir, &msm_fw_low_power_mode)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("debug_output", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_debug_out)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("hw_rsp_timeout", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_hw_rsp_timeout)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("reset_clock_control", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_reset_clock_control)) {
-		dprintk(VIDC_ERR,
-			"debugfs_create_file: reset_clock_control fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("regulator_scaling", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_regulator_scaling)) {
-		dprintk(VIDC_ERR,
-			"debugfs_create_file: regulator_scaling fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_bool("enable_vpe_csc_601_709", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_vpe_csc_601_to_709)) {
-		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_bool("sys_idle_indicator", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_sys_idle_indicator)) {
-		dprintk(VIDC_ERR,
-			"debugfs_create_file: sys_idle_indicator fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("firmware_unload_delay", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_firmware_unload_delay)) {
-		dprintk(VIDC_ERR,
-			"debugfs_create_file: firmware_unload_delay fail\n");
-		goto failed_create_dir;
-	}
-	if (!debugfs_create_u32("disable_thermal_mitigation", S_IRUGO | S_IWUSR,
-			dir, &msm_vidc_thermal_mitigation_disabled)) {
-		dprintk(VIDC_ERR,
-			"debugfs_create_file: disable_thermal_mitigation fail\n");
-		goto failed_create_dir;
-	}
+
 	return dir;
 
 failed_create_dir:
@@ -288,7 +250,7 @@ static int publish_unreleased_reference(struct msm_vidc_inst *inst)
 			if (temp->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 			!temp->inactive && atomic_read(&temp->ref_count)) {
 				write_str(&dbg_buf,
-				"\tpending buffer: 0x%lx fd[0] = %d ref_count = %d held by: %s\n",
+				"\tpending buffer: %#lx fd[0] = %d ref_count = %d held by: %s\n",
 				temp->device_addr[0],
 				temp->fd[0],
 				atomic_read(&temp->ref_count),
@@ -311,10 +273,10 @@ static ssize_t inst_info_read(struct file *file, char __user *buf,
 	}
 	INIT_DBG_BUF(dbg_buf);
 	write_str(&dbg_buf, "===============================\n");
-	write_str(&dbg_buf, "INSTANCE: 0x%p (%s)\n", inst,
+	write_str(&dbg_buf, "INSTANCE: %p (%s)\n", inst,
 		inst->session_type == MSM_VIDC_ENCODER ? "Encoder" : "Decoder");
 	write_str(&dbg_buf, "===============================\n");
-	write_str(&dbg_buf, "core: 0x%p\n", inst->core);
+	write_str(&dbg_buf, "core: %p\n", inst->core);
 	write_str(&dbg_buf, "height: %d\n", inst->prop.height[CAPTURE_PORT]);
 	write_str(&dbg_buf, "width: %d\n", inst->prop.width[CAPTURE_PORT]);
 	write_str(&dbg_buf, "fps: %d\n", inst->prop.fps);

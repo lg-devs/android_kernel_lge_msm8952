@@ -1,5 +1,5 @@
-Qualcomm SLIMBUS controller
-Qualcomm implements 2 type of slimbus controllers:
+ Qualcomm Technologies,Inc SLIMBUS controller
+ Qualcomm Technologies,Inc implements 2 type of slimbus controllers:
 1. "qcom,slim-msm": This controller is used if applications processor
 	driver is controlling slimbus master component. This driver is
 	responsible for communicating with slave HW directly using
@@ -49,7 +49,7 @@ Optional property:
 		 default mask of 0x3F000000 is used indicating apps can use 6
 		 pipes from 24-29.
  - qcom,ea-pc: This value represents product code (PC) field of enumeration
-		 address (EA) for the Qualcomm slimbus controller hardware.
+		 address (EA) for the QTI slimbus controller hardware.
 		 This value is needed if data-channels originating from apps
 		 are to be used, so that application processor can query
 		 logical address of the ported generic device to be used.

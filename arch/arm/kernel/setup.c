@@ -73,7 +73,10 @@ static int __init fpe_setup(char *line)
 __setup("fpe=", fpe_setup);
 #endif
 
+extern void init_default_cache_policy(unsigned long);
 extern void paging_init(const struct machine_desc *desc);
+extern void early_paging_init(const struct machine_desc *,
+			      struct proc_info_list *);
 extern void sanity_check_meminfo(void);
 extern enum reboot_mode reboot_mode;
 extern void setup_dma_zone(const struct machine_desc *desc);
@@ -99,14 +102,17 @@ EXPORT_SYMBOL(system_serial_high);
 unsigned int elf_hwcap __read_mostly;
 EXPORT_SYMBOL(elf_hwcap);
 
+unsigned int elf_hwcap2 __read_mostly;
+EXPORT_SYMBOL(elf_hwcap2);
+
+char* (*arch_read_hardware_id)(void);
+EXPORT_SYMBOL(arch_read_hardware_id);
+
 unsigned int boot_reason;
 EXPORT_SYMBOL(boot_reason);
 
 unsigned int cold_boot;
 EXPORT_SYMBOL(cold_boot);
-
-char* (*arch_read_hardware_id)(void);
-EXPORT_SYMBOL(arch_read_hardware_id);
 
 #ifdef MULTI_CPU
 struct processor processor __read_mostly;
@@ -136,9 +142,12 @@ struct stack {
 	u32 irq[3];
 	u32 abt[3];
 	u32 und[3];
+	u32 fiq[3];
 } ____cacheline_aligned;
 
+#ifndef CONFIG_CPU_V7M
 static struct stack stacks[NR_CPUS];
+#endif
 
 char elf_platform[ELF_PLATFORM_SIZE];
 EXPORT_SYMBOL(elf_platform);
@@ -217,7 +226,7 @@ static const char *proc_arch[] = {
 	"5TEJ",
 	"6TEJ",
 	"7",
-	"?(11)",
+	"7M",
 	"?(12)",
 	"?(13)",
 	"?(14)",
@@ -226,6 +235,12 @@ static const char *proc_arch[] = {
 	"?(17)",
 };
 
+#ifdef CONFIG_CPU_V7M
+static int __get_cpu_architecture(void)
+{
+	return CPU_ARCH_ARMv7M;
+}
+#else
 static int __get_cpu_architecture(void)
 {
 	int cpu_arch;
@@ -258,6 +273,7 @@ static int __get_cpu_architecture(void)
 
 	return cpu_arch;
 }
+#endif
 
 int __pure cpu_architecture(void)
 {
@@ -303,7 +319,9 @@ static void __init cacheid_init(void)
 {
 	unsigned int arch = cpu_architecture();
 
-	if (arch >= CPU_ARCH_ARMv6) {
+	if (arch == CPU_ARCH_ARMv7M) {
+		cacheid = 0;
+	} else if (arch >= CPU_ARCH_ARMv6) {
 		unsigned int cachetype = read_cpuid_cachetype();
 		if ((cachetype & (7 << 29)) == 4 << 29) {
 			/* ARMv7 register format */
@@ -330,7 +348,7 @@ static void __init cacheid_init(void)
 		cacheid = CACHEID_VIVT;
 	}
 
-	printk("CPU: %s data cache, %s instruction cache\n",
+	pr_info("CPU: %s data cache, %s instruction cache\n",
 		cache_is_vivt() ? "VIVT" :
 		cache_is_vipt_aliasing() ? "VIPT aliasing" :
 		cache_is_vipt_nonaliasing() ? "PIPT / VIPT nonaliasing" : "unknown",
@@ -365,7 +383,7 @@ void __init early_print(const char *str, ...)
 
 static void __init cpuid_init_hwcaps(void)
 {
-	unsigned int divide_instrs;
+	unsigned int divide_instrs, vmsa;
 
 	if (cpu_architecture() < CPU_ARCH_ARMv7)
 		return;
@@ -378,21 +396,41 @@ static void __init cpuid_init_hwcaps(void)
 	case 1:
 		elf_hwcap |= HWCAP_IDIVT;
 	}
+
+	/* LPAE implies atomic ldrd/strd instructions */
+	vmsa = (read_cpuid_ext(CPUID_EXT_MMFR0) & 0xf) >> 0;
+	if (vmsa >= 5)
+		elf_hwcap |= HWCAP_LPAE;
 }
 
-static void __init feat_v6_fixup(void)
+static void __init elf_hwcap_fixup(void)
 {
-	int id = read_cpuid_id();
-
-	if ((id & 0xff0f0000) != 0x41070000)
-		return;
+	unsigned id = read_cpuid_id();
+	unsigned sync_prim;
 
 	/*
 	 * HWCAP_TLS is available only on 1136 r1p0 and later,
 	 * see also kuser_get_tls_init.
 	 */
-	if ((((id >> 4) & 0xfff) == 0xb36) && (((id >> 20) & 3) == 0))
+	if (read_cpuid_part() == ARM_CPU_PART_ARM1136 &&
+	    ((id >> 20) & 3) == 0) {
 		elf_hwcap &= ~HWCAP_TLS;
+		return;
+	}
+
+	/* Verify if CPUID scheme is implemented */
+	if ((id & 0x000f0000) != 0x000f0000)
+		return;
+
+	/*
+	 * If the CPU supports LDREX/STREX and LDREXB/STREXB,
+	 * avoid advertising SWP; it may not be atomic with
+	 * multiprocessing cores.
+	 */
+	sync_prim = ((read_cpuid_ext(CPUID_EXT_ISAR3) >> 8) & 0xf0) |
+		    ((read_cpuid_ext(CPUID_EXT_ISAR4) >> 20) & 0x0f);
+	if (sync_prim >= 0x13)
+		elf_hwcap &= ~HWCAP_SWP;
 }
 
 /*
@@ -402,11 +440,12 @@ static void __init feat_v6_fixup(void)
  */
 void notrace cpu_init(void)
 {
+#ifndef CONFIG_CPU_V7M
 	unsigned int cpu = smp_processor_id();
 	struct stack *stk = &stacks[cpu];
 
 	if (cpu >= NR_CPUS) {
-		printk(KERN_CRIT "CPU%u: bad primary CPU number\n", cpu);
+		pr_crit("CPU%u: bad primary CPU number\n", cpu);
 		BUG();
 	}
 
@@ -441,7 +480,10 @@ void notrace cpu_init(void)
 	"msr	cpsr_c, %5\n\t"
 	"add	r14, %0, %6\n\t"
 	"mov	sp, r14\n\t"
-	"msr	cpsr_c, %7"
+	"msr	cpsr_c, %7\n\t"
+	"add	r14, %0, %8\n\t"
+	"mov	sp, r14\n\t"
+	"msr	cpsr_c, %9"
 	    :
 	    : "r" (stk),
 	      PLC (PSR_F_BIT | PSR_I_BIT | IRQ_MODE),
@@ -450,8 +492,11 @@ void notrace cpu_init(void)
 	      "I" (offsetof(struct stack, abt[0])),
 	      PLC (PSR_F_BIT | PSR_I_BIT | UND_MODE),
 	      "I" (offsetof(struct stack, und[0])),
+	      PLC (PSR_F_BIT | PSR_I_BIT | FIQ_MODE),
+	      "I" (offsetof(struct stack, fiq[0])),
 	      PLC (PSR_F_BIT | PSR_I_BIT | SVC_MODE)
 	    : "r14");
+#endif
 }
 
 u32 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = MPIDR_INVALID };
@@ -466,7 +511,14 @@ void __init smp_setup_processor_id(void)
 	for (i = 1; i < nr_cpu_ids; ++i)
 		cpu_logical_map(i) = i == cpu ? 0 : i;
 
-	printk(KERN_INFO "Booting Linux on physical CPU 0x%x\n", mpidr);
+	/*
+	 * clear __my_cpu_offset on boot CPU to avoid hang caused by
+	 * using percpu variable early, for example, lockdep will
+	 * access percpu variable inside lock_release
+	 */
+	set_my_cpu_offset(0);
+
+	pr_info("Booting Linux on physical CPU 0x%x\n", mpidr);
 }
 
 struct mpidr_hash mpidr_hash;
@@ -546,8 +598,8 @@ static void __init setup_processor(void)
 	 */
 	list = lookup_processor_type(read_cpuid_id());
 	if (!list) {
-		printk("CPU configuration botched (ID %08x), unable "
-		       "to continue.\n", read_cpuid_id());
+		pr_err("CPU configuration botched (ID %08x), unable to continue.\n",
+		       read_cpuid_id());
 		while (1);
 	}
 
@@ -567,9 +619,9 @@ static void __init setup_processor(void)
 	cpu_cache = *list->cache;
 #endif
 
-	printk("CPU: %s [%08x] revision %d (ARMv%s), cr=%08lx\n",
-	       cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
-	       proc_arch[cpu_architecture()], cr_alignment);
+	pr_info("CPU: %s [%08x] revision %d (ARMv%s), cr=%08lx\n",
+		cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
+		proc_arch[cpu_architecture()], get_cr());
 
 	snprintf(init_utsname()->machine, __NEW_UTS_LEN + 1, "%s%c",
 		 list->arch_name, ENDIANNESS);
@@ -582,8 +634,12 @@ static void __init setup_processor(void)
 #ifndef CONFIG_ARM_THUMB
 	elf_hwcap &= ~(HWCAP_THUMB | HWCAP_IDIVT);
 #endif
+#ifdef CONFIG_MMU
+	init_default_cache_policy(list->__cpu_mm_mmu_flags);
+#endif
+	erratum_a15_798181_init();
 
-	feat_v6_fixup();
+	elf_hwcap_fixup();
 
 	cacheid_init();
 	cpu_init();
@@ -603,7 +659,7 @@ void __init dump_machine_table(void)
 		/* can't use cpu_relax() here as it may require MMU setup */;
 }
 
-int __init arm_add_memory(phys_addr_t start, phys_addr_t size)
+int __init arm_add_memory(u64 start, u64 size)
 {
 	u64 aligned_start;
 
@@ -616,14 +672,14 @@ int __init arm_add_memory(phys_addr_t start, phys_addr_t size)
 
 #ifndef CONFIG_ARCH_PHYS_ADDR_T_64BIT
 	if (aligned_start > ULONG_MAX) {
-		printk(KERN_CRIT "Ignoring memory at 0x%08llx outside "
-		       "32-bit physical address space\n", (long long)start);
+		pr_crit("Ignoring memory at 0x%08llx outside 32-bit physical address space\n",
+			(long long)start);
 		return -EINVAL;
 	}
 
 	if (aligned_start + size > ULONG_MAX) {
-		printk(KERN_CRIT "Truncating memory at 0x%08llx to fit in "
-			"32-bit physical address space\n", (long long)start);
+		pr_crit("Truncating memory at 0x%08llx to fit in 32-bit physical address space\n",
+			(long long)start);
 		/*
 		 * To ensure bank->start + bank->size is representable in
 		 * 32 bits, we use ULONG_MAX as the upper limit rather than 4GB.
@@ -647,6 +703,7 @@ int __init arm_add_memory(phys_addr_t start, phys_addr_t size)
 		aligned_start = PHYS_OFFSET;
 	}
 
+	start = aligned_start;
 	size = size & ~(phys_addr_t)(PAGE_SIZE - 1);
 
 	/*
@@ -668,8 +725,8 @@ int __init arm_add_memory(phys_addr_t start, phys_addr_t size)
 static int __init early_mem(char *p)
 {
 	static int usermem __initdata = 0;
-	phys_addr_t size;
-	phys_addr_t start;
+	u64 size;
+	u64 start;
 	char *endp;
 
 	/*
@@ -705,7 +762,7 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 	kernel_data.end     = virt_to_phys(_end - 1);
 
 	for_each_memblock(memory, region) {
-		res = alloc_bootmem_low(sizeof(*res));
+		res = memblock_virt_alloc(sizeof(*res), 0);
 		res->name  = "System RAM";
 		res->start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
 		res->end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
@@ -805,18 +862,17 @@ static void __init reserve_crashkernel(void)
 	if (ret)
 		return;
 
-	ret = reserve_bootmem(crash_base, crash_size, BOOTMEM_EXCLUSIVE);
+	ret = memblock_reserve(crash_base, crash_size);
 	if (ret < 0) {
-		printk(KERN_WARNING "crashkernel reservation failed - "
-		       "memory is in use (0x%lx)\n", (unsigned long)crash_base);
+		pr_warn("crashkernel reservation failed - memory is in use (0x%lx)\n",
+			(unsigned long)crash_base);
 		return;
 	}
 
-	printk(KERN_INFO "Reserving %ldMB of memory at %ldMB "
-	       "for crashkernel (System RAM: %ldMB)\n",
-	       (unsigned long)(crash_size >> 20),
-	       (unsigned long)(crash_base >> 20),
-	       (unsigned long)(total_mem >> 20));
+	pr_info("Reserving %ldMB of memory at %ldMB for crashkernel (System RAM: %ldMB)\n",
+		(unsigned long)(crash_size >> 20),
+		(unsigned long)(crash_base >> 20),
+		(unsigned long)(total_mem >> 20));
 
 	crashk_res.start = crash_base;
 	crashk_res.end = crash_base + crash_size - 1;
@@ -829,6 +885,8 @@ static inline void reserve_crashkernel(void) {}
 void __init hyp_mode_check(void)
 {
 #ifdef CONFIG_ARM_VIRT_EXT
+	sync_boot_mode();
+
 	if (is_hyp_mode_available()) {
 		pr_info("CPU: All CPU(s) started in HYP mode.\n");
 		pr_info("CPU: Virtualization extensions available.\n");
@@ -848,13 +906,12 @@ void __init setup_arch(char **cmdline_p)
 	const struct machine_desc *mdesc;
 
 	setup_processor();
+	early_ioremap_init();
 	mdesc = setup_machine_fdt(__atags_pointer);
 	if (!mdesc)
 		mdesc = setup_machine_tags(__atags_pointer, __machine_arch_type);
 	machine_desc = mdesc;
 	machine_name = mdesc->name;
-
-	setup_dma_zone(mdesc);
 
 	if (mdesc->reboot_mode != REBOOT_HARD)
 		reboot_mode = mdesc->reboot_mode;
@@ -870,7 +927,8 @@ void __init setup_arch(char **cmdline_p)
 
 	parse_early_param();
 
-	/* XXX argh */
+	early_paging_init(mdesc, lookup_processor_type(read_cpuid_id()));
+	setup_dma_zone(mdesc);
 	sanity_check_meminfo();
 	arm_memblock_init(mdesc);
 
@@ -882,15 +940,17 @@ void __init setup_arch(char **cmdline_p)
 
 	unflatten_device_tree();
 
+	arm_dt_init_cpu_maps();
 	psci_init();
 #ifdef CONFIG_SMP
 	if (is_smp()) {
-		if (psci_smp_available())
-			smp_set_ops(&psci_smp_ops);
-		else if (mdesc->smp)
-			smp_set_ops(mdesc->smp);
+		if (!mdesc->smp_init || !mdesc->smp_init()) {
+			if (psci_smp_available())
+				smp_set_ops(&psci_smp_ops);
+			else if (mdesc->smp)
+				smp_set_ops(mdesc->smp);
+		}
 		smp_init_cpus();
-		arm_dt_init_cpu_maps();
 		smp_build_mpidr_hash();
 	}
 #endif
@@ -931,7 +991,7 @@ static int __init topology_init(void)
 
 	return 0;
 }
-postcore_initcall(topology_init);
+subsys_initcall(topology_init);
 
 #ifdef CONFIG_HAVE_PROC_CPU
 static int __init proc_cpu_init(void)
@@ -972,6 +1032,15 @@ static const char *hwcap_str[] = {
 	NULL
 };
 
+static const char *hwcap2_str[] = {
+	"aes",
+	"pmull",
+	"sha1",
+	"sha2",
+	"crc32",
+	NULL
+};
+
 static int c_show(struct seq_file *m, void *v)
 {
 	int i, j;
@@ -1003,6 +1072,10 @@ static int c_show(struct seq_file *m, void *v)
 		for (j = 0; hwcap_str[j]; j++)
 			if (elf_hwcap & (1 << j))
 				seq_printf(m, "%s ", hwcap_str[j]);
+
+		for (j = 0; hwcap2_str[j]; j++)
+			if (elf_hwcap2 & (1 << j))
+				seq_printf(m, "%s ", hwcap2_str[j]);
 
 		seq_printf(m, "\nCPU implementer\t: 0x%02x\n", cpuid >> 24);
 		seq_printf(m, "CPU architecture: %s\n",

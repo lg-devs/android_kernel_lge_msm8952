@@ -46,6 +46,14 @@ void inode_reclaim_rsv_space(struct inode *inode, qsize_t number);
 void dquot_initialize(struct inode *inode);
 void dquot_drop(struct inode *inode);
 struct dquot *dqget(struct super_block *sb, struct kqid qid);
+static inline struct dquot *dqgrab(struct dquot *dquot)
+{
+	/* Make sure someone else has active reference to dquot */
+	WARN_ON_ONCE(!atomic_read(&dquot->dq_count));
+	WARN_ON_ONCE(!test_bit(DQ_ACTIVE_B, &dquot->dq_flags));
+	atomic_inc(&dquot->dq_count);
+	return dquot;
+}
 void dqput(struct dquot *dquot);
 int dquot_scan_active(struct super_block *sb,
 		      int (*fn)(struct dquot *dquot, unsigned long priv),
@@ -90,9 +98,9 @@ int dquot_quota_sync(struct super_block *sb, int type);
 int dquot_get_dqinfo(struct super_block *sb, int type, struct if_dqinfo *ii);
 int dquot_set_dqinfo(struct super_block *sb, int type, struct if_dqinfo *ii);
 int dquot_get_dqblk(struct super_block *sb, struct kqid id,
-		struct fs_disk_quota *di);
+		struct qc_dqblk *di);
 int dquot_set_dqblk(struct super_block *sb, struct kqid id,
-		struct fs_disk_quota *di);
+		struct qc_dqblk *di);
 
 int __dquot_transfer(struct inode *inode, struct dquot **transfer_to);
 int dquot_transfer(struct inode *inode, struct iattr *iattr);

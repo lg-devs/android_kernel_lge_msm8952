@@ -38,6 +38,9 @@ SoCs:
 - APQ8094
   compatible = "qcom,apq8094"
 
+- APQ8096
+  compatible = "qcom,apq8096"
+
 - MDM9630
   compatible = "qcom,mdm9630"
 
@@ -53,9 +56,6 @@ SoCs:
 - MSM8916
   compatible = "qcom,msm8916"
 
-- APQ8016
-  compatible = "qcom,apq8016"
-
 - MSM8936
   compatible = "qcom,msm8936"
 
@@ -68,14 +68,26 @@ SoCs:
 - MSM8994
   compatible = "qcom,msm8994"
 
+- MSM8996
+  compatible = "qcom,msm8996"
+
+- MSMCOBALT
+  compatible = "qcom,msmcobalt"
+
 - MSM8952
   compatible = "qcom,msm8952"
 
+- APQ8052
+  compatible = "qcom,apq8052"
+
+- MSMTITANIUM
+  compatible = "qcom,msmtitanium"
+
+- MSMTHORIUM
+  compatible = "qcom,msmthorium"
+
 - MDM9640
   compatible = "qcom,mdm9640"
-
-- MDMFERMIUM
-  compatible = "qcom,mdmfermium"
 
 - MDMCALIFORNIUM
   compatible = "qcom,mdmcalifornium"
@@ -83,29 +95,8 @@ SoCs:
 - VPIPA
   compatible = "qcom,msmvpipa"
 
-- FSM9010
-  compatible = "qcom,fsm9010"
-
-- FSM9910
-  compatible = "qcom,fsm9900"
-
-- MSM8929
-  compatible = "qcom,msm8929"
-
-- APQ8052
-  compatible = "qcom,apq8052"
-
-- MSM8976
-  compatible = "qcom,msm8976"
-
-- MSM8956
-  compatible = "qcom,msm8956"
-
-- APQ8076
-  compatible = "qcom,apq8076"
-
-- APQ8056
-  compatible = "qcom,apq8056"
+- MDMFERMIUM
+  compatible = "qcom,mdmfermium"
 
 Generic board variants:
 
@@ -130,17 +121,12 @@ Generic board variants:
 - QRD device:
   compatible = "qcom,qrd"
 
-- SBC device:
-  compatible = "qcom,sbc"
-
 - Simulator device:
   compatible = "qcom,sim"
 
 - RUMI device:
   compatible = "qcom,rumi"
 
-- Polaris device:
-  compatible = "qcom,polaris"
 
 
 Boards (SoC type + board variant):
@@ -161,6 +147,9 @@ compatible = "qcom,apq8094-fluid"
 compatible = "qcom,apq8094-liquid"
 compatible = "qcom,apq8094-mtp"
 compatible = "qcom,apq8094-dragonboard"
+compatible = "qcom,apq8096-cdp"
+compatible = "qcom,apq8096-dragonboard"
+compatible = "qcom,apq8096-liquid"
 compatible = "qcom,mdm9630-cdp"
 compatible = "qcom,mdm9630-mtp"
 compatible = "qcom,mdm9630-sim"
@@ -190,9 +179,6 @@ compatible = "qcom,msm8916-qrd-skuid"
 compatible = "qcom,msm8916-qrd-skut1"
 compatible = "qcom,msm8916-rumi"
 compatible = "qcom,msm8916-sim"
-compatible = "qcom,apq8016-sbc"
-compatible = "qcom,apq8016-qrd"
-compatible = "qcom,apq8016-qrd-skuh"
 compatible = "qcom,msm8926-cdp"
 compatible = "qcom,msm8926-mtp"
 compatible = "qcom,msm8926-qrd"
@@ -221,48 +207,35 @@ compatible = "qcom,msm8994-liquid"
 compatible = "qcom,msm8994-mtp"
 compatible = "qcom,msm8994-rumi"
 compatible = "qcom,msm8994-sim"
+compatible = "qcom,msm8996-rumi"
+compatible = "qcom,msm8996-sim"
+compatible = "qcom,msm8996-cdp"
+compatible = "qcom,msm8996-dtp"
+compatible = "qcom,msm8996-fluid"
+compatible = "qcom,msm8996-liquid"
+compatible = "qcom,msm8996-mtp"
+compatible = "qcom,msmcobalt-sim"
+compatible = "qcom,msmcobalt-rumi"
 compatible = "qcom,msm8952-rumi"
 compatible = "qcom,msm8952-sim"
 compatible = "qcom,msm8952-qrd"
 compatible = "qcom,msm8952-qrd-skum"
 compatible = "qcom,msm8952-cdp"
 compatible = "qcom,msm8952-mtp"
-compatible = "qcom,msm8952-polaris"
-compatible = "qcom,msm8976-rumi"
-compatible = "qcom,msm8976-sim"
-compatible = "qcom,msm8976-cdp"
-compatible = "qcom,msm8976-mtp"
-compatible = "qcom,msm8976-qrd"
-compatible = "qcom,msm8976-qrd-skun"
-compatible = "qcom,msm8976-v1.1-qrd-skun-dvt"
-compatible = "qcom,msm8976-qrd-skun-evt2"
-compatible = "qcom,msm8976-polaris"
-compatible = "qcom,msm8956-rumi"
-compatible = "qcom,msm8956-sim"
-compatible = "qcom,msm8956-cdp"
-compatible = "qcom,msm8956-mtp"
-compatible = "qcom,msm8956-qrd"
-compatible = "qcom,msm8956-qrd-skun"
+compatible = "qcom,apq8052-cdp"
+compatible = "qcom,apq8052-mtp"
+compatible = "qcom,msmtitanium-rumi"
+compatible = "qcom,msmtitanium-sim"
+compatible = "qcom,msmthorium-rumi"
 compatible = "qcom,mdm9640-cdp"
 compatible = "qcom,mdm9640-mtp"
 compatible = "qcom,mdm9640-rumi"
 compatible = "qcom,mdm9640-sim"
-compatible = "qcom,fsm9010-cdp"
-compatible = "qcom,fsm9010-mtp"
-compatible = "qcom,fsm9900-cdp"
-compatible = "qcom,fsm9900-mtp"
 compatible = "qcom,msmvpipa-sim"
-compatible = "qcom,msm8929-cdp"
-compatible = "qcom,msm8929-mtp"
-compatible = "qcom,msm8929-qrd"
-compatible = "qcom,msm8929-qrd-skul"
-compatible = "qcom,msm8929-qrd-skulb"
-compatible = "qcom,apq8052-cdp"
-compatible = "qcom,apq8052-mtp"
 compatible = "qcom,mdmfermium-rumi"
+compatible = "qcom,mdmfermium-cdp"
+compatible = "qcom,mdmfermium-mtp"
 compatible = "qcom,mdmcalifornium-rumi"
 compatible = "qcom,mdmcalifornium-sim"
-compatible = "qcom,apq8076-cdp"
-compatible = "qcom,apq8076-mtp"
-compatible = "qcom,apq8056-cdp"
-compatible = "qcom,apq8056-mtp"
+compatible = "qcom,mdmcalifornium-cdp"
+compatible = "qcom,mdmcalifornium-mtp"

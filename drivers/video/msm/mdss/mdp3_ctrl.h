@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,6 +27,7 @@
 #define MDP3_MAX_BUF_QUEUE 8
 #define MDP3_LUT_HIST_EN 0x001
 #define MDP3_LUT_GC_EN 0x002
+#define MDP3_LUT_HIST_GC_EN (MDP3_LUT_HIST_EN | MDP3_LUT_GC_EN)
 
 struct mdp3_buffer_queue {
 	struct mdp3_img_data img_data[MDP3_MAX_BUF_QUEUE];
@@ -45,7 +46,7 @@ struct mdp3_session_data {
 	ktime_t vsync_time;
 	struct timer_list vsync_timer;
 	int vsync_period;
-	struct sysfs_dirent *vsync_event_sd;
+	struct kernfs_node *vsync_event_sd;
 	struct mdp_overlay overlay;
 	struct mdp_overlay req_overlay;
 	struct mdp3_buffer_queue bufq_in;
@@ -55,7 +56,9 @@ struct mdp3_session_data {
 	atomic_t dma_done_cnt;
 	int histo_status;
 	struct mutex histo_lock;
+	struct mutex pp_lock;
 	int lut_sel;
+	int cc_vect_sel;
 	bool vsync_before_commit;
 	bool first_commit;
 	int clk_on;
@@ -64,8 +67,6 @@ struct mdp3_session_data {
 	int vsync_enabled;
 	atomic_t vsync_countdown; /* Used to count down  */
 	bool in_splash_screen;
-	int dyn_pu_state; /* dynamic partial update status */
-	bool esd_recovery;
 
 	bool dma_active;
 	struct completion dma_completion;

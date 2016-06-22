@@ -146,7 +146,7 @@ static const struct dev_pm_ops slimbus_pm = {
 	SET_RUNTIME_PM_OPS(
 		pm_generic_suspend,
 		pm_generic_resume,
-		pm_generic_runtime_idle
+		NULL
 		)
 };
 struct bus_type slimbus_type = {
@@ -446,7 +446,7 @@ static int slim_register_controller(struct slim_controller *ctrl)
 
 	/* Can't register until after driver model init */
 	if (WARN_ON(!slimbus_type.p)) {
-		ret = -EAGAIN;
+		ret = -EPROBE_DEFER;
 		goto out_list;
 	}
 
@@ -1293,6 +1293,7 @@ int slim_config_mgrports(struct slim_device *sb, u32 *ph, int nports,
 {
 	int i;
 	struct slim_controller *ctrl;
+
 	if (!sb || !ph || !nports || !sb->ctrl || !cfg)
 		return -EINVAL;
 
@@ -1300,6 +1301,7 @@ int slim_config_mgrports(struct slim_device *sb, u32 *ph, int nports,
 	mutex_lock(&ctrl->sched.m_reconf);
 	for (i = 0; i < nports; i++) {
 		u8 pn = SLIM_HDL_TO_PORT(ph[i]);
+
 		if (ctrl->ports[pn].state == SLIM_P_CFG)
 			return -EISCONN;
 		ctrl->ports[pn].cfg = *cfg;
@@ -1685,6 +1687,7 @@ static int slim_remove_ch(struct slim_controller *ctrl, struct slim_ich *slc)
 	la = SLIM_HDL_TO_LA(ph);
 	if (la == SLIM_LA_MANAGER) {
 		u8 pn = SLIM_HDL_TO_PORT(ph);
+
 		ctrl->ports[pn].state = SLIM_P_UNCFG;
 		ctrl->ports[pn].cfg.watermark = 0;
 		ctrl->ports[pn].cfg.port_opts = 0;

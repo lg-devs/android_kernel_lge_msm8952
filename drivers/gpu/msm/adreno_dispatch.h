@@ -15,6 +15,12 @@
 #ifndef ____ADRENO_DISPATCHER_H
 #define ____ADRENO_DISPATCHER_H
 
+/* Time to allow preemption to complete (in ms) */
+#define ADRENO_DISPATCH_PREEMPT_TIMEOUT 10000
+
+extern unsigned int adreno_disp_preempt_fair_sched;
+extern unsigned int adreno_cmdbatch_timeout;
+
 /**
  * enum adreno_dispatcher_preempt_states - States of dispatcher for ringbuffer
  * preemption
@@ -131,6 +137,7 @@ void adreno_dispatcher_start(struct kgsl_device *device);
 int adreno_dispatcher_init(struct adreno_device *adreno_dev);
 void adreno_dispatcher_close(struct adreno_device *adreno_dev);
 int adreno_dispatcher_idle(struct adreno_device *adreno_dev);
+void adreno_dispatcher_irq_fault(struct kgsl_device *device);
 void adreno_dispatcher_stop(struct adreno_device *adreno_dev);
 
 int adreno_dispatcher_queue_cmd(struct adreno_device *adreno_dev,
@@ -143,5 +150,12 @@ void adreno_dispatcher_queue_context(struct kgsl_device *device,
 		struct adreno_context *drawctxt);
 void adreno_dispatcher_preempt_callback(struct adreno_device *adreno_dev,
 					int bit);
+struct adreno_ringbuffer *adreno_dispatcher_get_highest_busy_rb(
+					struct adreno_device *adreno_dev);
+int adreno_dispatch_process_cmdqueue(struct adreno_device *adreno_dev,
+				struct adreno_dispatcher_cmdqueue *dispatch_q,
+				int long_ib_detect);
+void adreno_preempt_process_dispatch_queue(struct adreno_device *adreno_dev,
+	struct adreno_dispatcher_cmdqueue *dispatch_q);
 
 #endif /* __ADRENO_DISPATCHER_H */

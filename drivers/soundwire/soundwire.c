@@ -196,7 +196,7 @@ int of_register_swr_devices(struct swr_master *master)
 				node->full_name);
 			continue;
 		}
-		if (of_property_read_u64(node, "reg", (u64 *)&addr)) {
+		if (of_property_read_u64(node, "reg", &addr)) {
 			dev_err(&master->dev, "of_swr:invalid reg %s\n",
 				node->full_name);
 			continue;
@@ -405,6 +405,23 @@ int swr_disconnect_port(struct swr_device *dev, u8 *port_id, u8 num_port)
 	return ret;
 }
 EXPORT_SYMBOL(swr_disconnect_port);
+
+#ifdef CONFIG_MACH_LGE
+int swr_wakeup_soundwire_master(struct swr_device *dev)
+{
+	int ret;
+	struct swr_master *master = dev->master;
+
+	if (!master) {
+		pr_err("%s: Master is NULL\n", __func__);
+		return -EINVAL;
+	}
+
+	ret = master->wakeup_soundwire_master(master);
+	return ret;
+}
+EXPORT_SYMBOL(swr_wakeup_soundwire_master);
+#endif
 
 /**
  * swr_get_logical_dev_num - Get soundwire slave logical device number

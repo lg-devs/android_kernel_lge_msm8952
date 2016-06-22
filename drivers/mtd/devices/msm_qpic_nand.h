@@ -102,7 +102,7 @@
 
 /* QPIC NANDc (NAND Controller) Register Set */
 #define MSM_NAND_REG(info, off)		    (info->nand_phys + off)
-#define MSM_NAND_QPIC_VERSION(info)	    MSM_NAND_REG(info, 0x20100)
+#define MSM_NAND_QPIC_VERSION(info)	    MSM_NAND_REG(info, 0x24100)
 #define MSM_NAND_FLASH_CMD(info)	    MSM_NAND_REG(info, 0x30000)
 #define MSM_NAND_ADDR0(info)                MSM_NAND_REG(info, 0x30004)
 #define MSM_NAND_ADDR1(info)                MSM_NAND_REG(info, 0x30008)
@@ -173,7 +173,7 @@
 
 #define MSM_NAND_CTRL(info)		    MSM_NAND_REG(info, 0x30F00)
 #define BAM_MODE_EN	0
-#define MSM_NAND_VERSION(info)         MSM_NAND_REG(info, 0x30F08)
+#define MSM_NAND_VERSION(info)         MSM_NAND_REG(info, 0x34F08)
 #define MSM_NAND_READ_LOCATION_0(info)      MSM_NAND_REG(info, 0x30F20)
 #define MSM_NAND_READ_LOCATION_1(info)      MSM_NAND_REG(info, 0x30F24)
 
@@ -199,18 +199,6 @@
 #define INT_UNLCK	(INT | SPS_IOVEC_FLAG_UNLOCK)
 #define CMD_INT_UNLCK	(CMD | INT_UNLCK)
 #define NWD		SPS_IOVEC_FLAG_NWD
-
-#define msm_nand_sps_get_iovec(pipe, indx, cnt, ret, label, iovec)	\
-	do {								\
-		do {							\
-			ret = sps_get_iovec((pipe), (iovec));		\
-		} while (((iovec)->addr == 0x0) && ((iovec)->size == 0x0));\
-		if (ret) {						\
-			pr_err("sps_get_iovec failed for pipe %d (ret: %d)\n",\
-					indx, ret);			\
-			goto label;					\
-		}							\
-	} while (--(cnt))
 
 /* Structure that defines a NAND SPS command element */
 struct msm_nand_sps_cmd {
@@ -330,6 +318,7 @@ struct msm_nand_info {
 	struct mutex lock;
 	struct flash_identification flash_dev;
 	struct msm_nand_clk_data clk_data;
+	u64 dma_mask;
 };
 
 /* Structure that defines an ONFI parameter page (512B) */

@@ -417,7 +417,16 @@ static void diag_smd_queue_read(void *ctxt)
 		queue_work(smd_info->wq, &(smd_info->read_work));
 	}
 }
+int diag_smd_check_state(void *ctxt)
+{
+	struct diag_smd_info *info = NULL;
 
+	if (!ctxt)
+		return 0;
+
+	info = (struct diag_smd_info *)ctxt;
+	return (int)(atomic_read(&info->diag_state));
+}
 void diag_smd_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt)
 {
 	struct diag_smd_info *smd_info = NULL;
@@ -718,13 +727,11 @@ static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
 	    !atomic_read(&smd_info->opened))
 		return -EIO;
 
-	/*
-	 * Always try to read the data if notification is received from smd
-	 * In case if packet size is 0 release the wake source hold earlier
-	 */
 	err = wait_event_interruptible(smd_info->read_wait_q,
-				(smd_info->hdl != NULL) &&
-				(atomic_read(&smd_info->opened) == 1));
+				       (smd_info->hdl == NULL) ||
+				       (atomic_read(&smd_info->opened) == 0) ||
+				       (smd_cur_packet_size(smd_info->hdl)) ||
+				       (!atomic_read(&smd_info->diag_state)));
 	if (err) {
 		diagfwd_channel_read_done(smd_info->fwd_ctxt, buf, 0);
 		return -ERESTARTSYS;

@@ -28,9 +28,10 @@
 #include <linux/kmemleak.h>
 #include <linux/dma-mapping.h>
 #include <soc/qcom/scm.h>
+#include <soc/qcom/secure_buffer.h>
 
 #include <asm/cacheflush.h>
-#include <asm/sizes.h>
+#include <linux/sizes.h>
 
 #include "msm_iommu_pagetable.h"
 #include "msm_iommu_perfmon.h"
@@ -175,6 +176,7 @@ static int msm_iommu_reg_dump_to_regs(
 		uint32_t addr	= *it;
 		uint32_t val	= *(it + 1);
 		struct msm_iommu_context_reg *reg = NULL;
+
 		if (addr < phys_base) {
 			pr_err("Bogus-looking register (0x%x) for Iommu with base at %pa. Skipping.\n",
 				addr, &phys_base);
@@ -186,6 +188,7 @@ static int msm_iommu_reg_dump_to_regs(
 			struct dump_regs_tbl_entry dump_reg = dump_regs_tbl[j];
 			void *test_reg;
 			unsigned int test_offset;
+
 			switch (dump_reg.dump_reg_type) {
 			case DRT_CTX_REG:
 				test_reg = CTX_REG(dump_reg.reg_offset,
@@ -288,10 +291,8 @@ irqreturn_t msm_iommu_secure_fault_handler_v2(int irq, void *dev_id)
 	BUG_ON(!ctx_drvdata);
 
 	regs = kzalloc(sizeof(*regs), GFP_KERNEL);
-	if (!regs) {
-		pr_err("%s: Couldn't allocate memory\n", __func__);
+	if (!regs)
 		goto lock_release;
-	}
 
 	if (!drvdata->ctx_attach_count) {
 		pr_err("Unexpected IOMMU page fault from secure context bank!\n");
@@ -315,6 +316,7 @@ irqreturn_t msm_iommu_secure_fault_handler_v2(int irq, void *dev_id)
 		goto clock_off;
 	} else {
 		struct msm_iommu_context_reg ctx_regs[MAX_DUMP_REGS];
+
 		memset(ctx_regs, 0, sizeof(ctx_regs));
 		tmp = msm_iommu_reg_dump_to_regs(
 			ctx_regs, regs, drvdata, ctx_drvdata);
@@ -491,6 +493,7 @@ int msm_iommu_sec_program_iommu(struct msm_iommu_drvdata *drvdata,
 	if (drvdata->smmu_local_base) {
 		writel_relaxed(0xFFFFFFFF, drvdata->smmu_local_base +
 						SMMU_INTR_SEL_NS);
+		/* make sure SMMU_INTR_SEL_NS is seen */
 		mb();
 	}
 
@@ -576,6 +579,7 @@ static unsigned int get_phys_addr(struct scatterlist *sg)
 	 * struct page associated with them.
 	 */
 	unsigned int pa = sg_dma_address(sg);
+
 	if (pa == 0)
 		pa = sg_phys(sg);
 	return pa;
@@ -624,7 +628,7 @@ static int msm_iommu_sec_ptbl_map_range(struct msm_iommu_drvdata *iommu_drvdata,
 			cnt += sgiter->length / SZ_1M;
 		}
 
-		pa_list = kmalloc(cnt * sizeof(*pa_list), GFP_KERNEL);
+		pa_list = kmalloc_array(cnt, sizeof(*pa_list), GFP_KERNEL);
 		if (!pa_list)
 			return -ENOMEM;
 
@@ -636,7 +640,8 @@ static int msm_iommu_sec_ptbl_map_range(struct msm_iommu_drvdata *iommu_drvdata,
 			return -EINVAL;
 		}
 		while (offset < len) {
-			pa_list[cnt] = pa + chunk_offset;
+			pa += chunk_offset;
+			pa_list[cnt] = pa;
 			chunk_offset += SZ_1M;
 			offset += SZ_1M;
 			cnt++;
@@ -968,15 +973,9 @@ static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
 	return 0;
 }
 
-static int msm_iommu_domain_has_cap(struct iommu_domain *domain,
-				    unsigned long cap)
+static bool msm_iommu_capable(enum iommu_cap cap)
 {
-	return 0;
-}
-
-static phys_addr_t msm_iommu_get_pt_base_addr(struct iommu_domain *domain)
-{
-	return 0;
+	return false;
 }
 
 void msm_iommu_check_scm_call_avail(void)
@@ -999,11 +998,70 @@ int is_vfe_secure(void)
 {
 	if (secure_camera_enabled == -1) {
 		u32 ver = scm_get_feat_version(SCM_SVC_SEC_CAMERA);
+
 		secure_camera_enabled = ver >= MAKE_VERSION(1, 0, 0);
 	}
 	return secure_camera_enabled;
 }
 
+static int msm_iommu_dma_supported(struct iommu_domain *domain,
+				  struct device *dev, u64 mask)
+{
+	return ((1ULL << 32) - 1) < mask ? 0 : 1;
+}
+
+static int msm_iommu_domain_set_attr(struct iommu_domain *domain,
+				enum iommu_attr attr, void *data)
+{
+	switch (attr) {
+	case DOMAIN_ATTR_COHERENT_HTW_DISABLE:
+		/*
+		 * Just quietly bail out as L2-redirect feature
+		 * cannot be enabled for Secure context banks.
+		 */
+		break;
+	case DOMAIN_ATTR_SECURE_VMID:
+		/*
+		 * MSM iommu driver doesn't set the VMID for
+		 * any domain.
+		 */
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int msm_iommu_domain_get_attr(struct iommu_domain *domain,
+				enum iommu_attr attr, void *data)
+{
+	struct msm_iommu_priv *priv = domain->priv;
+	struct msm_iommu_ctx_drvdata *ctx_drvdata;
+
+	switch (attr) {
+	case DOMAIN_ATTR_COHERENT_HTW_DISABLE:
+		/*
+		 * This is the case always for secure
+		 * context banks
+		 */
+		*((unsigned int *) data) = 1;
+		break;
+	case DOMAIN_ATTR_SECURE_VMID:
+		*((int *) data) = -VMID_INVAL;
+		break;
+	case DOMAIN_ATTR_CONTEXT_BANK:
+		if (list_empty(&priv->list_attached))
+			return -ENODEV;
+
+		ctx_drvdata = list_first_entry(&priv->list_attached,
+			struct msm_iommu_ctx_drvdata, attached_elm);
+		*((unsigned int *) data) = ctx_drvdata->num;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
 
 static struct iommu_ops msm_iommu_ops = {
 	.domain_init = msm_iommu_domain_init,
@@ -1016,9 +1074,11 @@ static struct iommu_ops msm_iommu_ops = {
 	.map_sg = msm_iommu_map_sg,
 	.unmap_range = msm_iommu_unmap_range,
 	.iova_to_phys = msm_iommu_iova_to_phys,
-	.domain_has_cap = msm_iommu_domain_has_cap,
-	.get_pt_base_addr = msm_iommu_get_pt_base_addr,
+	.capable = msm_iommu_capable,
 	.pgsize_bitmap = MSM_IOMMU_PGSIZES,
+	.domain_set_attr = msm_iommu_domain_set_attr,
+	.domain_get_attr = msm_iommu_domain_get_attr,
+	.dma_supported = msm_iommu_dma_supported,
 };
 
 static int __init msm_iommu_sec_init(void)

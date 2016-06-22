@@ -26,6 +26,8 @@
 #include <linux/kmemleak.h>
 #include <asm/current.h>
 #include <net/sock.h>
+#include <linux/ipc_router.h>
+#include <linux/notifier.h>
 #include "diagchar.h"
 #include "diagfwd.h"
 #include "diagfwd_peripheral.h"
@@ -37,7 +39,7 @@
 #define MODEM_INST_BASE		0
 #define LPASS_INST_BASE		64
 #define WCNSS_INST_BASE		128
-#define SENSORS_INST_BASE	256
+#define SENSORS_INST_BASE	192
 
 #define INST_ID_CNTL		0
 #define INST_ID_CMD		1
@@ -168,6 +170,8 @@ static int diag_socket_write(void *ctxt, unsigned char *buf, int len);
 static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len);
 static void diag_socket_queue_read(void *ctxt);
 static void socket_init_work_fn(struct work_struct *work);
+static int socket_ready_notify(struct notifier_block *nb,
+			       unsigned long action, void *data);
 
 static struct diag_peripheral_ops socket_ops = {
 	.open = diag_state_open_socket,
@@ -175,6 +179,10 @@ static struct diag_peripheral_ops socket_ops = {
 	.write = diag_socket_write,
 	.read = diag_socket_read,
 	.queue_read = diag_socket_queue_read
+};
+
+static struct notifier_block socket_notify = {
+	.notifier_call = socket_ready_notify,
 };
 
 static void diag_state_open_socket(void *ctxt)
@@ -205,7 +213,7 @@ static void diag_state_close_socket(void *ctxt)
 	flush_workqueue(info->wq);
 }
 
-static void socket_data_ready(struct sock *sk_ptr, int bytes)
+static void socket_data_ready(struct sock *sk_ptr)
 {
 	unsigned long flags;
 	struct diag_socket_info *info = NULL;
@@ -238,7 +246,7 @@ static void socket_data_ready(struct sock *sk_ptr, int bytes)
 	return;
 }
 
-static void cntl_socket_data_ready(struct sock *sk_ptr, int bytes)
+static void cntl_socket_data_ready(struct sock *sk_ptr)
 {
 	if (!sk_ptr || !cntl_socket) {
 		pr_err_ratelimited("diag: In %s, invalid ptrs. sk_ptr: %p cntl_socket: %p\n",
@@ -475,7 +483,7 @@ static int cntl_socket_process_msg_server(uint32_t cmd, uint32_t svc_id,
 	uint8_t found = 0;
 	struct diag_socket_info *info = NULL;
 
-	for (peripheral = 0; peripheral <= NUM_PERIPHERALS; peripheral++) {
+	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
 		info = &socket_cmd[peripheral];
 		if ((svc_id == info->svc_id) &&
 		    (ins_id == info->ins_id)) {
@@ -523,7 +531,7 @@ static int cntl_socket_process_msg_client(uint32_t cmd, uint32_t node_id,
 	struct diag_socket_info *info = NULL;
 	struct msm_ipc_port_addr remote_port = {0};
 
-	for (peripheral = 0; peripheral <= NUM_PERIPHERALS; peripheral++) {
+	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
 		info = &socket_data[peripheral];
 		remote_port = info->remote_addr.address.addr.port_addr;
 		if ((remote_port.node_id == node_id) &&
@@ -647,6 +655,17 @@ void diag_socket_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt)
 	info->fwd_ctxt = fwd_ctxt;
 }
 
+int diag_socket_check_state(void *ctxt)
+{
+	struct diag_socket_info *info = NULL;
+
+	if (!ctxt)
+		return 0;
+
+	info = (struct diag_socket_info *)ctxt;
+	return (int)(atomic_read(&info->diag_state));
+}
+
 static void __diag_socket_init(struct diag_socket_info *info)
 {
 	uint16_t ins_base = 0;
@@ -720,31 +739,20 @@ static void __diag_socket_init(struct diag_socket_info *info)
 	info->svc_id = DIAG_SVC_ID;
 	info->ins_id = ins_base + ins_offset;
 	info->inited = 1;
-
-	if (info->port_type == PORT_TYPE_SERVER)
-		queue_work(info->wq, &(info->init_work));
 }
 
-static int __diag_cntl_socket_init(void)
+static void cntl_socket_init_work_fn(struct work_struct *work)
 {
 	int ret = 0;
 
-	cntl_socket = kzalloc(sizeof(struct diag_cntl_socket_info), GFP_KERNEL);
 	if (!cntl_socket)
-		return -ENOMEM;
-
-	cntl_socket->svc_id = DIAG_SVC_ID;
-	cntl_socket->ins_id = 1;
-	atomic_set(&cntl_socket->data_ready, 0);
-	init_waitqueue_head(&cntl_socket->read_wait_q);
-	cntl_socket->wq = create_singlethread_workqueue("DIAG_CNTL_SOCKET");
-	INIT_WORK(&(cntl_socket->read_work), cntl_socket_read_work_fn);
+		return;
 
 	ret = sock_create(AF_MSM_IPC, SOCK_DGRAM, 0, &cntl_socket->hdl);
 	if (ret < 0 || !cntl_socket->hdl) {
 		pr_err("diag: In %s, cntl socket is not initialized, ret: %d\n",
 		       __func__, ret);
-		return -EFAULT;
+		return;
 	}
 
 	write_lock_bh(&cntl_socket->hdl->sk->sk_callback_lock);
@@ -757,16 +765,32 @@ static int __diag_cntl_socket_init(void)
 	if (ret < 0) {
 		pr_err("diag: In %s Could not bind as control port, ret: %d\n",
 		       __func__, ret);
-		return -EFAULT;
 	}
+
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "Initialized control sockets");
+}
+
+static int __diag_cntl_socket_init(void)
+{
+	cntl_socket = kzalloc(sizeof(struct diag_cntl_socket_info), GFP_KERNEL);
+	if (!cntl_socket)
+		return -ENOMEM;
+
+	cntl_socket->svc_id = DIAG_SVC_ID;
+	cntl_socket->ins_id = 1;
+	atomic_set(&cntl_socket->data_ready, 0);
+	init_waitqueue_head(&cntl_socket->read_wait_q);
+	cntl_socket->wq = create_singlethread_workqueue("DIAG_CNTL_SOCKET");
+	INIT_WORK(&(cntl_socket->read_work), cntl_socket_read_work_fn);
+	INIT_WORK(&(cntl_socket->init_work), cntl_socket_init_work_fn);
 
 	return 0;
 }
 
 int diag_socket_init(void)
 {
-	int peripheral = 0;
 	int err = 0;
+	int peripheral = 0;
 	struct diag_socket_info *info = NULL;
 
 	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
@@ -783,12 +807,44 @@ int diag_socket_init(void)
 	}
 
 	err = __diag_cntl_socket_init();
-	if (err)
+	if (err) {
+		pr_err("diag: Unable to open control sockets, err: %d\n", err);
 		goto fail;
+	}
 
-	return 0;
+	register_ipcrtr_af_init_notifier(&socket_notify);
 fail:
 	return err;
+}
+
+static int socket_ready_notify(struct notifier_block *nb,
+			       unsigned long action, void *data)
+{
+	uint8_t peripheral;
+	struct diag_socket_info *info = NULL;
+
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "received notification from IPCR");
+
+	if (action != IPCRTR_AF_INIT) {
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			 "action not recognized by diag %lu\n", action);
+		return 0;
+	}
+
+	/* Initialize only the servers */
+	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
+		info = &socket_cntl[peripheral];
+		queue_work(info->wq, &(info->init_work));
+		info = &socket_data[peripheral];
+		queue_work(info->wq, &(info->init_work));
+		info = &socket_dci[peripheral];
+		queue_work(info->wq, &(info->init_work));
+	}
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "Initialized all servers");
+
+	queue_work(cntl_socket->wq, &(cntl_socket->init_work));
+
+	return 0;
 }
 
 int diag_socket_init_peripheral(uint8_t peripheral)
@@ -885,7 +941,7 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 			 "%s closing read thread. diag state is closed\n",
 			 info->name);
-		diag_ws_release();
+		diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
 		return 0;
 	}
 

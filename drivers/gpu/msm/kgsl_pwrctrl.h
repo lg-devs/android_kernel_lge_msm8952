@@ -25,7 +25,7 @@
 
 #define KGSL_PWR_ON	0xFFFF
 
-#define KGSL_MAX_CLKS 11
+#define KGSL_MAX_CLKS 10
 
 #define KGSL_MAX_REGULATORS 2
 #define KGSL_MAX_REGULATOR_NAME_LEN 8
@@ -47,6 +47,11 @@
 #define KGSL_PWR_ADD_LIMIT 0
 #define KGSL_PWR_DEL_LIMIT 1
 #define KGSL_PWR_SET_LIMIT 2
+
+enum kgsl_pwrctrl_timer_type {
+	KGSL_PWR_IDLE_TIMER,
+	KGSL_PWR_DEEP_NAP_TIMER,
+};
 
 /*
  * States for thermal cycling.  _DISABLE means that no cycling has been
@@ -84,6 +89,7 @@ struct kgsl_pwr_constraint {
  * struct kgsl_pwrctrl - Power control settings for a KGSL device
  * @interrupt_num - The interrupt number for the device
  * @grp_clks - Array of clocks structures that we control
+ * @dummy_mx_clk - mx clock that is contolled during retention
  * @power_flags - Control flags for power
  * @pwrlevels - List of supported power levels
  * @active_pwrlevel - The currently active power level
@@ -123,11 +129,15 @@ struct kgsl_pwr_constraint {
  * @limits - list head for limits
  * @limits_lock - spin lock to protect limits list
  * @sysfs_pwr_limit - pointer to the sysfs limits node
+ * @deep_nap_timer - Timer struct for entering deep nap
+ * @deep_nap_timeout - Timeout for entering deep nap
+ * @gx_retention - true if retention voltage is allowed
  */
 
 struct kgsl_pwrctrl {
 	int interrupt_num;
 	struct clk *grp_clks[KGSL_MAX_CLKS];
+	struct clk *dummy_mx_clk;
 	unsigned long power_flags;
 	unsigned long ctrl_flags;
 	struct kgsl_pwrlevel pwrlevels[KGSL_MAX_PWRLEVELS];
@@ -169,6 +179,9 @@ struct kgsl_pwrctrl {
 	struct list_head limits;
 	spinlock_t limits_lock;
 	struct kgsl_pwr_limit *sysfs_pwr_limit;
+	struct timer_list deep_nap_timer;
+	uint32_t deep_nap_timeout;
+	bool gx_retention;
 };
 
 int kgsl_pwrctrl_init(struct kgsl_device *device);

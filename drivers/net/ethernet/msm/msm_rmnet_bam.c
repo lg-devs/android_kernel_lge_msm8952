@@ -534,6 +534,7 @@ static const struct net_device_ops rmnet_ops_ip = {
 static void _rmnet_free_bam_later(struct work_struct *work)
 {
 	struct rmnet_free_bam_work *fwork;
+
 	fwork = container_of(work, struct rmnet_free_bam_work, work);
 
 	DBG0("%s: unregister_netdev, done", __func__);
@@ -810,7 +811,7 @@ static int bam_rmnet_probe(struct platform_device *pdev)
 	else
 		dev_name = "rev_rmnet%d";
 
-	dev = alloc_netdev(sizeof(*p), dev_name, rmnet_setup);
+	dev = alloc_netdev(sizeof(*p), dev_name, NET_NAME_ENUM, rmnet_setup);
 	if (!dev) {
 		pr_err("%s: no memory for netdev %d\n", __func__, i);
 		return -ENOMEM;

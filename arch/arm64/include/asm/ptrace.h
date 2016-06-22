@@ -58,6 +58,13 @@
 #define COMPAT_PSR_Z_BIT	0x40000000
 #define COMPAT_PSR_N_BIT	0x80000000
 #define COMPAT_PSR_IT_MASK	0x0600fc00	/* If-Then execution state mask */
+
+#ifdef CONFIG_CPU_BIG_ENDIAN
+#define COMPAT_PSR_ENDSTATE	COMPAT_PSR_E_BIT
+#else
+#define COMPAT_PSR_ENDSTATE	0
+#endif
+
 /*
  * These are 'magic' values for PTRACE_PEEKUSR that return info about where a
  * process is located in memory.
@@ -65,15 +72,6 @@
 #define COMPAT_PT_TEXT_ADDR		0x10000
 #define COMPAT_PT_DATA_ADDR		0x10004
 #define COMPAT_PT_TEXT_END_ADDR		0x10008
-
-/*
- * used to skip a system call when tracer changes its number to -1
- * with ptrace(PTRACE_SET_SYSCALL)
- */
-#define RET_SKIP_SYSCALL	-1
-#define RET_SKIP_SYSCALL_TRACE	-2
-#define IS_SKIP_SYSCALL(no)	((int)(no & 0xffffffff) == -1)
-
 #ifndef __ASSEMBLY__
 
 /* sizeof(struct user) for AArch32 */
@@ -190,14 +188,6 @@ extern unsigned long profile_pc(struct pt_regs *regs);
 #else
 #define profile_pc(regs) instruction_pointer(regs)
 #endif
-
-/*
- * True if instr is a 32-bit thumb instruction. This works if instr
- * is the first or only half-word of a thumb instruction. It also works
- * when instr holds all 32-bits of a wide thumb instruction if stored
- * in the form (first_half<<16)|(second_half)
- */
-#define is_wide_instruction(instr)	((unsigned)(instr) >= 0xe800)
 
 #endif /* __ASSEMBLY__ */
 #endif

@@ -235,7 +235,7 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 				(int)wait_for_completion_timeout(
 					&cb_in.cb_completion, HZ * 2),
 				>, 0);
-			INIT_COMPLETION(cb_in.cb_completion);
+			reinit_completion(&cb_in.cb_completion);
 			ret = msm_smp2p_in_read(remote_pid,
 					SMP2P_RLPB_ENTRY_NAME, &test_response);
 			UT_ASSERT_INT(ret, ==, 0);
@@ -413,7 +413,7 @@ static void smp2p_ut_remote_spinlock_rpm(struct seq_file *s)
 			if (readl_relaxed(&data_ptr->rpm_cmd) !=
 					RPM_CMD_INVALID)
 				break;
-			usleep(1000);
+			usleep_range(1000, 1200);
 		}
 		if (readl_relaxed(&data_ptr->rpm_cmd) == RPM_CMD_INVALID) {
 			/* timeout waiting for RPM */

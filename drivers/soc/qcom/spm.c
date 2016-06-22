@@ -124,7 +124,7 @@ static void msm_spm_drv_flush_shadow(struct msm_spm_driver_data *dev,
 
 	BUG_ON(!dev->reg_shadow);
 
-	spm_raw_write(dev->reg_shadow[reg_index],
+	__raw_writel(dev->reg_shadow[reg_index],
 		dev->reg_base_addr + dev->reg_offsets[reg_index]);
 }
 
@@ -144,42 +144,10 @@ static inline uint32_t msm_spm_drv_get_num_spm_entry(
 	return (dev->reg_shadow[MSM_SPM_REG_SAW_ID] >> 24) & 0xFF;
 }
 
-static inline void msm_spm_drv_set_notify_rpm(
-		struct msm_spm_driver_data *dev, bool notify_rpm)
-{
-	if (dev->major != 0x3)
-		return;
-
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] &= ~BIT(17);
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] |= notify_rpm << 17;
-}
-
-static inline void msm_spm_drv_set_start_addr2(
-		struct msm_spm_driver_data *dev, uint32_t addr, bool pc_mode)
-{
-	addr &= 0x1FF;
-	addr <<= 4;
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] &= 0xFFFFF80F;
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] |= addr;
-
-	if (dev->major != 0x3)
-		return;
-
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] &= 0xFFFEFFFF;
-	if (pc_mode)
-		dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] |= 0x00010000;
-}
-
 static inline void msm_spm_drv_set_start_addr(
-		struct msm_spm_driver_data *dev, uint32_t addr, bool pc_mode)
+		struct msm_spm_driver_data *dev, uint32_t ctl)
 {
-	if (dev->major == 0x3)
-		return msm_spm_drv_set_start_addr2(dev, addr, pc_mode);
-
-	addr &= 0x7F;
-	addr <<= 4;
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] &= 0xFFFFF80F;
-	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] |= addr;
+	dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] = ctl;
 }
 
 static inline bool msm_spm_pmic_arb_present(struct msm_spm_driver_data *dev)
@@ -263,9 +231,110 @@ inline int msm_spm_drv_set_spm_enable(
 		dev->reg_shadow[MSM_SPM_REG_SAW_SPM_CTL] |= value;
 
 		msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_SPM_CTL);
+		wmb();
 	}
 	return 0;
 }
+
+int msm_spm_drv_get_avs_enable(struct msm_spm_driver_data *dev)
+{
+	if (!dev)
+		return -EINVAL;
+
+	return dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] & 0x01;
+}
+
+int msm_spm_drv_set_avs_enable(struct msm_spm_driver_data *dev,
+		 bool enable)
+{
+	uint32_t value = enable ? 0x1 : 0x0;
+
+	if (!dev)
+		return -EINVAL;
+
+	if ((dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] & 0x1) ^ value) {
+		dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] &= ~0x1;
+		dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] |= value;
+
+		msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_AVS_CTL);
+	}
+
+	return 0;
+}
+
+int msm_spm_drv_set_avs_limit(struct msm_spm_driver_data *dev,
+		uint32_t min_lvl, uint32_t max_lvl)
+{
+	uint32_t value = (max_lvl & 0xff) << 16 | (min_lvl & 0xff);
+
+	if (!dev)
+		return -EINVAL;
+
+	dev->reg_shadow[MSM_SPM_REG_SAW_AVS_LIMIT] = value;
+
+	msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_AVS_LIMIT);
+
+	return 0;
+}
+
+static int msm_spm_drv_avs_irq_mask(enum msm_spm_avs_irq irq)
+{
+	switch (irq) {
+	case MSM_SPM_AVS_IRQ_MIN:
+		return BIT(1);
+	case MSM_SPM_AVS_IRQ_MAX:
+		return BIT(2);
+	default:
+		return -EINVAL;
+	}
+}
+
+int msm_spm_drv_set_avs_irq_enable(struct msm_spm_driver_data *dev,
+		enum msm_spm_avs_irq irq, bool enable)
+{
+	int mask = msm_spm_drv_avs_irq_mask(irq);
+	uint32_t value;
+
+	if (!dev)
+		return -EINVAL;
+	else if (mask < 0)
+		return mask;
+
+	value = enable ? mask : 0;
+
+	if ((dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] & mask) ^ value) {
+		dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] &= ~mask;
+		dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] |= value;
+		msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_AVS_CTL);
+	}
+
+	return 0;
+}
+
+int msm_spm_drv_avs_clear_irq(struct msm_spm_driver_data *dev,
+		enum msm_spm_avs_irq irq)
+{
+	int mask = msm_spm_drv_avs_irq_mask(irq);
+
+	if (!dev)
+		return -EINVAL;
+	else if (mask < 0)
+		return mask;
+
+	if (dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] & mask) {
+		/*
+		 * The interrupt status is cleared by disabling and then
+		 * re-enabling the interrupt.
+		 */
+		dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] &= ~mask;
+		msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_AVS_CTL);
+		dev->reg_shadow[MSM_SPM_REG_SAW_AVS_CTL] |= mask;
+		msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_AVS_CTL);
+	}
+
+	return 0;
+}
+
 void msm_spm_drv_flush_seq_entry(struct msm_spm_driver_data *dev)
 {
 	int i;
@@ -277,11 +346,12 @@ void msm_spm_drv_flush_seq_entry(struct msm_spm_driver_data *dev)
 	}
 
 	for (i = 0; i < num_spm_entry; i++) {
-		spm_raw_write(dev->reg_seq_entry_shadow[i],
+		__raw_writel(dev->reg_seq_entry_shadow[i],
 			dev->reg_base_addr
 			+ dev->reg_offsets[MSM_SPM_REG_SAW_SEQ_ENTRY]
 			+ 4 * i);
 	}
+	mb();
 }
 
 void dump_regs(struct msm_spm_driver_data *dev, int cpu)
@@ -329,7 +399,7 @@ int msm_spm_drv_write_seq_data(struct msm_spm_driver_data *dev,
 }
 
 int msm_spm_drv_set_low_power_mode(struct msm_spm_driver_data *dev,
-		uint32_t addr, bool pc_mode, bool notify_rpm)
+		uint32_t ctl)
 {
 
 	/* SPM is configured to reset start address to zero after end of Program
@@ -337,10 +407,10 @@ int msm_spm_drv_set_low_power_mode(struct msm_spm_driver_data *dev,
 	if (!dev)
 		return -EINVAL;
 
-	msm_spm_drv_set_start_addr(dev, addr, pc_mode);
-	msm_spm_drv_set_notify_rpm(dev, notify_rpm);
+	msm_spm_drv_set_start_addr(dev, ctl);
 
 	msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_SPM_CTL);
+	wmb();
 
 	if (msm_spm_debug_mask & MSM_SPM_DEBUG_SHADOW) {
 		int i;
@@ -351,6 +421,12 @@ int msm_spm_drv_set_low_power_mode(struct msm_spm_driver_data *dev,
 	msm_spm_drv_load_shadow(dev, MSM_SPM_REG_SAW_SPM_STS);
 
 	return 0;
+}
+
+uint32_t msm_spm_drv_get_vdd(struct msm_spm_driver_data *dev)
+{
+	msm_spm_drv_load_shadow(dev, MSM_SPM_REG_SAW_PMIC_STS);
+	return dev->reg_shadow[MSM_SPM_REG_SAW_PMIC_STS] & 0xFF;
 }
 
 #ifdef CONFIG_MSM_AVS_HW
@@ -498,6 +574,7 @@ int msm_spm_drv_set_pmic_data(struct msm_spm_driver_data *dev,
 	dev->reg_shadow[MSM_SPM_REG_SAW_VCTL] &= ~0x700FF;
 	dev->reg_shadow[MSM_SPM_REG_SAW_VCTL] |= pmic_data;
 	msm_spm_drv_flush_shadow(dev, MSM_SPM_REG_SAW_VCTL);
+	mb();
 
 	timeout_us = dev->vctl_timeout_us;
 	/**

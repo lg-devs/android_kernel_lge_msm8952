@@ -17,10 +17,15 @@
 
 / {
 	model = "Qualcomm Technologies, Inc. MDM Californium SIM";
-	compatible = "qcom,mdmcalifornium-sim", "qcom,mdmcalifornium", "qcom,sim";
+	compatible = "qcom,mdmcalifornium-sim",
+		   "qcom,mdmcalifornium", "qcom,sim";
 	qcom,board-id = <16 0>;
 };
 
 &blsp1_uart1 {
+	status = "ok";
+};
+
+&qnand_1 {
 	status = "ok";
 };

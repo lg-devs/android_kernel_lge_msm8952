@@ -2695,7 +2695,6 @@ static void mmc_test_run(struct mmc_test_card *test, int testcase)
 	pr_info("%s: Starting tests of card %s...\n",
 		mmc_hostname(test->card->host), mmc_card_id(test->card));
 
-	mmc_rpm_hold(test->card->host, &test->card->dev);
 	mmc_claim_host(test->card->host);
 
 	for (i = 0;i < ARRAY_SIZE(mmc_test_cases);i++) {
@@ -2779,7 +2778,6 @@ static void mmc_test_run(struct mmc_test_card *test, int testcase)
 	}
 
 	mmc_release_host(test->card->host);
-	mmc_rpm_release(test->card->host, &test->card->dev);
 
 	pr_info("%s: Tests completed.\n",
 		mmc_hostname(test->card->host));
@@ -2851,18 +2849,12 @@ static ssize_t mtf_test_write(struct file *file, const char __user *buf,
 	struct seq_file *sf = (struct seq_file *)file->private_data;
 	struct mmc_card *card = (struct mmc_card *)sf->private;
 	struct mmc_test_card *test;
-	char lbuf[12];
 	long testcase;
+	int ret;
 
-	if (count >= sizeof(lbuf))
-		return -EINVAL;
-
-	if (copy_from_user(lbuf, buf, count))
-		return -EFAULT;
-	lbuf[count] = '\0';
-
-	if (strict_strtol(lbuf, 10, &testcase))
-		return -EINVAL;
+	ret = kstrtol_from_user(buf, count, 10, &testcase);
+	if (ret)
+		return ret;
 
 	test = kzalloc(sizeof(struct mmc_test_card), GFP_KERNEL);
 	if (!test)
@@ -3028,12 +3020,17 @@ static void mmc_test_remove(struct mmc_card *card)
 	mmc_test_free_dbgfs_file(card);
 }
 
+static void mmc_test_shutdown(struct mmc_card *card)
+{
+}
+
 static struct mmc_driver mmc_driver = {
 	.drv		= {
 		.name	= "mmc_test",
 	},
 	.probe		= mmc_test_probe,
 	.remove		= mmc_test_remove,
+	.shutdown	= mmc_test_shutdown,
 };
 
 static int __init mmc_test_init(void)

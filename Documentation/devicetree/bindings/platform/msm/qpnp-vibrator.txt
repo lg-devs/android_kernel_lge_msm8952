@@ -1,7 +1,7 @@
 QPNP Vibrator
 
-QPNP (Qualcomm Plug N Play) vibrator is a peripheral on
-Qualcomm PMICs.  The PMIC is connected to Host processor
+QPNP (Qualcomm technologies Inc Plug N Play) vibrator is a peripheral on
+Qualcomm technologies Inc PMICs.  The PMIC is connected to Host processor
 via SPMI bus.
 
 Required Properties:

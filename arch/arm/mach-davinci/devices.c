@@ -20,9 +20,10 @@
 #include <mach/irqs.h>
 #include <mach/cputype.h>
 #include <mach/mux.h>
-#include <mach/edma.h>
 #include <linux/platform_data/mmc-davinci.h>
 #include <mach/time.h>
+#include <linux/platform_data/edma.h>
+
 
 #include "davinci.h"
 #include "clock.h"
@@ -34,6 +35,9 @@
 #define DM355_MMCSD1_BASE	     0x01E00000
 #define DM365_MMCSD0_BASE	     0x01D11000
 #define DM365_MMCSD1_BASE	     0x01D00000
+
+#define DAVINCI_DMA_MMCRXEVT	26
+#define DAVINCI_DMA_MMCTXEVT	27
 
 void __iomem  *davinci_sysmod_base;
 
@@ -298,7 +302,7 @@ static struct resource wdt_resources[] = {
 };
 
 struct platform_device davinci_wdt_device = {
-	.name		= "watchdog",
+	.name		= "davinci-wdt",
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(wdt_resources),
 	.resource	= wdt_resources,
@@ -309,9 +313,22 @@ void davinci_restart(enum reboot_mode mode, const char *cmd)
 	davinci_watchdog_reset(&davinci_wdt_device);
 }
 
-static void davinci_init_wdt(void)
+int davinci_init_wdt(void)
 {
-	platform_device_register(&davinci_wdt_device);
+	return platform_device_register(&davinci_wdt_device);
+}
+
+static struct platform_device davinci_gpio_device = {
+	.name	= "davinci_gpio",
+	.id	= -1,
+};
+
+int davinci_gpio_register(struct resource *res, int size, void *pdata)
+{
+	davinci_gpio_device.resource = res;
+	davinci_gpio_device.num_resources = size;
+	davinci_gpio_device.dev.platform_data = pdata;
+	return platform_device_register(&davinci_gpio_device);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -330,17 +347,4 @@ struct davinci_timer_instance davinci_timer_instance[2] = {
 		.top_irq	= IRQ_TINT1_TINT34,
 	},
 };
-
-/*-------------------------------------------------------------------------*/
-
-static int __init davinci_init_devices(void)
-{
-	/* please keep these calls, and their implementations above,
-	 * in alphabetical order so they're easier to sort through.
-	 */
-	davinci_init_wdt();
-
-	return 0;
-}
-arch_initcall(davinci_init_devices);
 

@@ -64,6 +64,8 @@ struct agg_work {
  * @skb:        Socket buffer ("packet") to modify
  * @hdrlen:     Number of bytes of header data which should not be included in
  *              MAP length field
+ * @pad:        Specify if padding the MAP packet to make it 4 byte aligned is
+ *              necessary
  *
  * Padding is calculated and set appropriately in MAP header. Mux ID is
  * initialized to 0.
@@ -76,7 +78,7 @@ struct agg_work {
  * todo: Parameterize skb alignment
  */
 struct rmnet_map_header_s *rmnet_map_add_map_header(struct sk_buff *skb,
-						    int hdrlen)
+						    int hdrlen, int pad)
 {
 	uint32_t padding, map_datalen;
 	uint8_t *padbytes;
@@ -89,6 +91,11 @@ struct rmnet_map_header_s *rmnet_map_add_map_header(struct sk_buff *skb,
 	map_header = (struct rmnet_map_header_s *)
 			skb_push(skb, sizeof(struct rmnet_map_header_s));
 	memset(map_header, 0, sizeof(struct rmnet_map_header_s));
+
+	if (pad == RMNET_MAP_NO_PAD_BYTES) {
+		map_header->pkt_len = htons(map_datalen);
+		return map_header;
+	}
 
 	padding = ALIGN(map_datalen, 4) - map_datalen;
 
@@ -125,7 +132,6 @@ struct sk_buff *rmnet_map_deaggregate(struct sk_buff *skb,
 	struct sk_buff *skbn;
 	struct rmnet_map_header_s *maph;
 	uint32_t packet_len;
-	uint8_t ip_byte;
 
 	if (skb->len == 0)
 		return 0;
@@ -157,14 +163,6 @@ struct sk_buff *rmnet_map_deaggregate(struct sk_buff *skb,
 	if (ntohs(maph->pkt_len) == 0) {
 		LOGD("Dropping empty MAP frame");
 		rmnet_kfree_skb(skbn, RMNET_STATS_SKBFREE_DEAGG_DATA_LEN_0);
-		return 0;
-	}
-
-	/* Sanity check */
-	ip_byte = (skbn->data[4]) & 0xF0;
-	if (ip_byte != 0x40 && ip_byte != 0x60) {
-		LOGM("Unknown IP type: 0x%02X", ip_byte);
-		rmnet_kfree_skb(skbn, RMNET_STATS_SKBFREE_DEAGG_UNKOWN_IP_TYP);
 		return 0;
 	}
 
@@ -320,8 +318,7 @@ new_packet:
 
 schedule:
 	if (config->agg_state != RMNET_MAP_TXFER_SCHEDULED) {
-		work = (struct agg_work *)
-			kmalloc(sizeof(struct agg_work), GFP_ATOMIC);
+		work = kmalloc(sizeof(*work), GFP_ATOMIC);
 		if (!work) {
 			LOGE("Failed to allocate work item for packet %s",
 			     "transfer. DATA PATH LIKELY BROKEN!");

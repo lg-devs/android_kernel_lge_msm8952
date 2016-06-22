@@ -684,7 +684,7 @@ static void adv7533_handle_hdcp_intr(struct adv7533 *pdata, u8 hdcp_status)
 
 	/* check for HDCP error */
 	if (hdcp_status & BIT(7)) {
-		u8 ddc_status;
+		u8 ddc_status = 0xFF;
 		pr_err("%s: HDCP ERROR\n", __func__);
 
 		/* get error details */
@@ -964,7 +964,7 @@ static void adv7533_intr_work(struct work_struct *work)
 			adv7533_intr_work_id);
 	if (!pdata) {
 		pr_err("%s: invalid input\n", __func__);
-		goto reset;
+		return;
 	}
 
 	/* READ Interrupt registers */
@@ -1321,7 +1321,7 @@ static int adv7533_hdcp_enable(void *client, bool hdcp_on,
 	bool enc_on, u32 flags)
 {
 	int ret = -EINVAL;
-	u8 reg_val;
+	u8 reg_val = 0xFF;
 	struct adv7533 *pdata =
 		adv7533_get_platform_data(client);
 

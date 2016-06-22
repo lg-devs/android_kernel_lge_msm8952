@@ -32,7 +32,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/i2c.h>
 #include <linux/of.h>
-#include <linux/of_i2c.h>
 #include <linux/msm-sps.h>
 #include <linux/msm-bus.h>
 #include <linux/msm-bus-board.h>
@@ -1187,7 +1186,7 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 		return ret;
 	}
 
-	sg_tx = kcalloc(tx->desc_cnt_cur, sizeof(struct scatterlist),
+	sg_tx = kzalloc(sizeof(struct scatterlist) * tx->desc_cnt_cur,
 								GFP_KERNEL);
 	if (!sg_tx) {
 		ret = -ENOMEM;
@@ -1196,7 +1195,7 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 	sg_init_table(sg_tx, tx->desc_cnt_cur);
 	sg_tx_itr = sg_tx;
 
-	sg_rx = kcalloc(rx->desc_cnt_cur, sizeof(struct scatterlist),
+	sg_rx = kzalloc(sizeof(struct scatterlist) * rx->desc_cnt_cur,
 								GFP_KERNEL);
 	if (!sg_rx) {
 		ret = -ENOMEM;
@@ -2749,7 +2748,7 @@ static int i2c_msm_pm_sys_resume_noirq(struct device *dev)
 static void i2c_msm_pm_rt_init(struct device *dev)
 {
 	pm_runtime_set_suspended(dev);
-	pm_runtime_set_autosuspend_delay(dev, MSEC_PER_SEC);
+	pm_runtime_set_autosuspend_delay(dev, (MSEC_PER_SEC >> 2));
 	pm_runtime_use_autosuspend(dev);
 	pm_runtime_enable(dev);
 }
@@ -2784,10 +2783,13 @@ static void i2c_msm_pm_rt_init(struct device *dev) {}
 #endif
 
 static const struct dev_pm_ops i2c_msm_pm_ops = {
+#ifdef CONFIG_PM_SLEEP
 	.suspend_noirq		= i2c_msm_pm_sys_suspend_noirq,
 	.resume_noirq		= i2c_msm_pm_sys_resume_noirq,
-	.runtime_suspend	= i2c_msm_pm_rt_suspend,
-	.runtime_resume		= i2c_msm_pm_rt_resume,
+#endif
+	SET_RUNTIME_PM_OPS(i2c_msm_pm_rt_suspend,
+			   i2c_msm_pm_rt_resume,
+			   NULL)
 };
 
 static u32 i2c_msm_frmwrk_func(struct i2c_adapter *adap)
@@ -2814,15 +2816,11 @@ static int i2c_msm_frmwrk_reg(struct platform_device *pdev,
 
 	ctrl->adapter.nr = pdev->id;
 	ctrl->adapter.dev.parent = &pdev->dev;
+	ctrl->adapter.dev.of_node = pdev->dev.of_node;
 	ret = i2c_add_numbered_adapter(&ctrl->adapter);
 	if (ret) {
 		dev_err(ctrl->dev, "error i2c_add_adapter failed\n");
 		return ret;
-	}
-
-	if (ctrl->dev->of_node) {
-		ctrl->adapter.dev.of_node = pdev->dev.of_node;
-		of_i2c_register_devices(&ctrl->adapter);
 	}
 
 	return ret;

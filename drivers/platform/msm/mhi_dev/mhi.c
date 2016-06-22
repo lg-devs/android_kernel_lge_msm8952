@@ -350,7 +350,6 @@ static int mhi_hwc_chcmd(struct mhi_dev *mhi, uint chid,
 	memset(&connect_params, 0, sizeof(connect_params));
 
 	switch (type) {
-	case MHI_DEV_RING_EL_RESET:
 	case MHI_DEV_RING_EL_STOP:
 		rc = ipa_mhi_disconnect_pipe(
 			mhi->ipa_clnt_hndl[chid-HW_CHANNEL_BASE]);
@@ -630,9 +629,9 @@ static void mhi_dev_process_cmd_ring(struct mhi_dev *mhi,
 	union mhi_dev_ring_element_type event;
 	struct mhi_addr host_addr;
 
-	ch_id = el->generic.chid;
 	mhi_log(MHI_MSG_VERBOSE, "for channel:%d and cmd:%d\n",
 		ch_id, el->generic.type);
+	ch_id = el->generic.chid;
 
 	switch (el->generic.type) {
 	case MHI_DEV_RING_EL_START:
@@ -693,9 +692,6 @@ send_start_completion_event:
 
 		break;
 	case MHI_DEV_RING_EL_STOP:
-		mhi_log(MHI_MSG_VERBOSE, "recived stop cmd for channel %d\n",
-								ch_id);
-
 		if (ch_id >= HW_CHANNEL_BASE) {
 			rc = mhi_hwc_chcmd(mhi, ch_id, el->generic.type);
 			if (rc) {
@@ -741,58 +737,22 @@ send_start_completion_event:
 		}
 		break;
 	case MHI_DEV_RING_EL_RESET:
-		mhi_log(MHI_MSG_VERBOSE,
-			"recieved reset cmd for channel %d\n", ch_id);
-		if (ch_id >= HW_CHANNEL_BASE) {
-			rc = mhi_hwc_chcmd(mhi, ch_id, el->generic.type);
-			if (rc) {
-				mhi_log(MHI_MSG_VERBOSE,
-					"send channel stop cmd event failed\n");
-				return;
-			}
-
-			/* send the completion event to the host */
-			event.evt_cmd_comp.ptr = mhi->cmd_ctx_cache->rbase +
-				(mhi->ring[MHI_RING_CMD_ID].rd_offset *
-				(sizeof(union mhi_dev_ring_element_type)));
-			event.evt_cmd_comp.type =
-					MHI_DEV_RING_EL_CMD_COMPLETION_EVT;
-			if (rc == 0)
-				event.evt_cmd_comp.code =
-					MHI_CMD_COMPL_CODE_SUCCESS;
-			else
-				event.evt_cmd_comp.code =
-					MHI_CMD_COMPL_CODE_UNDEFINED;
-
-			rc = mhi_dev_send_event(mhi, 0, &event);
-			if (rc) {
-				pr_err("stop event send failed\n");
-				return;
-			}
-		} else {
-
-			mhi_log(MHI_MSG_VERBOSE,
-					"recieved reset cmd for channel %d\n",
-					ch_id);
-
-			/* hard stop and set the channel to stop */
-			mhi->ch_ctx_cache[ch_id].ch_state =
-						MHI_DEV_CH_STATE_STOP;
-			host_addr.device_va = mhi->ch_ctx_shadow.device_va +
+		/* hard stop and set the channel to stop */
+		mhi->ch_ctx_cache[ch_id].ch_state = MHI_DEV_CH_STATE_STOP;
+		host_addr.device_va = mhi->ch_ctx_shadow.device_va +
 				sizeof(struct mhi_dev_ch_ctx)*ch_id;
-			host_addr.device_pa = mhi->ch_ctx_shadow.device_pa +
+		host_addr.device_pa = mhi->ch_ctx_shadow.device_pa +
 				sizeof(struct mhi_dev_ch_ctx)*ch_id;
 
-			/* update the channel state in the host */
-			mhi_dev_write_to_host(&host_addr,
-					&mhi->ch_ctx_cache[ch_id].ch_state,
-					sizeof(enum mhi_dev_ch_ctx_state));
+		/* update the channel state in the host */
+		mhi_dev_write_to_host(&host_addr,
+				&mhi->ch_ctx_cache[ch_id].ch_state,
+				sizeof(enum mhi_dev_ch_ctx_state));
 
-			/* send the completion event to the host */
-			rc = mhi_dev_send_cmd_comp_event(mhi);
-			if (rc)
-				pr_err("Error sending command completion event\n");
-		}
+		/* send the completion event to the host */
+		rc = mhi_dev_send_cmd_comp_event(mhi);
+		if (rc)
+			pr_err("Error sending command completion event\n");
 		break;
 	default:
 		pr_err("%s: Invalid command:%d\n", __func__, el->generic.type);
@@ -1210,10 +1170,6 @@ int mhi_dev_suspend(struct mhi_dev *mhi)
 
 	}
 
-	rc = mhi_dev_send_cmd_comp_event(mhi);
-	if (rc)
-		pr_err("Error sending command completion event\n");
-
 	mutex_unlock(&mhi_ctx->mhi_write_test);
 
 	return rc;
@@ -1241,10 +1197,6 @@ int mhi_dev_resume(struct mhi_dev *mhi)
 				&mhi->ch_ctx_cache[ch_id].ch_state,
 				sizeof(enum mhi_dev_ch_ctx_state));
 	}
-
-	rc = mhi_dev_send_cmd_comp_event(mhi);
-	if (rc)
-		pr_err("Error sending command completion event\n");
 
 	atomic_set(&mhi->is_suspended, 0);
 
@@ -1313,6 +1265,9 @@ static int mhi_dev_ring_init(struct mhi_dev *dev)
 			pr_err("%s: env setting failed\n", __func__);
 			return rc;
 		}
+	} else {
+		pr_err("MHI device failed to enter M0\n");
+		return -EINVAL;
 	}
 
 	rc = mhi_hwc_init(dev);

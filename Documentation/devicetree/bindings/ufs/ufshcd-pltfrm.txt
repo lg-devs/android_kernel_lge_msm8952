@@ -4,9 +4,11 @@ UFSHC nodes are defined to describe on-chip UFS host controllers.
 Each UFS controller instance should have its own node.
 
 Required properties:
-- compatible        : compatible list, contains "jedec,ufs-1.1", "qcom,ufshc"
+- compatible        : compatible list, contains "jedec,ufs-1.1"
 - interrupts        : <interrupt mapping for UFS host controller IRQ>
 - reg               : <registers mapping>
+		      first entry should contain UFS host controller register address space (mandatory),
+                      second entry is the device ref. clock control register map (optional).
 
 Optional properties:
 - phys                  : phandle to UFS PHY node
@@ -43,6 +45,9 @@ Optional properties:
 			  5 - UFS device in Power-down state and Link in OFF state (Lowest power consumption)
 - spm-level		: UFS System power management level. Allowed PM levels are same as rpm-level.
 - ufs-qcom-crypto	: phandle to UFS-QCOM ICE (Inline Cryptographic Engine) node
+- lanes-per-direction:	number of lanes available per direction - either 1 or 2.
+			Note that it is assume same number of lanes is used both directions at once.
+			If not specified, default is 2 lanes per direction.
 
 Note: If above properties are not defined it can be assumed that the supply
 regulators or clocks are always on.
@@ -50,10 +55,9 @@ regulators or clocks are always on.
 Example:
 	ufshc@0xfc598000 {
 		compatible = "jedec,ufs-1.1";
-		reg = <0xfc598000 0x800>;
+		reg = <0xfc598000 0x800>, <0xfd512074 0x4>;
 		interrupts = <0 28 0>;
 
-		ufs-phy = <&ufsphy>;
 		ufs-qcom-crypto = <&ufs_ice>;
 		vdd-hba-supply = <&xxx_reg0>;
 		vdd-hba-fixed-regulator;
@@ -72,13 +76,16 @@ Example:
 		spm-level = <5>;
 	};
 
-==== MSM UFS platform driver properties =====
-* For UFS host controller in MSM platform following clocks are required -
+==== UFS QCOM platform driver properties =====
+* For UFS host controller in QCOM platform following clocks are required -
     Controller clock source -
         "core_clk_src", max-clock-frequency-hz = 200MHz
+	"core_clk_unipro_src" - Some controller versions require separate core clock for UniPro.
+				This clock represents the source clock for the core clock of UniPro.
 
     Controller System clock branch:
         "core_clk" - Controller core clock
+	"core_clk_unipro" - Core clock for UniPro
 
     AHB/AXI interface clocks:
         "iface_clk" - AHB interface clock
@@ -108,23 +115,19 @@ Note: The instantaneous bandwidth (IB) value in the vectors-KBps field should
 - qcom,bus-vector-names: specifies string IDs for the corresponding
 bus vectors in the same order as qcom,msm-bus,vectors-KBps property.
 
-- qcom,cpu-dma-latency-us: optional parameter specifying the allowed CPU-DMA
-  latency parameter for PM QOS, in units of microseconds. If this parameter is
-  not specified a default of 200us is used.
-- qcom,cpu-affinity: this is a string that specifies the pm QoS request type.
-  The supported cpu affinity modes are:
-  "all_cores" - PM_QOS_REQ_ALL_CORES is applicable to all CPU cores that are
-  online and this would have a power impact when there are more number of CPUs.
-  "affine_irq" - PM_QOS_REQ_AFFINE_IRQ request type shall update/apply the vote
-  only to that CPU to which this IRQ's affinity is set to.
-  "affine_cores" - PM_QOS_REQ_AFFINE_CORES request type is used for targets that
-  have little cluster and will update/apply the vote to all the cores in the
-  little cluster.
-  The default CPU affinity mode is PM_QOS_REQ_AFFINE_IRQ.
-- qcom,cpu-affinity-mask: this property is taken into consideration only in case
-  "affine_cores" is specified for qcom,cpu-affinity. It specifies which cores the
-  PM QoS voting should apply to. In practice, for system with big / little cluster
-  configuration, this should specify the cores of the little cluster.
+* The following parameters are optional, but required in order for PM QoS to be
+enabled and functional in the driver:
+- qcom,pm-qos-cpu-groups:		arrays of unsigned integers representing the cpu groups.
+					The number of values in the array defines the number of cpu-groups.
+					Each value is a bit-mask defining the cpus that take part in that cpu group.
+					i.e. if bit N is set, then cpuN is a part of the cpu group. So basically,
+					a cpu group corelated to a cpu cluster.
+					A PM QoS request object is maintained for each cpu-group.
+- qcom,pm-qos-cpu-group-latency-us:	array of values used for PM QoS voting, one for each cpu-group defined.
+					the number of values must match the number of values defined in
+					qcom,pm-qos-cpu-mask property.
+- qcom,pm-qos-default-cpu:		PM QoS voting is based on the cpu associated with each IO request by the block layer.
+					This defined the default cpu used for PM QoS voting in case a specific cpu value is not available.
 
 Example:
 	ufshc@0xfc598000 {
@@ -169,4 +172,16 @@ Example:
 					"HS_RB_G1_L1", "HS_RB_G2_L1", "HS_RB_G3_L1",
 					"HS_RB_G1_L2", "HS_RB_G2_L2", "HS_RB_G3_L2",
 					"MAX";
+
+		qcom,pm-qos-cpu-groups = <0x03 0x0C>; /* group0: cpu0, cpu1, group1: cpu2, cpu3 */
+		qcom,pm-qos-cpu-group-latency-us = <200 300>; /* group0: 200us, group1: 300us */
+		qcom,pm-qos-default-cpu = <0>;
 	};
+
+This is an example to a variant sub-node of ufshc:
+ufs_variant {
+	compatible = "qcom,ufs_variant";
+};
+
+This sub-node holds various specific information that is not defined in the
+standard and that may differ between platforms.

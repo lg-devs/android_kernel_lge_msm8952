@@ -27,8 +27,8 @@ enum smem_type {
 };
 
 enum smem_prop {
-	SMEM_CACHED = ION_FLAG_CACHED,
-	SMEM_SECURE = ION_FLAG_SECURE,
+	SMEM_CACHED,
+	SMEM_SECURE,
 };
 
 /* NOTE: if you change this enum you MUST update the
@@ -51,6 +51,14 @@ enum hal_buffer {
 	HAL_BUFFER_INTERNAL_CMD_QUEUE = 0x800,
 };
 
+struct dma_mapping_info {
+	struct device *dev;
+	struct dma_iommu_mapping *mapping;
+	struct sg_table *table;
+	struct dma_buf_attachment *attach;
+	struct dma_buf *buf;
+};
+
 struct msm_smem {
 	int mem_type;
 	size_t size;
@@ -59,6 +67,7 @@ struct msm_smem {
 	unsigned long flags;
 	void *smem_priv;
 	enum hal_buffer buffer_type;
+	struct dma_mapping_info mapping_info;
 };
 
 enum smem_cache_ops {
@@ -75,8 +84,15 @@ enum core_id {
 enum session_type {
 	MSM_VIDC_ENCODER = 0,
 	MSM_VIDC_DECODER,
-	MSM_VIDC_MAX_DEVICES,
+	MSM_VIDC_UNKNOWN,
+	MSM_VIDC_MAX_DEVICES = MSM_VIDC_UNKNOWN,
 };
+
+union msm_v4l2_cmd {
+	struct v4l2_decoder_cmd dec;
+	struct v4l2_encoder_cmd enc;
+};
+
 void *msm_vidc_open(int core_id, int session_type);
 int msm_vidc_close(void *instance);
 int msm_vidc_suspend(int core_id);
@@ -90,35 +106,17 @@ int msm_vidc_g_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_reqbufs(void *instance, struct v4l2_requestbuffers *b);
 int msm_vidc_prepare_buf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_release_buffers(void *instance, int buffer_type);
-int msm_vidc_free_buffers(void *instance, int buffer_type);
 int msm_vidc_qbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_dqbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_streamon(void *instance, enum v4l2_buf_type i);
 int msm_vidc_streamoff(void *instance, enum v4l2_buf_type i);
-int msm_vidc_decoder_cmd(void *instance, struct v4l2_decoder_cmd *dec);
-int msm_vidc_encoder_cmd(void *instance, struct v4l2_encoder_cmd *enc);
+int msm_vidc_comm_cmd(void *instance, union msm_v4l2_cmd *cmd);
 int msm_vidc_poll(void *instance, struct file *filp,
 		struct poll_table_struct *pt);
-int msm_vidc_get_iommu_domain_partition(void *instance, u32 flags,
-		enum v4l2_buf_type, int *domain, int *partition);
 int msm_vidc_subscribe_event(void *instance,
 		const struct v4l2_event_subscription *sub);
 int msm_vidc_unsubscribe_event(void *instance,
 		const struct v4l2_event_subscription *sub);
 int msm_vidc_dqevent(void *instance, struct v4l2_event *event);
-int msm_vidc_wait(void *instance);
-int msm_vidc_s_parm(void *instance, struct v4l2_streamparm *a);
 int msm_vidc_enum_framesizes(void *instance, struct v4l2_frmsizeenum *fsize);
-struct msm_smem *msm_vidc_smem_alloc(void *instance,
-			size_t size, u32 align, u32 flags,
-			enum hal_buffer buffer_type, int map_kernel);
-void msm_vidc_smem_free(void *instance, struct msm_smem *mem);
-int msm_vidc_smem_cache_operations(void *instance,
-		struct msm_smem *mem, enum smem_cache_ops);
-struct msm_smem *msm_vidc_smem_user_to_kernel(void *instance,
-			int fd, u32 offset, enum hal_buffer buffer_type);
-int msm_vidc_smem_get_domain_partition(void *instance,
-		u32 flags, enum hal_buffer buffer_type,
-		int *domain_num, int *partition_num);
-void *msm_vidc_smem_get_client(void *instance);
 #endif

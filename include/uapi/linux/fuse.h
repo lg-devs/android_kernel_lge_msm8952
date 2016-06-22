@@ -98,6 +98,10 @@
  *  - add FUSE_WRITEBACK_CACHE
  *  - add time_gran to fuse_init_out
  *  - add reserved space to fuse_init_out
+ *  - add FATTR_CTIME
+ *  - add ctime and ctimensec to fuse_setattr_in
+ *  - add FUSE_RENAME2 request
+ *  - add FUSE_NO_OPEN_SUPPORT flag
  */
 
 #ifndef _LINUX_FUSE_H
@@ -193,6 +197,7 @@ struct fuse_file_lock {
 #define FATTR_ATIME_NOW	(1 << 7)
 #define FATTR_MTIME_NOW	(1 << 8)
 #define FATTR_LOCKOWNER	(1 << 9)
+#define FATTR_CTIME	(1 << 10)
 
 /**
  * Flags returned by the OPEN request
@@ -225,6 +230,7 @@ struct fuse_file_lock {
  * FUSE_READDIRPLUS_AUTO: adaptive readdirplus
  * FUSE_ASYNC_DIO: asynchronous direct I/O submission
  * FUSE_WRITEBACK_CACHE: use writeback cache for buffered writes
+ * FUSE_NO_OPEN_SUPPORT: kernel supports zero-message opens
  */
 #define FUSE_ASYNC_READ		(1 << 0)
 #define FUSE_POSIX_LOCKS	(1 << 1)
@@ -243,6 +249,9 @@ struct fuse_file_lock {
 #define FUSE_READDIRPLUS_AUTO	(1 << 14)
 #define FUSE_ASYNC_DIO		(1 << 15)
 #define FUSE_WRITEBACK_CACHE	(1 << 16)
+#define FUSE_NO_OPEN_SUPPORT	(1 << 17)
+
+#define FUSE_SHORTCIRCUIT	(1 << 31)
 
 /**
  * CUSE INIT request/reply flags
@@ -350,6 +359,7 @@ enum fuse_opcode {
 	FUSE_BATCH_FORGET  = 42,
 	FUSE_FALLOCATE     = 43,
 	FUSE_READDIRPLUS   = 44,
+	FUSE_RENAME2       = 45,
 
 	/* CUSE specific operations */
 	CUSE_INIT          = 4096,
@@ -428,6 +438,12 @@ struct fuse_rename_in {
 	uint64_t	newdir;
 };
 
+struct fuse_rename2_in {
+	uint64_t	newdir;
+	uint32_t	flags;
+	uint32_t	padding;
+};
+
 struct fuse_link_in {
 	uint64_t	oldnodeid;
 };
@@ -440,10 +456,10 @@ struct fuse_setattr_in {
 	uint64_t	lock_owner;
 	uint64_t	atime;
 	uint64_t	mtime;
-	uint64_t	unused2;
+	uint64_t	ctime;
 	uint32_t	atimensec;
 	uint32_t	mtimensec;
-	uint32_t	unused3;
+	uint32_t	ctimensec;
 	uint32_t	mode;
 	uint32_t	unused4;
 	uint32_t	uid;
@@ -466,7 +482,7 @@ struct fuse_create_in {
 struct fuse_open_out {
 	uint64_t	fh;
 	uint32_t	open_flags;
-	uint32_t	padding;
+	int32_t         lower_fd;/* lower layer file descriptor */
 };
 
 struct fuse_release_in {

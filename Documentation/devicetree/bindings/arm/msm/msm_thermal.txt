@@ -23,18 +23,12 @@ Required properties
 - qcom,freq-step: Number of frequency steps to take on each CPU mitigation.
 
 Optional properties
-- qcom,mitigation-profile-enable: Mitigation profile feature will be enabled only
-			if this property is defined in DT.
-- qcom,freq-control-list: List of phandles to the cores that will be used to
-			determine if a core can be frequency controlled for
-			thermal condition.
+
+- reg:                  Physical address for uio mapping
 - qcom,core-limit-temp: Threshold temperature to start shutting down cores
 			in degC
 - qcom,core-temp-hysteresis: Degrees C below which the cores will be brought
 			online in sequence.
-- qcom,core-control-list: List of phandles to the cores that will be used to
-			determine if a core can be hotplugged for thermal condition.
-			No handle indicates the feature is disabled.
 - qcom,hotplug-temp: Threshold temperature to start shutting down cores
 			in degC. This will be used when polling based
 			core control is disabled. The difference between hotplug-temp
@@ -42,9 +36,6 @@ Optional properties
 			early boot prior to thermal_sys being available for hotplug.
 - qcom,hotplug-temp-hysteresis: Degrees C below which thermal will not force the
 			cores to be offlined. Cores can be brought online if needed.
-- qcpm,cpu-sensors:     List of type names in thermal zone device struct which maps
-			to cpu0, cpu1, cpu2, cpu3 in sequence depending on how many
-			cpus there are.
 - qcom,freq-mitigation-temp: Threshold temperature to mitigate
 			the CPU max frequency in degC. This will be
 			used when polling based frequency control is disabled.
@@ -59,14 +50,6 @@ Optional properties
 - qcom,freq-mitigation-value: The frequency value (in kHz) to which the thermal
 			should mitigate the CPU, when the freq-mitigation-temp
 			threshold is reached.
-- qcom,freq-mitigation-control-list: List of phandles to the cores that will be
-			used to determine if KTM should do emergency frequency
-			mitigation for a core or not. No handle indicates the
-			mitigation is disabled for all the cores.
-			Note: For KTM's frequency mitigation to work, the data for all the
-			above four properties (qcom,freq-mitigation-temp; qcom,
-			freq-mitigation-temp-hysteresis; qcom,freq-mitigation-value and
-			qcom,freq-mitigation-control-list) should be populated.
 - qcom,vdd-restriction-temp: When temperature is below this threshold, will
 			enable vdd restriction which will set higher voltage on
 			key voltage rails, in degC.
@@ -122,12 +105,6 @@ Optional properties
 - qcom,disable-cx-phase-ctrl: If this property is defined, the feature
 			cx phase control will be disabled. All other properties
 			corresponding to this feature will be ignored.
-- qcom,disable-core-control: If this property is defined, the feature core
-			control will be disabled. All other properties
-			corresponding to this feature will be ignored.
-- qcom,disable-freq-mitigation: If this property is defined, the feature core
-			frequency control will be disabled. All other properties
-			corresponding to this feature will be ignored.
 
 Optional child nodes
 - qcom,pmic-opt-curr-temp: Threshold temperature for requesting optimum current (request
@@ -163,6 +140,10 @@ Optional child nodes
 			This will not be required if qcom,freq-req exists.
 - qcom,freq-req: Flag to determine if we should restrict frequency on this rail
 			instead of voltage.
+- qcom,max-freq-level: Request this frequency as scaling maximum level when
+			enabling vdd restriction feature for a rail. This is
+			an optional property which is only applicable to the rail
+			with "qcom,freq-req" property set.
 - qcom,cx-phase-hot-crit-temp: Threshold temperature for sending the 'HOT_CRITICAL'
 			temperature band to RPM, in degC. This will aid RPM
 			in deciding the number of phases required for CX rail.
@@ -249,24 +230,20 @@ Example:
 
 	qcom,msm-thermal {
 		compatible = "qcom,msm-thermal";
+		reg = <0x70000 0x1000>;
 		qcom,sensor-id = <0>;
 		qcom,poll-ms = <250>;
 		qcom,limit-temp = <60>;
 		qcom,temp-hysteresis = <10>;
 		qcom,freq-step = <2>;
-		qcom,freq-control-list = <&CPU0 &CPU1 &CPU2 &CPU3>;
 		qcom,therm-reset-temp = <115>;
 		qcom,core-limit-temp = <90>;
 		qcom,core-temp-hysteresis = <10>;
-		qcom,core-control-list = <&CPU1 &CPU2 &CPU3>;
 		qcom,hotplug-temp = <110>;
 		qcom,hotplug-temp-hysteresis = <20>;
-		qcom,cpu-sensors = "tsens_tz_sensor5", "tsens_tz_sensor6",
-				"tsens_tz_sensor7", "tsens_tz_sensor8";
 		qcom,freq-mitigation-temp = <110>;
 		qcom,freq-mitigation-temp-hysteresis = <20>;
 		qcom,freq-mitigation-value = <960000>;
-		qcom,freq-mitigation-control-list = <&CPU0>;
 		qcom,rpm-phase-resource-type = "misc";
 		qcom,rpm-phase-resource-id = <0>;
 		qcom,cx-phase-resource-key = "tmpc";
@@ -307,6 +284,7 @@ Example:
 			qcom,vdd-rstr-reg = "vdd-apps";
 			qcom,levels = <1881600 1958400 2265600>;
 			qcom,freq-req;
+			qcom,max-freq-level = <1958400>;
 		};
 	};
 
@@ -347,25 +325,17 @@ Following are the required and optional properties of a child node.
 1.1.b Optional properties:
 
 - qcom,alias-name: Alias name for a sensor. The alias name corresponds
-			to a device such as cpu/gpu/pop-mem whose temperature
+			to a device such as gpu/pop-mem whose temperature
 			is relative to the sensor temperature defined in the
 			child node. This node can not be used for providing
-			alias name for cpu devices if mitigation profile feature
-			is enabled. Thermal driver assigns the cpu device alias,
-			based on the sensor defined in the cpu mitigation profile.
+			alias name for cpu devices. Thermal driver assigns the
+			cpu device alias, based on the sensor defined in the
+			cpu mitigation profile.
 - qcom,scaling-factor: The unit that needs to be multiplied to the
 			sensor temperature to get temperature unit in
 			degree centigrade. If this property is not
 			present, a default scaling factor of 1 is assigned
 			to a sensor.
-- qcom,ktm-prog-mitigation-config: This optional property enables KTM
-			progressive mitigation for a sensor. This property
-			requires an array of progressive monitor rules for a
-			sensor which needs to be monitored by KTM. Each rule
-			should contain cluster id to be mitigated, high
-			threshold in degree centigrade, low thresholds in
-			degree centigrade and progressive sampling interval
-			in millisecond respectively.
 
 Example:
 
@@ -384,14 +354,6 @@ Example:
 		sensor_information2: qcom,sensor-information-2 {
 			qcom,sensor-type =  "tsens";
 			qcom,sensor-name = "tsens_tz_sensor2";
-			/* <cluster-ID to be mitigated, high threshold,
-			**  low threshold, progressive sampling interval>.
-			**  In the below case, progressive config is enabled
-			**  for sensor tsens_tz_sensor2 with cluster ID 1,
-			**  85C high threshold, 55C low threshold and 50ms
-			**  progressive sampling interval.
-			*/
-			qcom,ktm-prog-mitigation-config = <1 85 55 50>;
 		};
 
 		sensor_information3: qcom,sensor-information-3 {
@@ -430,8 +392,7 @@ Thermal driver allows users to specify various mitigation profiles and
 associate a profile to a device. The device should have a phandle, to associate
 itself with a mitigation profile, using a "qcom,limits-info" property.
 This profile can specify whether to mitigate the device during various
-limiting conditions. This feature will be enabled only if
-'qcom,mitigation-profile-enable' DT node is defined in msm_thermal node.
+limiting conditions.
 
 Required Node:
 - qcom,limit_info-#: This is a mitigation profile node. A profile should

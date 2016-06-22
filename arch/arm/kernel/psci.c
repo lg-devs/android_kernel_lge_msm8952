@@ -23,8 +23,6 @@
 
 #include <asm/compiler.h>
 #include <asm/errno.h>
-#include <asm/opcodes-sec.h>
-#include <asm/opcodes-virt.h>
 #include <asm/psci.h>
 #include <asm/system_misc.h>
 #include <asm/suspend.h>
@@ -34,6 +32,9 @@ struct psci_operations psci_ops;
 
 static int (*invoke_psci_fn)(u32, u32, u32, u32);
 typedef int (*psci_initcall_t)(const struct device_node *);
+
+asmlinkage int __invoke_psci_fn_hvc(u32, u32, u32, u32);
+asmlinkage int __invoke_psci_fn_smc(u32, u32, u32, u32);
 
 enum psci_function {
 	PSCI_FN_CPU_SUSPEND,
@@ -71,40 +72,6 @@ static u32 psci_power_state_pack(struct psci_power_state state)
 		 & PSCI_0_2_POWER_STATE_TYPE_MASK) |
 		((state.affinity_level << PSCI_0_2_POWER_STATE_AFFL_SHIFT)
 		 & PSCI_0_2_POWER_STATE_AFFL_MASK);
-}
-
-/*
- * The following two functions are invoked via the invoke_psci_fn pointer
- * and will not be inlined, allowing us to piggyback on the AAPCS.
- */
-static noinline int __invoke_psci_fn_hvc(u32 function_id, u32 arg0, u32 arg1,
-					 u32 arg2)
-{
-	asm volatile(
-			__asmeq("%0", "r0")
-			__asmeq("%1", "r1")
-			__asmeq("%2", "r2")
-			__asmeq("%3", "r3")
-			__HVC(0)
-		: "+r" (function_id)
-		: "r" (arg0), "r" (arg1), "r" (arg2));
-
-	return function_id;
-}
-
-static noinline int __invoke_psci_fn_smc(u32 function_id, u32 arg0, u32 arg1,
-					 u32 arg2)
-{
-	asm volatile(
-			__asmeq("%0", "r0")
-			__asmeq("%1", "r1")
-			__asmeq("%2", "r2")
-			__asmeq("%3", "r3")
-			__SMC(0)
-		: "+r" (function_id)
-		: "r" (arg0), "r" (arg1), "r" (arg2));
-
-	return function_id;
 }
 
 static int psci_get_version(void)
@@ -216,9 +183,9 @@ static int psci_suspend_finisher(unsigned long state_id)
 }
 
 /*
- * The PSCI changes are to support Os initiated low power mode where the
+ * The PSCI changes are to support OS initiated low power mode where the
  * cluster mode aggregation happens in HLOS. In this case, the cpuidle
- * driver aggregates the cluster low power mode will provide in the
+ * driver aggregating the cluster low power mode will provide the
  * composite stateID to be passed down to the PSCI layer.
  */
 int cpu_psci_cpu_suspend(unsigned long state_id)

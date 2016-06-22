@@ -102,20 +102,17 @@ typedef struct dmx_filter
 } dmx_filter_t;
 
 
-/* Filter flags */
-#define DMX_CHECK_CRC		0x01
-#define DMX_ONESHOT		0x02
-#define DMX_IMMEDIATE_START	0x04
-#define DMX_KERNEL_CLIENT	0x8000
-
 struct dmx_sct_filter_params
 {
 	__u16          pid;
 	dmx_filter_t   filter;
 	__u32          timeout;
 	__u32          flags;
+#define DMX_CHECK_CRC       1
+#define DMX_ONESHOT         2
+#define DMX_IMMEDIATE_START 4
+#define DMX_KERNEL_CLIENT   0x8000
 };
-
 
 enum dmx_video_codec {
 	DMX_VIDEO_CODEC_MPEG2,
@@ -653,9 +650,9 @@ enum dmx_playback_mode_t {
 };
 
 struct dmx_stc {
-	unsigned int num; /* input : which STC? 0..N */
-	unsigned int base; /* output: divisor for stc to get 90 kHz clock */
-	__u64 stc; /* output: stc in 'base'*90 kHz units */
+	unsigned int num;	/* input : which STC? 0..N */
+	unsigned int base;	/* output: divisor for stc to get 90 kHz clock */
+	__u64 stc;		/* output: stc in 'base'*90 kHz units */
 };
 
 enum dmx_buffer_mode {
@@ -880,6 +877,5 @@ struct dmx_scrambling_bits {
 #define DMX_GET_SCRAMBLING_BITS _IOWR('o', 72, struct dmx_scrambling_bits)
 #define DMX_SET_CIPHER _IOW('o', 73, struct dmx_cipher_operations)
 #define DMX_FLUSH_BUFFER _IO('o', 74)
-
 
 #endif /* _UAPI_DVBDMX_H_ */

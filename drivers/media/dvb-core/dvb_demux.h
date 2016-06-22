@@ -205,11 +205,9 @@ struct dvb_demux_feed {
 	int first_frame_in_seq_notified;
 	u64 last_pattern_tsp_num;
 	int pattern_num;
-	const struct dvb_dmx_video_patterns
-		*patterns[DVB_DMX_MAX_SEARCH_PATTERN_NUM];
+	const struct dvb_dmx_video_patterns *patterns[DVB_DMX_MAX_SEARCH_PATTERN_NUM];
 	struct dvb_dmx_video_prefix_size_masks prefix_size;
-
-	u32 peslen;
+	u16 peslen;
 	u32 pes_tei_counter;
 	u32 pes_cont_err_counter;
 	u32 pes_ts_packets_num;

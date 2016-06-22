@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -48,8 +48,7 @@
 					"resin-bark", "kpdpwr-resin-bark";
 			qcom,pon-dbc-delay = <15625>;
 			qcom,system-reset;
-			qcom,s3-debounce = <32>;
-			qcom,s3-src = "kpdpwr-and-resin";
+			qcom,store-hard-reset-reason;
 
 			qcom,pon_1 {
 				qcom,pon-type = <0>;
@@ -338,7 +337,7 @@
 			reg = <0x2800 0x100>;
 		};
 
-		qcom,pm8994_rtc {
+		pm8994_rtc: qcom,pm8994_rtc {
 			spmi-dev-container;
 			compatible = "qcom,qpnp-rtc";
 			#address-cells = <1>;

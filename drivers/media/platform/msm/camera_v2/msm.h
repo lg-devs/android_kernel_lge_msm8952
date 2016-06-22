@@ -27,8 +27,17 @@
 #include <media/v4l2-event.h>
 #include <media/v4l2-mediabus.h>
 #include <media/videobuf2-dma-contig.h>
-#include <media/videobuf2-msm-mem.h>
 #include <media/msmb_camera.h>
+
+/* LGE_CHANGE_S, camera stability task, added  msm-config debugfs*/
+#include <linux/debugfs.h>
+#define LGE_DEBUG_DISABLE_TIMEOUT	1
+#define LGE_DEBUG_PANIC_ON_TIMEOUT	2
+#define LGE_DEBUG_BLOCK_POST_EVENT	7
+#define BIT_SET( x, idx )    ( x |= 1<<(idx&7))
+#define BIT_ISSET( x, idx )  ( x & (1<<(idx&7)))
+#define BIT_CLR( x, idx )    ( x &= ~(1<<(idx&7)))
+/* LGE_CHANGE_E, camera stability task, added  msm-config debugfs*/
 
 /* Setting MAX timeout to 6.5seconds considering
  * backend will operate @ .6fps in certain usecases
@@ -37,9 +46,6 @@
 #define MSM_POST_EVT_TIMEOUT 6500
 #define MSM_POST_EVT_NOTIMEOUT 0xFFFFFFFF
 #define MSM_CAMERA_STREAM_CNT_BITS  32
-
-#define CAMERA_DISABLE_PC_LATENCY 100
-#define CAMERA_ENABLE_PC_LATENCY PM_QOS_DEFAULT_VALUE
 
 struct msm_video_device {
 	struct video_device *vdev;
@@ -107,10 +113,8 @@ struct msm_session {
 	 * session struct msm_stream */
 	struct msm_queue_head stream_q;
 	struct mutex lock;
-	struct mutex close_lock;
+	struct mutex lock_q;
 };
-
-void msm_pm_qos_update_request(int val);
 
 int msm_post_event(struct v4l2_event *event, int timeout);
 int  msm_create_session(unsigned int session, struct video_device *vdev);

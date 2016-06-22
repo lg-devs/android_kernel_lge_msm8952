@@ -29,7 +29,10 @@
 #define MMC_READ_MULTIPLE_BLOCK  18   /* adtc [31:0] data addr   R1  */
 #define MMC_SEND_TUNING_BLOCK    19   /* adtc                    R1  */
 #define MMC_SEND_TUNING_BLOCK_HS200	21	/* adtc R1  */
-#define MMC_SEND_TUNING_BLOCK_HS400	MMC_SEND_TUNING_BLOCK_HS200
+#define MMC_SEND_TUNING_BLOCK_HS400      MMC_SEND_TUNING_BLOCK_HS200
+
+#define MMC_TUNING_BLK_PATTERN_4BIT_SIZE	 64
+#define MMC_TUNING_BLK_PATTERN_8BIT_SIZE	128
 
   /* class 3 */
 #define MMC_WRITE_DAT_UNTIL_STOP 20   /* adtc [31:0] data addr   R1  */

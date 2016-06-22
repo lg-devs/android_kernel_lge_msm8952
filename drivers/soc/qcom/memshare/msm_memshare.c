@@ -113,9 +113,9 @@ static struct msg_desc mem_share_svc_size_query_resp_desc = {
 
 static int check_client(int client_id, int proc, int request)
 {
-
 	int i = 0;
 	int found = DHMS_MEM_CLIENT_INVALID;
+
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (memblock[i].client_id == client_id &&
 				memblock[i].peripheral == proc) {
@@ -143,10 +143,14 @@ static int check_client(int client_id, int proc, int request)
 
 void free_client(int id)
 {
+
+	memblock[id].size = 0;
 	memblock[id].phy_addr = 0;
 	memblock[id].virtual_addr = 0;
 	memblock[id].alloted = 0;
+	memblock[id].client_id = DHMS_MEM_CLIENT_INVALID;
 	memblock[id].guarantee = 0;
+	memblock[id].peripheral = -1;
 	memblock[id].sequence_id = -1;
 	memblock[id].memory_type = MEMORY_CMA;
 
@@ -289,8 +293,6 @@ static int handle_alloc_generic_req(void *req_h, void *req, void *conn_h)
 	alloc_resp = kzalloc(sizeof(struct mem_alloc_generic_resp_msg_v01),
 					GFP_KERNEL);
 	if (!alloc_resp) {
-		pr_err("In %s, error allocating memory to response structure\n",
-						__func__);
 		mutex_unlock(&memsh_drv->mem_share);
 		return -ENOMEM;
 	}
@@ -443,8 +445,6 @@ static int handle_query_size_req(void *req_h, void *req, void *conn_h)
 	query_resp = kzalloc(sizeof(struct mem_query_size_rsp_msg_v01),
 					GFP_KERNEL);
 	if (!query_resp) {
-		pr_err("In %s, error allocating memory to response structure\n",
-						__func__);
 		mutex_unlock(&memsh_drv->mem_share);
 		return -ENOMEM;
 	}

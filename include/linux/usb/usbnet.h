@@ -22,34 +22,10 @@
 #ifndef	__LINUX_USB_USBNET_H
 #define	__LINUX_USB_USBNET_H
 
-#include <linux/ipa.h>
-
-#define USBNET_IPA_SYS_PIPE_MAX_PKTS_DESC 160
-#define USBNET_IPA_SYS_PIPE_MIN_PKTS_DESC 5
-#define USBNET_IPA_SYS_PIPE_DNE_PKTS (USBNET_IPA_SYS_PIPE_MAX_PKTS_DESC*2)
-
-struct usbnet_ipa_stats {
-	/* RX Side */
-	uint64_t rx_ipa_excep;
-	uint64_t rx_ipa_write_done;
-	uint64_t rx_ipa_send;
-	uint64_t rx_ipa_send_fail;
-
-	/* TX Side*/
-	uint64_t tx_ipa_send;
-	uint64_t tx_ipa_send_err;
-};
-
-struct usbnet_ipa_ctx {
-	struct usbnet_ipa_stats stats;
-	struct dentry *debugfs_dir;
-};
-
 /* interface from usbnet core to each USB networking link we handle */
 struct usbnet {
 	/* housekeeping */
 	struct usb_device	*udev;
-	struct usbnet_ipa_ctx	*pusbnet_ipa;
 	struct usb_interface	*intf;
 	struct driver_info	*driver_info;
 	const char		*driver_name;
@@ -59,12 +35,14 @@ struct usbnet {
 	unsigned char		suspend_count;
 	unsigned char		pkt_cnt, pkt_err;
 	unsigned short		rx_qlen, tx_qlen;
+	unsigned		can_dma_sg:1;
 
 	/* i/o info: pipes etc */
 	unsigned		in, out;
 	struct usb_host_endpoint *status;
 	unsigned		maxpacket;
 	struct timer_list	delay;
+	const char		*padding_pkt;
 
 	/* protocol/interface state */
 	struct net_device	*net;
@@ -84,7 +62,7 @@ struct usbnet {
 	unsigned		interrupt_count;
 	struct mutex		interrupt_mutex;
 	struct usb_anchor	deferred;
-	struct work_struct	bh_w;
+	struct tasklet_struct	bh;
 
 	struct work_struct	kevent;
 	unsigned long		flags;
@@ -100,10 +78,7 @@ struct usbnet {
 #		define EVENT_NO_RUNTIME_PM	9
 #		define EVENT_RX_KILL	10
 #		define EVENT_LINK_CHANGE	11
-
-	u16 ipa_free_desc_cnt;
-	u16 ipa_high_watermark;
-	u16 ipa_low_watermark;
+#		define EVENT_SET_RX_MODE	12
 };
 
 static inline struct usb_driver *driver_of(struct usb_interface *intf)
@@ -174,6 +149,9 @@ struct driver_info {
 	struct sk_buff	*(*tx_fixup)(struct usbnet *dev,
 				struct sk_buff *skb, gfp_t flags);
 
+	/* recover from timeout */
+	void	(*recover)(struct usbnet *dev);
+
 	/* early initialization code, can sleep. This is for minidrivers
 	 * having 'subminidrivers' that need to do extra initialization
 	 * right after minidriver have initialized hardware. */
@@ -181,6 +159,9 @@ struct driver_info {
 
 	/* called by minidriver when receiving indication */
 	void	(*indication)(struct usbnet *dev, void *ind, int indlen);
+
+	/* rx mode change (device changes address list filtering) */
+	void	(*set_rx_mode)(struct usbnet *dev);
 
 	/* for new devices, use the descriptor-reading code instead */
 	int		in;		/* rx endpoint */
@@ -246,8 +227,22 @@ struct skb_data {	/* skb->cb is one of these */
 	struct urb		*urb;
 	struct usbnet		*dev;
 	enum skb_state		state;
-	size_t			length;
+	long			length;
+	unsigned long		packets;
 };
+
+/* Drivers that set FLAG_MULTI_PACKET must call this in their
+ * tx_fixup method before returning an skb.
+ */
+static inline void
+usbnet_set_skb_tx_stats(struct sk_buff *skb,
+			unsigned long packets, long bytes_delta)
+{
+	struct skb_data *entry = (struct skb_data *) skb->cb;
+
+	entry->packets = packets;
+	entry->length = bytes_delta;
+}
 
 extern int usbnet_open(struct net_device *net);
 extern int usbnet_stop(struct net_device *net);
@@ -275,7 +270,6 @@ extern u32 usbnet_get_msglevel(struct net_device *);
 extern void usbnet_set_msglevel(struct net_device *, u32);
 extern void usbnet_get_drvinfo(struct net_device *, struct ethtool_drvinfo *);
 extern int usbnet_nway_reset(struct net_device *net);
-extern void usbnet_terminate_urbs(struct usbnet *dev);
 
 extern int usbnet_manage_power(struct usbnet *, int);
 extern void usbnet_link_change(struct usbnet *, bool, bool);

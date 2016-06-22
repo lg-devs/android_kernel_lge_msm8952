@@ -16,10 +16,33 @@
 #include <net/addrconf.h>
 #include <net/inet_frag.h>
 
-static ctl_table ipv6_table_template[] = {
+static int one = 1;
+
+static struct ctl_table ipv6_table_template[] = {
 	{
 		.procname	= "bindv6only",
 		.data		= &init_net.ipv6.sysctl.bindv6only,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "anycast_src_echo_reply",
+		.data		= &init_net.ipv6.sysctl.anycast_src_echo_reply,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "flowlabel_consistency",
+		.data		= &init_net.ipv6.sysctl.flowlabel_consistency,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "auto_flowlabels",
+		.data		= &init_net.ipv6.sysctl.auto_flowlabels,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
@@ -34,13 +57,21 @@ static ctl_table ipv6_table_template[] = {
 	{ }
 };
 
-static ctl_table ipv6_rotable[] = {
+static struct ctl_table ipv6_rotable[] = {
 	{
 		.procname	= "mld_max_msf",
 		.data		= &sysctl_mld_max_msf,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "mld_qrv",
+		.data		= &sysctl_mld_qrv,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &one
 	},
 	{ }
 };
@@ -58,6 +89,10 @@ static int __net_init ipv6_sysctl_net_init(struct net *net)
 	if (!ipv6_table)
 		goto out;
 	ipv6_table[0].data = &net->ipv6.sysctl.bindv6only;
+	ipv6_table[1].data = &net->ipv6.sysctl.anycast_src_echo_reply;
+	ipv6_table[2].data = &net->ipv6.sysctl.flowlabel_consistency;
+	ipv6_table[3].data = &net->ipv6.sysctl.auto_flowlabels;
+	ipv6_table[4].data = &net->ipv6.sysctl.fwmark_reflect;
 
 	ipv6_route_table = ipv6_route_sysctl_init(net);
 	if (!ipv6_route_table)

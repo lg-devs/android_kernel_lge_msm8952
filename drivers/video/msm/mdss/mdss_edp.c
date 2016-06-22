@@ -293,7 +293,7 @@ int mdss_edp_mainlink_ready(struct mdss_edp_drv_pdata *ep, u32 which)
 			pr_debug("%s: which=%x ready\n", __func__, which);
 			return 1;
 		}
-		usleep(1000);
+		usleep_range(1000, 1000);
 	}
 	pr_err("%s: which=%x NOT ready\n", __func__, which);
 
@@ -303,7 +303,7 @@ int mdss_edp_mainlink_ready(struct mdss_edp_drv_pdata *ep, u32 which)
 void mdss_edp_mainlink_reset(struct mdss_edp_drv_pdata *ep)
 {
 	edp_write(ep->base + 0x04, 0x02); /* EDP_MAINLINK_CTRL */
-	usleep(1000);
+	usleep_range(1000, 1000);
 	edp_write(ep->base + 0x04, 0); /* EDP_MAINLINK_CTRL */
 }
 
@@ -329,7 +329,7 @@ void mdss_edp_aux_reset(struct mdss_edp_drv_pdata *ep)
 {
 	/* reset AUX */
 	edp_write(ep->base + 0x300, BIT(1)); /* EDP_AUX_CTRL */
-	usleep(1000);
+	usleep_range(1000, 1000);
 	edp_write(ep->base + 0x300, 0); /* EDP_AUX_CTRL */
 }
 
@@ -349,7 +349,7 @@ void mdss_edp_phy_pll_reset(struct mdss_edp_drv_pdata *ep)
 {
 	/* EDP_PHY_CTRL */
 	edp_write(ep->base + 0x74, 0x005); /* bit 0, 2 */
-	usleep(1000);
+	usleep_range(1000, 1000);
 	edp_write(ep->base + 0x74, 0x000); /* EDP_PHY_CTRL */
 }
 
@@ -363,7 +363,7 @@ int mdss_edp_phy_pll_ready(struct mdss_edp_drv_pdata *ep)
 		status = edp_read(ep->base + 0x6c0);
 		if (status & 0x01)
 			break;
-		usleep(100);
+		usleep_range(100, 100);
 	}
 
 	pr_debug("%s: PLL cnt=%d status=%x\n", __func__, cnt, (int)status);
@@ -616,7 +616,7 @@ int mdss_edp_on(struct mdss_panel_data *pdata)
 		if (gpio_is_valid(edp_drv->gpio_lvl_en))
 			gpio_set_value(edp_drv->gpio_lvl_en, 1);
 
-		INIT_COMPLETION(edp_drv->idle_comp);
+		reinit_completion(&edp_drv->idle_comp);
 		mdss_edp_mainlink_ctrl(edp_drv, 1);
 	} else {
 		mdss_edp_aux_ctrl(edp_drv, 1);
@@ -653,7 +653,7 @@ int mdss_edp_off(struct mdss_panel_data *pdata)
 	/* wait until link training is completed */
 	mutex_lock(&edp_drv->train_mutex);
 
-	INIT_COMPLETION(edp_drv->idle_comp);
+	reinit_completion(&edp_drv->idle_comp);
 	mdss_edp_state_ctrl(edp_drv, ST_PUSH_IDLE);
 
 	ret = wait_for_completion_timeout(&edp_drv->idle_comp,
@@ -778,7 +778,6 @@ static int mdss_edp_device_register(struct mdss_edp_drv_pdata *edp_drv)
 {
 	int ret;
 	u32 tmp;
-	struct device_node *fb_node;
 
 	mdss_edp_edid2pinfo(edp_drv);
 	edp_drv->panel_data.panel_info.bl_min = 1;
@@ -797,15 +796,7 @@ static int mdss_edp_device_register(struct mdss_edp_drv_pdata *edp_drv)
 	edp_drv->panel_data.panel_info.cont_splash_enabled =
 					edp_drv->cont_splash;
 
-	fb_node = of_parse_phandle(edp_drv->pdev->dev.of_node,
-			"qcom,mdss-fb-map", 0);
-	if (!fb_node) {
-		pr_err("Unable to find fb node for device: %s\n",
-			edp_drv->pdev->name);
-		return -ENODEV;
-	}
-
-	ret = mdss_register_panel(edp_drv->pdev, &edp_drv->panel_data, fb_node);
+	ret = mdss_register_panel(edp_drv->pdev, &edp_drv->panel_data);
 	if (ret) {
 		dev_err(&(edp_drv->pdev->dev), "unable to register eDP\n");
 		return ret;

@@ -50,6 +50,7 @@
 #define MAX_CORES_PER_CLUSTER 4
 #define MAX_NUM_OF_CLUSTERS 2
 #define NUM_OF_CORNERS 10
+#define DEFAULT_SCALING_FACTOR 1
 
 #define ALLOCATE_2D_ARRAY(type)\
 static type **allocate_2d_array_##type(int idx)\
@@ -108,6 +109,7 @@ static struct platform_device *msm_core_pdev;
 static struct cpu_activity_info activity[NR_CPUS];
 DEFINE_PER_CPU(struct cpu_pstate_pwr *, ptable);
 static struct cpu_pwr_stats cpu_stats[NR_CPUS];
+static uint32_t scaling_factor;
 ALLOCATE_2D_ARRAY(uint32_t);
 
 static int poll_ms;
@@ -119,6 +121,9 @@ module_param_named(disabled, disabled, int,
 		S_IRUGO | S_IWUSR | S_IWGRP);
 static bool in_suspend;
 static bool activate_power_table;
+static int max_throttling_temp = 80; /* in C */
+module_param_named(throttling_temp, max_throttling_temp, int,
+		S_IRUGO | S_IWUSR | S_IWGRP);
 
 /*
  * Cannot be called from an interrupt context
@@ -155,15 +160,17 @@ static void set_threshold(struct cpu_activity_info *cpu_node)
 	sensor_activate_trip(cpu_node->sensor_id,
 			&cpu_node->low_threshold, false);
 
-	cpu_node->hi_threshold.temp = cpu_node->temp + high_hyst_temp;
-	cpu_node->low_threshold.temp = cpu_node->temp - low_hyst_temp;
+	cpu_node->hi_threshold.temp = (cpu_node->temp + high_hyst_temp) *
+					scaling_factor;
+	cpu_node->low_threshold.temp = (cpu_node->temp - low_hyst_temp) *
+					scaling_factor;
 
 	/*
 	 * Set the threshold only if we are below the hotplug limit
 	 * Adding more work at this high temperature range, seems to
 	 * fail hotplug notifications.
 	 */
-	if (cpu_node->hi_threshold.temp < CPU_HOTPLUG_LIMIT)
+	if (cpu_node->hi_threshold.temp < (CPU_HOTPLUG_LIMIT * scaling_factor))
 		set_and_activate_threshold(cpu_node->sensor_id,
 			&cpu_node->hi_threshold);
 
@@ -186,7 +193,7 @@ static void core_temp_notify(enum thermal_trip_type type,
 	trace_temp_notification(cpu_node->sensor_id,
 		type, temp, cpu_node->temp);
 
-	cpu_node->temp = temp;
+	cpu_node->temp = temp / scaling_factor;
 
 	complete(&sampling_completion);
 }
@@ -221,6 +228,7 @@ void trigger_cpu_pwr_stats_calc(void)
 	int cpu;
 	static long prev_temp[NR_CPUS];
 	struct cpu_activity_info *cpu_node;
+	long temp;
 
 	if (disabled)
 		return;
@@ -233,7 +241,10 @@ void trigger_cpu_pwr_stats_calc(void)
 			continue;
 
 		if (cpu_node->temp == prev_temp[cpu])
-			sensor_get_temp(cpu_node->sensor_id, &cpu_node->temp);
+			sensor_get_temp(cpu_node->sensor_id, &temp);
+
+		cpu_node->temp = temp / scaling_factor;
+
 		prev_temp[cpu] = cpu_node->temp;
 
 		/*
@@ -312,8 +323,10 @@ static __ref int do_sampling(void *data)
 				prev_temp[cpu] = cpu_node->temp;
 				set_threshold(cpu_node);
 				trace_temp_threshold(cpu, cpu_node->temp,
-					cpu_node->hi_threshold.temp,
-					cpu_node->low_threshold.temp);
+					cpu_node->hi_threshold.temp /
+					scaling_factor,
+					cpu_node->low_threshold.temp /
+					scaling_factor);
 			}
 		}
 		if (!poll_ms)
@@ -350,10 +363,14 @@ static int update_userspace_power(struct sched_params __user *argp)
 	int cpu;
 	struct cpu_activity_info *node;
 	struct cpu_static_info *sp, *clear_sp;
-	int mpidr = (argp->cluster << 8);
-	int cpumask = argp->cpumask;
+	int cpumask, cluster, mpidr;
 
-	pr_debug("cpumask %d, cluster: %d\n", argp->cpumask, argp->cluster);
+	get_user(cpumask, &argp->cpumask);
+	get_user(cluster, &argp->cluster);
+	mpidr = cluster << 8;
+
+	pr_debug("%s: cpumask %d, cluster: %d\n", __func__, cpumask,
+					cluster);
 	for (i = 0; i < MAX_CORES_PER_CLUSTER; i++, cpumask >>= 1) {
 		if (!(cpumask & 0x01))
 			continue;
@@ -398,11 +415,11 @@ static int update_userspace_power(struct sched_params __user *argp)
 	 * argp->cpumask within the cluster (argp->cluster)
 	 */
 	spin_lock(&update_lock);
-	cpumask = argp->cpumask;
+	get_user(cpumask, &argp->cpumask);
 	for (i = 0; i < MAX_CORES_PER_CLUSTER; i++, cpumask >>= 1) {
 		if (!(cpumask & 0x01))
 			continue;
-		mpidr = (argp->cluster << CLUSTER_OFFSET_FOR_MPIDR);
+		mpidr = (cluster << CLUSTER_OFFSET_FOR_MPIDR);
 		mpidr |= i;
 		for_each_possible_cpu(cpu) {
 			if (!(cpu_logical_map(cpu) == mpidr))
@@ -440,12 +457,12 @@ static long msm_core_ioctl(struct file *file, unsigned int cmd,
 	struct cpu_activity_info *node = NULL;
 	struct sched_params __user *argp = (struct sched_params __user *)arg;
 	int i, cpu = num_possible_cpus();
-	int mpidr;
-	int cpumask;
+	int mpidr, cluster, cpumask;
 
 	if (!argp)
 		return -EINVAL;
 
+	get_user(cluster, &argp->cluster);
 	mpidr = (argp->cluster << (MAX_CORES_PER_CLUSTER *
 			MAX_NUM_OF_CLUSTERS));
 	cpumask = argp->cpumask;
@@ -601,7 +618,7 @@ static int msm_get_voltage_levels(struct device *dev, int cpu,
 	unsigned int *voltage;
 	int i;
 	int corner;
-	struct opp *opp;
+	struct dev_pm_opp *opp;
 	struct device *cpu_dev = get_cpu_device(cpu);
 	/*
 	 * Convert cpr corner voltage to average voltage of both
@@ -663,11 +680,12 @@ static int msm_core_tsens_init(struct device_node *node, int cpu)
 	struct device_node *phandle;
 	const char *sensor_type = NULL;
 	struct cpu_activity_info *cpu_node = &activity[cpu];
+	long temp;
 
 	if (!node)
 		return -ENODEV;
 
-	key = "qcom,sensor";
+	key = "sensor";
 	phandle = of_parse_phandle(node, key, 0);
 	if (!phandle) {
 		pr_info("%s: No sensor mapping found for the core\n",
@@ -694,38 +712,37 @@ static int msm_core_tsens_init(struct device_node *node, int cpu)
 	if (cpu_node->sensor_id < 0)
 		return cpu_node->sensor_id;
 
-	ret = sensor_get_temp(cpu_node->sensor_id, &cpu_node->temp);
+	key = "qcom,scaling-factor";
+	ret = of_property_read_u32(phandle, key,
+				&scaling_factor);
+	if (ret) {
+		pr_info("%s: Cannot read tsens scaling factor\n", __func__);
+		scaling_factor = DEFAULT_SCALING_FACTOR;
+	}
+
+	ret = sensor_get_temp(cpu_node->sensor_id, &temp);
 	if (ret)
 		return ret;
 
+	cpu_node->temp = temp / scaling_factor;
+
 	init_sens_threshold(&cpu_node->hi_threshold,
 			THERMAL_TRIP_CONFIGURABLE_HI,
-			cpu_node->temp + high_hyst_temp,
+			(cpu_node->temp + high_hyst_temp) * scaling_factor,
 			(void *)cpu_node);
 	init_sens_threshold(&cpu_node->low_threshold,
 			THERMAL_TRIP_CONFIGURABLE_LOW,
-			cpu_node->temp - low_hyst_temp,
+			(cpu_node->temp - low_hyst_temp) * scaling_factor,
 			(void *)cpu_node);
 
 	return ret;
 }
 
-static int msm_core_mpidr_init(struct device_node *node)
+static int msm_core_mpidr_init(struct device_node *phandle)
 {
 	int ret = 0;
 	char *key = NULL;
-	struct device_node *phandle;
 	int mpidr;
-
-	if (!node)
-		return -ENODEV;
-
-	key = "qcom,cpu-name";
-	phandle = of_parse_phandle(node, key, 0);
-	if (!phandle) {
-		pr_err("%s: Cannot map cpu handle\n", __func__);
-		return -ENODEV;
-	}
 
 	key = "reg";
 	ret = of_property_read_u32(phandle, key,
@@ -853,32 +870,35 @@ static int msm_core_params_init(struct platform_device *pdev)
 {
 	int ret = 0;
 	unsigned long cpu = 0;
-	struct device_node *node = NULL;
 	struct device_node *child_node = NULL;
+	struct device_node *ea_node = NULL;
+	char *key = NULL;
 	int mpidr;
 
-	node = of_find_node_by_name(pdev->dev.of_node,
-				"qcom,core-mapping");
-	if (!node) {
-		pr_err("No per core params found\n");
-		return -ENODEV;
-	}
+	for_each_possible_cpu(cpu) {
+		child_node = of_get_cpu_node(cpu, NULL);
 
-	for_each_child_of_node(node, child_node) {
+		if (!child_node)
+			continue;
+
 		mpidr = msm_core_mpidr_init(child_node);
 		if (mpidr < 0)
 			return mpidr;
-
-		for_each_possible_cpu(cpu)
-			if (cpu_logical_map(cpu) == mpidr)
-				break;
 
 		if (cpu >= num_possible_cpus())
 			continue;
 
 		activity[cpu].mpidr = mpidr;
 
-		ret = msm_core_tsens_init(child_node, cpu);
+		key = "qcom,ea";
+		ea_node = of_parse_phandle(child_node, key, 0);
+		if (!ea_node) {
+			pr_err("%s Couldn't find the ea_node for cpu%lu\n",
+				__func__, cpu);
+			return -ENODEV;
+		}
+
+		ret = msm_core_tsens_init(ea_node, cpu);
 		if (ret)
 			return ret;
 
@@ -1003,6 +1023,8 @@ static int msm_core_dev_probe(struct platform_device *pdev)
 	if (ret)
 		pr_info("msm-core initialized without polling period\n");
 
+	key = "qcom,throttling-temp";
+	ret = of_property_read_u32(node, key, &max_throttling_temp);
 
 	ret = uio_init(pdev);
 	if (ret)
@@ -1079,4 +1101,4 @@ static int __init msm_core_init(void)
 {
 	return platform_driver_register(&msm_core_driver);
 }
-late_initcall(msm_core_init);
+late_initcall_sync(msm_core_init);

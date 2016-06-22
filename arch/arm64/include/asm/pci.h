@@ -1,78 +1,42 @@
-/*
- * Based on arch/arm/include/asm/pci.h
- */
-#ifndef ASMARM_PCI_H
-#define ASMARM_PCI_H
-
+#ifndef __ASM_PCI_H
+#define __ASM_PCI_H
 #ifdef __KERNEL__
-#include <asm-generic/pci-dma-compat.h>
+
+#include <linux/types.h>
+#include <linux/slab.h>
+#include <linux/dma-mapping.h>
+
+#include <asm/io.h>
 #include <asm-generic/pci-bridge.h>
+#include <asm-generic/pci-dma-compat.h>
 
-#include <asm/pcibios.h>	/* for pci_sys_data */
-
-extern unsigned long pcibios_min_io;
-#define PCIBIOS_MIN_IO pcibios_min_io
-extern unsigned long pcibios_min_mem;
-#define PCIBIOS_MIN_MEM pcibios_min_mem
-
-static inline int pcibios_assign_all_busses(void)
-{
-	return pci_has_flag(PCI_REASSIGN_ALL_RSRC);
-}
-
-#ifdef CONFIG_PCI_DOMAINS
-static inline int pci_domain_nr(struct pci_bus *bus)
-{
-	struct pci_sys_data *root = bus->sysdata;
-
-	return root->domain;
-}
-static inline int pci_proc_domain(struct pci_bus *bus)
-{
-	return pci_domain_nr(bus);
-}
-#endif /* CONFIG_PCI_DOMAINS */
-
-static inline void pcibios_penalize_isa_irq(int irq, int active)
-{
-	/* We don't do dynamic PCI IRQ allocation */
-}
+#define PCIBIOS_MIN_IO		0x1000
+#define PCIBIOS_MIN_MEM		0
 
 /*
- * The PCI address space does equal the physical memory address space.
- * The networking and block device layers use this boolean for bounce
- * buffer decisions.
+ * Set to 1 if the kernel should re-assign all PCI bus numbers
  */
-#define PCI_DMA_BUS_IS_PHYS     (1)
+#define pcibios_assign_all_busses() \
+	(pci_has_flag(PCI_REASSIGN_ALL_BUS))
+
+/*
+ * PCI address space differs from physical memory address space
+ */
+#define PCI_DMA_BUS_IS_PHYS	(0)
+
+extern int isa_dma_bridge_buggy;
 
 #ifdef CONFIG_PCI
-static inline void pci_dma_burst_advice(struct pci_dev *pdev,
-					enum pci_dma_burst_strategy *strat,
-					unsigned long *strategy_parameter)
+static inline int pci_proc_domain(struct pci_bus *bus)
 {
-   *strat = PCI_DMA_BURST_INFINITY;
-	*strategy_parameter = ~0UL;
+	return 1;
 }
-#endif
+#endif  /* CONFIG_PCI */
 
-#define HAVE_PCI_MMAP
-extern int pci_mmap_page_range(struct pci_dev *dev, struct vm_area_struct *vma,
-			       enum pci_mmap_state mmap_state,
-			       int write_combine);
-
-/*
- * Dummy implementation; always return 0.
- */
-static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
-{
-	return 0;
-}
-
-#endif /* __KERNEL__ */
+#endif  /* __KERNEL__ */
+#endif  /* __ASM_PCI_H */
 
 #ifdef CONFIG_PCI_MSM
 #define arch_setup_msi_irqs arch_setup_msi_irqs
 #define arch_teardown_msi_irqs arch_teardown_msi_irqs
-#endif
-
 #endif

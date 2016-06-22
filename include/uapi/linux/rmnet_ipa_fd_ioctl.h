@@ -37,23 +37,38 @@
 #define IFNAMSIZ 16
 #endif
 
+/**
+ * struct wan_ioctl_poll_tethering_stats - structure used for
+ *                                         WAN_IOCTL_POLL_TETHERING_STATS IOCTL.
+ *
+ * @polling_interval_secs: Polling interval in seconds.
+ * @reset_stats:           Indicate whether to reset the stats (use 1) or not.
+ *
+ * The structure to be used by the user space in order to request for the
+ * tethering stats to be polled. Setting the interval to 0 indicates to stop
+ * the polling process.
+ */
 struct wan_ioctl_poll_tethering_stats {
-	/* Polling interval in seconds */
 	uint64_t polling_interval_secs;
-
-	/* Indicate whether to reset the stats (use 1) or not */
-	uint8_t reset_stats;
+	uint8_t  reset_stats;
 };
 
+/**
+ * struct wan_ioctl_set_data_quota - structure used for
+ *                                   WAN_IOCTL_SET_DATA_QUOTA IOCTL.
+ *
+ * @interface_name:  Name of the interface on which to set the quota.
+ * @quota_mbytes:    Quota (in Mbytes) for the above interface.
+ * @set_quota:       Indicate whether to set the quota (use 1) or
+ *                   unset the quota.
+ *
+ * The structure to be used by the user space in order to request
+ * a quota to be set on a specific interface (by specifying its name).
+ */
 struct wan_ioctl_set_data_quota {
-	/* Name of the interface on which to set the quota */
-	char interface_name[IFNAMSIZ];
-
-	/* Quota (in Mbytes) for the above interface */
+	char     interface_name[IFNAMSIZ];
 	uint64_t quota_mbytes;
-
-	/* Indicate whether to set the quota (use 1) or unset the quota */
-	uint8_t set_quota;
+	uint8_t  set_quota;
 };
 
 struct wan_ioctl_set_tether_client_pipe {

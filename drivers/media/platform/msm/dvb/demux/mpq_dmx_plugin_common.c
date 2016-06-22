@@ -19,7 +19,7 @@
 #include "mpq_dmx_plugin_common.h"
 #include "mpq_sdmx.h"
 
-#define SDMX_MAJOR_VERSION_MATCH	(7)
+#define SDMX_MAJOR_VERSION_MATCH	(8)
 
 /* Length of mandatory fields that must exist in header of video PES */
 #define PES_MANDATORY_FIELDS_LEN			9
@@ -362,9 +362,9 @@ static ssize_t mpq_sdmx_log_level_write(struct file *fp,
 	if (ret_count < 0)
 		return ret_count;
 
-	ret = sscanf(user_str, "%d", &level);
-	if (ret != 1)
-		return -EINVAL;
+	ret = kstrtoint(user_str, 0, &level);
+	if (ret)
+		return ret;
 
 	if (level < SDMX_LOG_NO_PRINT || level > SDMX_LOG_VERBOSE)
 		return -EINVAL;
@@ -1497,8 +1497,7 @@ int mpq_dmx_init_video_feed(struct mpq_feed *mpq_feed)
 
 	if (ret < 0) {
 		MPQ_DVB_ERR_PRINT(
-			"%s: mpq_adapter_register_stream_if failed, "
-			"err = %d\n",
+			"%s: mpq_adapter_register_stream_if failed, err = %d\n",
 			__func__, ret);
 		goto init_failed_free_stream_buffer;
 	}
@@ -1938,6 +1937,7 @@ static int mpq_dmx_decoder_fullness_check(
 		(!feed_data->fullness_wait_cancel) &&
 		(!mpq_dmx_check_decoder_fullness(sbuff, required_space))) {
 		DEFINE_WAIT(__wait);
+
 		for (;;) {
 			prepare_to_wait(&sbuff->raw_data.queue,
 				&__wait,
@@ -2550,13 +2550,10 @@ static int mpq_dmx_process_video_packet_framing(
 			 * Double check that we are not in middle of
 			 * previous PES header parsing.
 			 */
-			if (feed_data->pes_header_left_bytes != 0) {
+			if (feed_data->pes_header_left_bytes != 0)
 				MPQ_DVB_ERR_PRINT(
-					"%s: received PUSI"
-					"while handling PES header"
-					"of previous PES\n",
+					"%s: received PUSI while handling PES header of previous PES\n",
 					__func__);
-			}
 
 			feed->peslen = 0;
 			feed_data->pes_header_offset = 0;
@@ -2583,9 +2580,10 @@ static int mpq_dmx_process_video_packet_framing(
 	 * Save discontinuity indicator if exists.
 	 */
 	if (ts_header->adaptation_field_control == 3) {
-		const struct ts_adaptation_field *adaptation_field;
-		adaptation_field = (const struct ts_adaptation_field *)
-			(buf + ts_payload_offset);
+		const struct ts_adaptation_field *adaptation_field =
+			(const struct ts_adaptation_field *)(buf +
+				ts_payload_offset);
+
 		discontinuity_indicator =
 			adaptation_field->discontinuity_indicator;
 		ts_payload_offset += buf[ts_payload_offset] + 1;
@@ -3120,9 +3118,10 @@ static int mpq_dmx_process_video_packet_no_framing(
 	 * Save discontinuity indicator if exists.
 	 */
 	if (ts_header->adaptation_field_control == 3) {
-		const struct ts_adaptation_field *adaptation_field;
-		adaptation_field = (const struct ts_adaptation_field *)
-			(buf + ts_payload_offset);
+		const struct ts_adaptation_field *adaptation_field =
+			(const struct ts_adaptation_field *)(buf +
+				ts_payload_offset);
+
 		discontinuity_indicator =
 			adaptation_field->discontinuity_indicator;
 		ts_payload_offset += buf[ts_payload_offset] + 1;
@@ -4190,6 +4189,7 @@ static int mpq_sdmx_section_filtering(struct mpq_feed *mpq_feed,
 			NULL, 0, &f->filter, DMX_OK);
 	} else {
 		int split = mpq_feed->sdmx_buf.size - mpq_feed->sdmx_buf.pread;
+
 		feed->cb.sec(&mpq_feed->sdmx_buf.data[mpq_feed->sdmx_buf.pread],
 			split,
 			&mpq_feed->sdmx_buf.data[0],
@@ -4275,6 +4275,7 @@ static void mpq_sdmx_pes_filter_results(struct mpq_demux *mpq_demux,
 	if ((0 == sts->metadata_fill_count) &&
 		(sts->error_indicators & SDMX_FILTER_ERR_D_BUF_FULL)) {
 		ssize_t free = dvb_ringbuffer_free(buf);
+
 		ret = 0;
 		if ((free + SZ_2K) < MAX_PES_LENGTH)
 			ret = mpq_sdmx_check_ts_stall(mpq_demux, mpq_feed, sts,
@@ -5009,14 +5010,15 @@ int mpq_sdmx_process(struct mpq_demux *mpq_demux,
 			read_offset += ret;
 			if (read_offset >= input->size)
 				read_offset -= input->size;
-		} else if (ret == 0) {
-			/* Not enough data to read (less than 1 TS packet) */
-			break;
 		} else {
-			/* Some error occurred */
-			MPQ_DVB_ERR_PRINT(
-				"%s: mpq_sdmx_process_buffer failed, returned %d\n",
-				__func__, ret);
+			/*
+			 * ret < 0:	some error occurred
+			 * ret == 0:	not enough data (less than 1 TS packet)
+			 */
+			if (ret < 0)
+				MPQ_DVB_ERR_PRINT(
+					"%s: mpq_sdmx_process_buffer failed, returned %d\n",
+					__func__, ret);
 			break;
 		}
 	}

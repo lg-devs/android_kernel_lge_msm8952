@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -50,6 +50,7 @@ void qcrypto_get_engine_list(size_t num_engines,
 int qcrypto_cipher_set_device_hw(struct ablkcipher_request *req,
 				unsigned int fde_pfe,
 				unsigned int hw_inst);
+
 
 struct qcrypto_func_set {
 	int (*cipher_set)(struct ablkcipher_request *req,

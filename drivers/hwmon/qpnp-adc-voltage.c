@@ -174,9 +174,6 @@ static struct qpnp_vadc_scale_fn vadc_scale_fn[] = {
 	[SCALE_QRD_SKUH_BATT_THERM] = {qpnp_adc_scale_qrd_skuh_batt_therm},
 	[SCALE_NCP_03WF683_THERM] = {qpnp_adc_scale_therm_ncp03},
 	[SCALE_QRD_SKUT1_BATT_THERM] = {qpnp_adc_scale_qrd_skut1_batt_therm},
-	[SCALE_QRD_SKUC_BATT_THERM] = {qpnp_adc_scale_qrd_skuc_batt_therm},
-	[SCALE_QRD_SKUE_BATT_THERM] = {qpnp_adc_scale_qrd_skue_batt_therm},
-	[SCALE_QRD_SKUL_BATT_THERM] = {qpnp_adc_scale_qrd_skul_batt_therm},
 	[SCALE_PMI_CHG_TEMP] = {qpnp_adc_scale_pmi_chg_temp},
 };
 
@@ -447,7 +444,7 @@ static int32_t qpnp_vadc_configure(struct qpnp_vadc_chip *vadc,
 	}
 
 	if (!vadc->vadc_poll_eoc)
-		INIT_COMPLETION(vadc->adc->adc_rslt_completion);
+		reinit_completion(&vadc->adc->adc_rslt_completion);
 
 	rc = qpnp_vadc_enable(vadc, true);
 	if (rc)
@@ -742,8 +739,6 @@ static int32_t
 #define QPNP_VBAT_COEFF_48	2190
 #define QPNP_VBAT_COEFF_49	4180
 #define QPNP_VBAT_COEFF_50	27800000
-#define QPNP_VBAT_COEFF_51	5110
-#define QPNP_VBAT_COEFF_52	34444000
 
 static int32_t qpnp_ocv_comp(int64_t *result,
 			struct qpnp_vadc_chip *vadc, int64_t die_temp)
@@ -913,13 +908,6 @@ static int32_t qpnp_ocv_comp(int64_t *result,
 		switch (vadc->id) {
 		case COMP_ID_SMIC:
 			temp_var = (-QPNP_VBAT_COEFF_50);
-			break;
-		}
-		break;
-	case QPNP_REV_ID_8909_1_1:
-		switch (vadc->id) {
-		case COMP_ID_SMIC:
-			temp_var = (QPNP_VBAT_COEFF_52);
 			break;
 		}
 		break;
@@ -1103,18 +1091,6 @@ static int32_t qpnp_vbat_sns_comp(int64_t *result,
 				temp_var = (((die_temp - 30000) *
 					(-QPNP_VBAT_COEFF_49)) +
 					(-QPNP_VBAT_COEFF_50));
-			break;
-		}
-		break;
-	case QPNP_REV_ID_8909_1_1:
-		switch (vadc->id) {
-		case COMP_ID_SMIC:
-			if (die_temp < 30000)
-				temp_var = (QPNP_VBAT_COEFF_52);
-			else if (die_temp > 30000)
-				temp_var = (((die_temp - 30000) *
-					(-QPNP_VBAT_COEFF_51)) +
-					(QPNP_VBAT_COEFF_52));
 			break;
 		}
 		break;
@@ -1782,6 +1758,8 @@ int32_t qpnp_vadc_read(struct qpnp_vadc_chip *vadc,
 {
 	struct qpnp_vadc_result die_temp_result;
 	int rc = 0;
+	enum power_supply_property prop;
+	union power_supply_propval ret = {0, };
 
 	if (channel == VBAT_SNS) {
 		rc = qpnp_vadc_conv_seq_request(vadc, ADC_SEQ_NONE,
@@ -1806,21 +1784,6 @@ int32_t qpnp_vadc_read(struct qpnp_vadc_chip *vadc,
 		return 0;
 	} else if (channel == SPARE2) {
 		/* chg temp channel */
-		int version;
-		enum power_supply_property prop;
-		union power_supply_propval ret = {0, };
-
-		/* Note reading version support is not needed if by default
-		 * the channel is supported across all revisions.
-		 */
-		version = qpnp_adc_get_revid_version(vadc->dev);
-		if (version == -EINVAL)
-			pr_debug("Unable to get rev-id support\n");
-		else if (version == QPNP_REV_ID_PMI8994_1_0) {
-			pr_err("Version does not support CHG Temp\n");
-			return -EINVAL;
-		}
-
 		if (!vadc->vadc_chg_vote) {
 			vadc->vadc_chg_vote =
 				power_supply_get_by_name("battery");
@@ -1854,7 +1817,30 @@ int32_t qpnp_vadc_read(struct qpnp_vadc_chip *vadc,
 		}
 
 		return 0;
-	} else
+	}
+#ifdef CONFIG_LGE_PM
+	else if (channel == LR_MUX10_PU1_AMUX_USB_ID_LV || channel == LR_MUX10_USB_ID_LV) {
+		u8 data, gpio3_mode, gpio3_out;
+		struct spmi_device *spmi = vadc->adc->spmi;
+
+		spmi_ext_register_readl(spmi->ctrl, spmi->sid, 0xc240, &gpio3_mode, 1);
+		spmi_ext_register_readl(spmi->ctrl, spmi->sid, 0xc245, &gpio3_out, 1);
+
+		data = 0x11;
+		spmi_ext_register_writel(spmi->ctrl, spmi->sid, 0xc240, &data, 1);
+		data = 0x03;
+		spmi_ext_register_writel(spmi->ctrl, spmi->sid, 0xc245, &data, 1);
+
+		rc = qpnp_vadc_conv_seq_request(vadc, ADC_SEQ_NONE,
+				channel, result);
+
+		spmi_ext_register_writel(spmi->ctrl, spmi->sid, 0xc240, &gpio3_mode, 1);
+		spmi_ext_register_writel(spmi->ctrl, spmi->sid, 0xc245, &gpio3_out, 1);
+
+		return rc;
+	}
+#endif
+	else
 		return qpnp_vadc_conv_seq_request(vadc, ADC_SEQ_NONE,
 				channel, result);
 }
@@ -2264,6 +2250,7 @@ static int32_t qpnp_vadc_init_thermal(struct qpnp_vadc_chip *vadc,
 			vadc->vadc_therm_chan[i].thermal_node = true;
 			snprintf(name, sizeof(name), "%s",
 				vadc->adc->adc_channels[i].name);
+			vadc->vadc_therm_chan[i].vadc_dev = vadc;
 			vadc->vadc_therm_chan[i].tz_dev =
 				thermal_zone_device_register(name,
 				0, 0, &vadc->vadc_therm_chan[i],
@@ -2272,7 +2259,6 @@ static int32_t qpnp_vadc_init_thermal(struct qpnp_vadc_chip *vadc,
 				pr_err("thermal device register failed.\n");
 				goto thermal_err_sens;
 			}
-			vadc->vadc_therm_chan[i].vadc_dev = vadc;
 		}
 		i++;
 		thermal_node = false;

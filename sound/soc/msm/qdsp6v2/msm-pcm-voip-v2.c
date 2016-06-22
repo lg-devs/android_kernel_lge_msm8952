@@ -30,7 +30,6 @@
 #include "msm-pcm-q6-v2.h"
 #include "msm-pcm-routing-v2.h"
 #include "q6voice.h"
-#include "audio_ocmem.h"
 
 #define SHARED_MEM_BUF 2
 #define VOIP_MAX_Q_LEN 10
@@ -719,8 +718,6 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 		pr_debug("%s: Trigger start\n", __func__);
-		if ((!prtd->capture_start) && (!prtd->playback_start))
-			voice_ocmem_process_req(VOICE, true);
 		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
 			prtd->capture_start = 1;
 		else
@@ -728,8 +725,6 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 		pr_debug("SNDRV_PCM_TRIGGER_STOP\n");
-		if (prtd->capture_start && prtd->playback_start)
-			voice_ocmem_process_req(VOICE, false);
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 			prtd->playback_start = 0;
 		else

@@ -12,7 +12,6 @@
 */
 
 #include <linux/module.h>
-#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/err.h>
@@ -128,7 +127,6 @@ irqreturn_t inv_mpu6050_read_fifo(int irq, void *p)
 	u8 data[INV_MPU6050_OUTPUT_DATA_SIZE];
 	u16 fifo_count;
 	s64 timestamp;
-	u64 *tmp;
 
 	mutex_lock(&indio_dev->mlock);
 	if (!(st->chip_config.accl_fifo_enable |
@@ -174,9 +172,8 @@ irqreturn_t inv_mpu6050_read_fifo(int irq, void *p)
 		if (0 == result)
 			timestamp = 0;
 
-		tmp = (u64 *)data;
-		tmp[DIV_ROUND_UP(bytes_per_datum, 8)] = timestamp;
-		result = iio_push_to_buffers(indio_dev, data);
+		result = iio_push_to_buffers_with_timestamp(indio_dev, data,
+			timestamp);
 		if (result)
 			goto flush_fifo;
 		fifo_count -= bytes_per_datum;

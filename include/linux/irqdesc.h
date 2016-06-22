@@ -12,6 +12,8 @@ struct irq_affinity_notify;
 struct proc_dir_entry;
 struct module;
 struct irq_desc;
+struct irq_domain;
+struct pt_regs;
 
 /**
  * struct irq_desc - interrupt descriptor
@@ -31,12 +33,16 @@ struct irq_desc;
  * @threads_handled_last: comparator field for deferred spurious detection of theraded handlers
  * @lock:		locking for SMP
  * @affinity_hint:	hint to user space for preferred irq affinity
- * @affinity_notify:	list of notification clients for affinity changes
- * @affinity_work:	Work queue for handling affinity change notifications
+ * @affinity_notify:	context for notification of affinity changes
  * @pending_mask:	pending rebalanced interrupts
  * @threads_oneshot:	bitfield to handle shared oneshot threads
  * @threads_active:	number of irqaction threads currently running
  * @wait_for_threads:	wait queue for sync_irq to wait for threaded handlers
+ * @nr_actions:		number of installed actions on this descriptor
+ * @no_suspend_depth:	number of irqactions on a irq descriptor with
+ *			IRQF_NO_SUSPEND set
+ * @force_resume_depth:	number of irqactions on a irq descriptor with
+ *			IRQF_FORCE_RESUME set
  * @dir:		/proc/irq/ procfs entry
  * @name:		flow handler name for /proc/interrupts output
  */
@@ -61,8 +67,7 @@ struct irq_desc {
 	struct cpumask		*percpu_enabled;
 #ifdef CONFIG_SMP
 	const struct cpumask	*affinity_hint;
-	struct list_head	affinity_notify;
-	struct work_struct	affinity_work;
+	struct irq_affinity_notify *affinity_notify;
 #ifdef CONFIG_GENERIC_PENDING_IRQ
 	cpumask_var_t		pending_mask;
 #endif
@@ -70,6 +75,11 @@ struct irq_desc {
 	unsigned long		threads_oneshot;
 	atomic_t		threads_active;
 	wait_queue_head_t       wait_for_threads;
+#ifdef CONFIG_PM_SLEEP
+	unsigned int		nr_actions;
+	unsigned int		no_suspend_depth;
+	unsigned int		force_resume_depth;
+#endif
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry	*dir;
 #endif
@@ -119,6 +129,23 @@ static inline void generic_handle_irq_desc(unsigned int irq, struct irq_desc *de
 }
 
 int generic_handle_irq(unsigned int irq);
+
+#ifdef CONFIG_HANDLE_DOMAIN_IRQ
+/*
+ * Convert a HW interrupt number to a logical one using a IRQ domain,
+ * and handle the result interrupt number. Return -EINVAL if
+ * conversion failed. Providing a NULL domain indicates that the
+ * conversion has already been done.
+ */
+int __handle_domain_irq(struct irq_domain *domain, unsigned int hwirq,
+			bool lookup, struct pt_regs *regs);
+
+static inline int handle_domain_irq(struct irq_domain *domain,
+				    unsigned int hwirq, struct pt_regs *regs)
+{
+	return __handle_domain_irq(domain, hwirq, true, regs);
+}
+#endif
 
 /* Test to see if a driver has successfully requested an irq */
 static inline int irq_has_action(unsigned int irq)

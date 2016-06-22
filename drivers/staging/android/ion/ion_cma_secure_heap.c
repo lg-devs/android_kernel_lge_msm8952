@@ -1,9 +1,9 @@
 /*
- * drivers/gpu/ion/ion_secure_cma_heap.c
+ * drivers/staging/android/ion/ion_cma_secure_heap.c
  *
  * Copyright (C) Linaro 2012
  * Author: <benjamin.gaignard@linaro.org> for ST-Ericsson.
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -25,6 +25,7 @@
 #include <linux/msm_ion.h>
 #include <trace/events/kmem.h>
 
+#include <soc/qcom/secure_buffer.h>
 #include <asm/cacheflush.h>
 
 /* for ion_heap_ops structure */
@@ -381,15 +382,12 @@ int ion_secure_cma_drain_pool(struct ion_heap *heap, void *unused)
 	return 0;
 }
 
-static int ion_secure_cma_shrinker(struct shrinker *shrinker,
+static unsigned long ion_secure_cma_shrinker(struct shrinker *shrinker,
 					struct shrink_control *sc)
 {
 	struct ion_cma_secure_heap *sheap = container_of(shrinker,
 					struct ion_cma_secure_heap, shrinker);
 	int nr_to_scan = sc->nr_to_scan;
-
-	if (nr_to_scan == 0)
-		return atomic_read(&sheap->total_pool_size);
 
 	/*
 	 * Allocation path may invoke the shrinker. Proceeding any further
@@ -403,6 +401,14 @@ static int ion_secure_cma_shrinker(struct shrinker *shrinker,
 
 	mutex_unlock(&sheap->chunk_lock);
 
+	return atomic_read(&sheap->total_pool_size);
+}
+
+static unsigned long ion_secure_cma_shrinker_count(struct shrinker *shrinker,
+					struct shrink_control *sc)
+{
+	struct ion_cma_secure_heap *sheap = container_of(shrinker,
+					struct ion_cma_secure_heap, shrinker);
 	return atomic_read(&sheap->total_pool_size);
 }
 
@@ -690,7 +696,7 @@ static int ion_secure_cma_allocate(struct ion_heap *heap,
 		} else {
 			trace_ion_cp_secure_buffer_start(heap->name, len, align,
 									flags);
-			ret = msm_ion_secure_table(buf->table);
+			ret = msm_secure_table(buf->table);
 			trace_ion_cp_secure_buffer_end(heap->name, len, align,
 									flags);
 		}
@@ -717,7 +723,7 @@ static void ion_secure_cma_free(struct ion_buffer *buffer)
 
 	dev_dbg(sheap->dev, "Release buffer %p\n", buffer);
 	if (msm_secure_v2_is_supported())
-		ret = msm_ion_unsecure_table(info->table);
+		ret = msm_unsecure_table(info->table);
 	atomic_sub(buffer->size, &sheap->total_allocated);
 	BUG_ON(atomic_read(&sheap->total_allocated) < 0);
 
@@ -854,7 +860,8 @@ struct ion_heap *ion_secure_cma_heap_create(struct ion_platform_heap *data)
 	INIT_WORK(&sheap->work, ion_secure_pool_pages);
 	sheap->shrinker.seeks = DEFAULT_SEEKS;
 	sheap->shrinker.batch = 0;
-	sheap->shrinker.shrink = ion_secure_cma_shrinker;
+	sheap->shrinker.scan_objects = ion_secure_cma_shrinker;
+	sheap->shrinker.count_objects = ion_secure_cma_shrinker_count;
 	sheap->default_prefetch_size = sheap->heap_size;
 	register_shrinker(&sheap->shrinker);
 

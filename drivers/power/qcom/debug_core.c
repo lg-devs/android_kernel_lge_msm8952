@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,7 +20,7 @@
 #include <linux/ctype.h>
 #include <linux/cpu.h>
 
-#define MAX_PSTATES 20
+#define MAX_PSTATES 50
 
 enum arg_offset {
 	CPU_OFFSET,
@@ -233,6 +233,7 @@ static ssize_t msm_core_enable_write(struct file *file,
 
 	if (cpu_possible(cpu)) {
 		struct core_debug *node = &per_cpu(c_dgfs, cpu);
+
 		if (arg[FREQ_OFFSET]) {
 			msm_core_data[cpu].ptable = node->head;
 			msm_core_data[cpu].len = node->len;

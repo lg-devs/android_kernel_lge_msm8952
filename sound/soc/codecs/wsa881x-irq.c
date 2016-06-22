@@ -94,7 +94,7 @@ static void wsa_irq_sync_unlock(struct irq_data *data)
 	if (wsa_res->codec == NULL) {
 		pr_err("%s: codec pointer not registered\n", __func__);
 		if (ptr_codec == NULL) {
-			pr_err("%s: did not recieve valid codec pointer\n",
+			pr_err("%s: did not receive valid codec pointer\n",
 					__func__);
 			goto unlock;
 		} else {
@@ -194,12 +194,11 @@ static irqreturn_t wsa_irq_thread(int irq, void *data)
 	if (wsa_res->codec == NULL) {
 		pr_err("%s: codec pointer not registered\n", __func__);
 		if (ptr_codec == NULL) {
-			pr_err("%s: did not recieve valid codec pointer\n",
+			pr_err("%s: did not receive valid codec pointer\n",
 					__func__);
 			return IRQ_HANDLED;
-		} else {
-			wsa_res->codec = ptr_codec;
 		}
+		wsa_res->codec = ptr_codec;
 	}
 	status = snd_soc_read(wsa_res->codec, WSA881X_INTR_STATUS);
 	/* Apply masking */
@@ -476,6 +475,7 @@ static int phyirq_to_virq(struct wsa_resource *wsa_res, int offset)
 static int virq_to_phyirq(struct wsa_resource *wsa_res, int virq)
 {
 	struct irq_data *irq_data = irq_get_irq_data(virq);
+
 	if (unlikely(!irq_data)) {
 		pr_err("%s: irq_data is NULL\n", __func__);
 		return -EINVAL;
@@ -522,40 +522,39 @@ static int wsa_irq_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "%s: Couldn't find wsa-int node(%d)\n",
 			__func__, irq);
 		return -EINVAL;
-	} else {
-		pr_debug("%s: node %s\n", __func__, pdev->name);
-		wsa_res = kzalloc(sizeof(*wsa_res), GFP_KERNEL);
-		if (!wsa_res) {
-			pr_err("%s: could not allocate memory\n", __func__);
-			return -ENOMEM;
-		}
-		/*
-		 * wsa interrupt controller supports N to N irq mapping with
-		 * single cell binding with irq numbers(offsets) only.
-		 * Use irq_domain_simple_ops that has irq_domain_simple_map and
-		 * irq_domain_xlate_onetwocell.
-		 */
-		wsa_res->dev = &pdev->dev;
-		wsa_res->domain = irq_domain_add_linear(wsa_res->dev->of_node,
-				WSA_MAX_NUM_IRQS, &irq_domain_simple_ops,
-				wsa_res);
-		if (!wsa_res->domain) {
-			dev_err(&pdev->dev, "%s: domain is NULL\n", __func__);
-			ret = -ENOMEM;
-			goto err;
-		}
-		wsa_res->dev = &pdev->dev;
+	}
+	pr_debug("%s: node %s\n", __func__, pdev->name);
+	wsa_res = kzalloc(sizeof(*wsa_res), GFP_KERNEL);
+	if (!wsa_res) {
+		pr_err("%s: could not allocate memory\n", __func__);
+		return -ENOMEM;
+	}
+	/*
+	 * wsa interrupt controller supports N to N irq mapping with
+	 * single cell binding with irq numbers(offsets) only.
+	 * Use irq_domain_simple_ops that has irq_domain_simple_map and
+	 * irq_domain_xlate_onetwocell.
+	 */
+	wsa_res->dev = &pdev->dev;
+	wsa_res->domain = irq_domain_add_linear(wsa_res->dev->of_node,
+			WSA_MAX_NUM_IRQS, &irq_domain_simple_ops,
+			wsa_res);
+	if (!wsa_res->domain) {
+		dev_err(&pdev->dev, "%s: domain is NULL\n", __func__);
+		ret = -ENOMEM;
+		goto err;
+	}
+	wsa_res->dev = &pdev->dev;
 
-		dev_dbg(&pdev->dev, "%s: virq = %d\n", __func__, irq);
-		wsa_res->irq = irq;
-		wsa_res->num_irq_regs = 1;
-		wsa_res->num_irqs = WSA_NUM_IRQS;
-		ret = wsa_irq_init(wsa_res);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "%s: failed to do irq init %d\n",
-					__func__, ret);
-			goto err;
-		}
+	dev_dbg(&pdev->dev, "%s: virq = %d\n", __func__, irq);
+	wsa_res->irq = irq;
+	wsa_res->num_irq_regs = 1;
+	wsa_res->num_irqs = WSA_NUM_IRQS;
+	ret = wsa_irq_init(wsa_res);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: failed to do irq init %d\n",
+				__func__, ret);
+		goto err;
 	}
 
 	return ret;

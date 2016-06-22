@@ -1,18 +1,15 @@
 /* Copyright (c) 2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  * IRC extension for IP connection tracking, Version 1.21
  * (C) 2000-2002 by Harald Welte <laforge@gnumonks.org>
  * based on RR's ip_conntrack_ftp.c
  * (C) 2006-2012 Patrick McHardy <kaber@trash.net>
+ *
+ * Linux Foundation chooses to take subject only to the GPLv2 license terms,
+ * and distributes only under these terms.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/module.h>
@@ -95,10 +92,11 @@ static struct irc_client_info *search_client_by_ip
 {
 	struct irc_client_info *temp, *ret = NULL;
 	struct list_head *obj_ptr, *prev_obj_ptr;
+
 	list_for_each_safe(obj_ptr, prev_obj_ptr, &client_list.ptr) {
 		temp = list_entry(obj_ptr, struct irc_client_info, ptr);
 		if ((temp->client_ip == tuple->src.u3.ip) &&
-			(temp->server_ip == tuple->dst.u3.ip))
+		    (temp->server_ip == tuple->dst.u3.ip))
 			ret = temp;
 	}
 	return ret;
@@ -139,7 +137,7 @@ static int parse_dcc(char *data, const char *data_end, __be32 *ip,
 }
 
 static bool mangle_ip(struct nf_conn *ct,
-					int dir, char *nick_start)
+		      int dir, char *nick_start)
 {
 	char *nick_end;
 	struct nf_conntrack_tuple *tuple;
@@ -150,27 +148,25 @@ static bool mangle_ip(struct nf_conn *ct,
 	nick_end = nick_start;
 	while (*nick_end != ' ')
 		nick_end++;
-
 	list_for_each_safe(obj_ptr, prev_obj_ptr,
-					   &client_list.ptr) {
-	temp = list_entry(obj_ptr,
-		struct irc_client_info, ptr);
-	/*If it is an internal client,
-	 *do not mangle the DCC Server IP
-	 */
-	if ((temp->server_ip == tuple->dst.u3.ip) &&
-		(temp->nickname_len == nick_end - nick_start)) {
+			   &client_list.ptr) {
+		temp = list_entry(obj_ptr,
+				  struct irc_client_info, ptr);
+		/*If it is an internal client,
+		*do not mangle the DCC Server IP
+		*/
+		if ((temp->server_ip == tuple->dst.u3.ip) &&
+		    (temp->nickname_len == (nick_end - nick_start))) {
 			if (memcmp(nick_start, temp->nickname,
-				temp->nickname_len) == 0)
-					return false;
+				   temp->nickname_len) == 0)
+				return false;
 		}
 	}
-
 	return true;
 }
 
 static int handle_nickname(struct nf_conn *ct,
-					int dir, char *nick_start)
+			   int dir, char *nick_start)
 {
 	char *nick_end;
 	struct nf_conntrack_tuple *tuple;
@@ -202,8 +198,8 @@ static int handle_nickname(struct nf_conn *ct,
 				kmalloc(i, GFP_ATOMIC);
 			if (temp->nickname) {
 				temp->nickname_len = i;
-				memcpy(&temp->nickname,
-					   nick_start, temp->nickname_len);
+				memcpy(temp->nickname,
+				       nick_start, temp->nickname_len);
 			} else {
 				list_del(&temp->ptr);
 				no_of_clients--;
@@ -226,16 +222,17 @@ static int handle_nickname(struct nf_conn *ct,
 				return NF_DROP;
 			}
 			memcpy(temp->nickname, nick_start,
-				temp->nickname_len);
+			       temp->nickname_len);
 			memcpy(&temp->client_ip,
-				&tuple->src.u3.ip, sizeof(__be32));
+			       &tuple->src.u3.ip, sizeof(__be32));
 			memcpy(&temp->server_ip,
-				&tuple->dst.u3.ip, sizeof(__be32));
+			       &tuple->dst.u3.ip, sizeof(__be32));
 			temp->conn_to_server = false;
-			list_add(&(temp->ptr),
-				&(client_list.ptr));
-		} else
+			list_add(&temp->ptr,
+				 &client_list.ptr);
+		} else {
 			return NF_DROP;
+		}
 	}
 	return NF_ACCEPT;
 }
@@ -324,7 +321,7 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 			nick_end = data;
 			i = 0;
 			while ((*nick_end != 0x0d) &&
-					(*(nick_end + 1) != '\n')) {
+			       (*(nick_end + 1) != '\n')) {
 				nick_end++;
 				i++;
 			}
@@ -336,7 +333,7 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				if (temp->nickname) {
 					temp->nickname_len = i;
 					memcpy(temp->nickname, data,
-						   temp->nickname_len);
+					       temp->nickname_len);
 					temp->conn_to_server = true;
 				} else {
 					list_del(&temp->ptr);
@@ -407,7 +404,7 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 
 			for (i = 0; i < ARRAY_SIZE(dccprotos); i++) {
 				if (memcmp(data, dccprotos[i],
-							strlen(dccprotos[i]))) {
+					   strlen(dccprotos[i]))) {
 					/* no match */
 					continue;
 				}
@@ -419,8 +416,8 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				 *bytes valid data left (== 14/13 bytes)
 				 */
 				if (parse_dcc(data, data_limit, &dcc_ip,
-							&dcc_port, &addr_beg_p,
-							&addr_end_p)) {
+					      &dcc_port, &addr_beg_p,
+					      &addr_end_p)) {
 					pr_debug("unable to parse dcc command\n");
 					continue;
 				}
@@ -467,30 +464,30 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				 *check whether it is an internal client
 				 */
 				while (for_print <
-					data_limit - (25 + MINMATCHLEN)) {
+				       data_limit - (25 + MINMATCHLEN)) {
 					if (memcmp(for_print, "PRIVMSG ", 8)) {
 						for_print++;
 						continue;
 					}
 					for_print += 8;
 					mangle = mangle_ip(ct,
-							dir, for_print);
+							   dir, for_print);
 					break;
 				}
 				if (mangle &&
-					nf_nat_irc &&
-					ct->status & IPS_NAT_MASK)
+				    nf_nat_irc &&
+				    ct->status & IPS_NAT_MASK)
 					ret = nf_nat_irc(skb, ctinfo,
-						 protoff,
-						 addr_beg_p - ib_ptr,
-						 addr_end_p - addr_beg_p,
-						 exp);
+							 protoff,
+							 addr_beg_p - ib_ptr,
+							 addr_end_p-addr_beg_p,
+							 exp);
 
 				else if (mangle &&
-					nf_ct_expect_related(exp)
-						!= 0) {
+					 nf_ct_expect_related(exp)
+					 != 0) {
 					nf_ct_helper_log(skb, ct,
-						 "cannot add expectation");
+							 "cannot add expectation");
 					ret = NF_DROP;
 				}
 				nf_ct_expect_put(exp);

@@ -104,12 +104,12 @@ static const struct soc_enum wsa881x_spk_pa_gain_enum[] = {
 static int wsa881x_spk_pa_gain_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wsa881x_pdata *wsa881x = snd_soc_codec_get_drvdata(codec);
 
 	ucontrol->value.integer.value[0] = wsa881x->spk_pa_gain;
 
-	dev_dbg(codec->dev, "%s: spk_pa_gain = %ld\n", __func__,
+	dev_err(codec->dev, "%s: spk_pa_gain = %ld\n", __func__,
 				ucontrol->value.integer.value[0]);
 
 	return 0;
@@ -118,7 +118,7 @@ static int wsa881x_spk_pa_gain_get(struct snd_kcontrol *kcontrol,
 static int wsa881x_spk_pa_gain_put(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wsa881x_pdata *wsa881x = snd_soc_codec_get_drvdata(codec);
 
 	if (ucontrol->value.integer.value[0] < 0 ||
@@ -128,7 +128,7 @@ static int wsa881x_spk_pa_gain_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 	}
 	wsa881x->spk_pa_gain = ucontrol->value.integer.value[0];
-	dev_dbg(codec->dev, "%s: ucontrol->value.integer.value[0] = %ld\n",
+	dev_err(codec->dev, "%s: ucontrol->value.integer.value[0] = %ld\n",
 			 __func__, ucontrol->value.integer.value[0]);
 
 	return 0;
@@ -171,7 +171,7 @@ static int wsa881x_i2c_write_device(struct wsa881x_pdata *wsa881x,
 	if (wsa881x->regmap_flag) {
 		rc = regmap_write(wsa881x->regmap[wsa881x_index], reg, val);
 		for (i = 0; rc && i < ARRAY_SIZE(delay_array_msec); i++) {
-			pr_debug("Failed writing reg=%u - retry(%d)\n", reg, i);
+			pr_err("Failed writing reg=%u - retry(%d)\n", reg, i);
 			/* retry after delay of increasing order */
 			msleep(delay_array_msec[i]);
 			rc = regmap_write(wsa881x->regmap[wsa881x_index],
@@ -180,7 +180,7 @@ static int wsa881x_i2c_write_device(struct wsa881x_pdata *wsa881x,
 		if (rc)
 			pr_err("Failed writing reg=%u rc=%d\n", reg, rc);
 		else
-			pr_debug("write sucess register = %x val = %x\n",
+			pr_err("write success register = %x val = %x\n",
 							reg, val);
 	} else {
 		reg_addr = (u8)reg;
@@ -203,7 +203,7 @@ static int wsa881x_i2c_write_device(struct wsa881x_pdata *wsa881x,
 				return ret;
 			}
 		}
-		pr_debug("write sucess register = %x val = %x\n", reg, data[1]);
+		pr_err("write success register = %x val = %x\n", reg, data[1]);
 	}
 	return rc;
 }
@@ -227,7 +227,7 @@ static int wsa881x_i2c_read_device(struct wsa881x_pdata *wsa881x,
 	if (wsa881x->regmap_flag) {
 		rc = regmap_read(wsa881x->regmap[wsa881x_index], reg, &val);
 		for (i = 0; rc && i < ARRAY_SIZE(delay_array_msec); i++) {
-			pr_debug("Failed reading reg=%u - retry(%d)\n", reg, i);
+			pr_err("Failed reading reg=%u - retry(%d)\n", reg, i);
 			/* retry after delay of increasing order */
 			msleep(delay_array_msec[i]);
 			rc = regmap_read(wsa881x->regmap[wsa881x_index],
@@ -236,10 +236,9 @@ static int wsa881x_i2c_read_device(struct wsa881x_pdata *wsa881x,
 		if (rc) {
 			pr_err("Failed reading reg=%u rc=%d\n", reg, rc);
 			return rc;
-		} else {
-			pr_debug("read sucess register = %x val = %x\n",
-							reg, val);
 		}
+		pr_err("read success register = %x val = %x\n",
+						reg, val);
 	} else {
 		reg_addr = (u8)reg;
 		msg = &wsa881x->xfer_msg[0];
@@ -288,10 +287,9 @@ static unsigned int wsa881x_i2c_read(struct snd_soc_codec *codec,
 		ret = snd_soc_cache_read(codec, reg, &val);
 		if (ret >= 0)
 			return val;
-		else
-			dev_err(codec->dev,
-				"cache read failed for reg: 0x%x ret: %d\n",
-							 reg, ret);
+		dev_err(codec->dev,
+			"cache read failed for reg: 0x%x ret: %d\n",
+						 reg, ret);
 		return ret;
 	}
 	return wsa881x_i2c_read_device(wsa881x, reg);
@@ -337,14 +335,6 @@ static int wsa881x_i2c_get_client_index(struct i2c_client *client,
 	break;
 	}
 	return ret;
-}
-
-static int wsa881x_temp_sensor_ctrl(struct snd_soc_codec *codec, bool enable)
-{
-	dev_dbg(codec->dev, "%s: enable:%d\n", __func__, enable);
-	snd_soc_update_bits(codec, WSA881X_TEMP_OP, (0x01 << 2),
-				(enable << 2));
-	return 0;
 }
 
 static int wsa881x_boost_ctrl(struct snd_soc_codec *codec, bool enable)
@@ -619,7 +609,6 @@ static int wsa881x_spkr_pa_ctrl(struct snd_soc_codec *codec, bool enable)
 			wsa881x_visense_txfe_ctrl(codec, true,
 						0x00, 0x01, 0x00);
 			wsa881x_visense_adc_ctrl(codec, true);
-			wsa881x_temp_sensor_ctrl(codec, true);
 		}
 	} else {
 		/*
@@ -646,7 +635,7 @@ static int wsa881x_get_boost(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *ucontrol)
 {
 
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wsa881x_pdata *wsa881x = snd_soc_codec_get_drvdata(codec);
 
 	ucontrol->value.integer.value[0] = wsa881x->boost_enable;
@@ -656,7 +645,7 @@ static int wsa881x_get_boost(struct snd_kcontrol *kcontrol,
 static int wsa881x_set_boost(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wsa881x_pdata *wsa881x = snd_soc_codec_get_drvdata(codec);
 	int value = ucontrol->value.integer.value[0];
 
@@ -670,7 +659,7 @@ static int wsa881x_get_visense(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *ucontrol)
 {
 
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wsa881x_pdata *wsa881x = snd_soc_codec_get_drvdata(codec);
 
 	ucontrol->value.integer.value[0] = wsa881x->visense_enable;
@@ -680,7 +669,7 @@ static int wsa881x_get_visense(struct snd_kcontrol *kcontrol,
 static int wsa881x_set_visense(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wsa881x_pdata *wsa881x = snd_soc_codec_get_drvdata(codec);
 	int value = ucontrol->value.integer.value[0];
 
@@ -709,7 +698,7 @@ static const struct soc_enum rdac_enum =
 	SOC_ENUM_SINGLE(0, 0, ARRAY_SIZE(rdac_text), rdac_text);
 
 static const struct snd_kcontrol_new rdac_mux[] = {
-	SOC_DAPM_ENUM_VIRT("RDAC", rdac_enum)
+	SOC_DAPM_ENUM("RDAC", rdac_enum)
 };
 
 static int wsa881x_rdac_event(struct snd_soc_dapm_widget *w,
@@ -795,6 +784,7 @@ static int wsa881x_spkr_pa_event(struct snd_soc_dapm_widget *w,
 			struct snd_kcontrol *kcontrol, int event)
 {
 	struct snd_soc_codec *codec = w->codec;
+
 	pr_debug("%s: %s %d\n", __func__, w->name, event);
 
 	switch (event) {
@@ -820,7 +810,7 @@ static const struct snd_soc_dapm_widget wsa881x_dapm_widgets[] = {
 		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU |
 		SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD),
 
-	SND_SOC_DAPM_VIRT_MUX("WSA_RDAC", SND_SOC_NOPM, 0, 0,
+	SND_SOC_DAPM_MUX("WSA_RDAC", SND_SOC_NOPM, 0, 0,
 		rdac_mux),
 
 	SND_SOC_DAPM_PGA_S("WSA_SPKR PGA", 1, SND_SOC_NOPM, 0, 0,
@@ -842,6 +832,7 @@ static int wsa881x_startup(struct wsa881x_pdata *pdata)
 {
 	int ret = 0;
 	struct snd_soc_codec *codec = pdata->codec;
+	struct snd_soc_card *card = codec->component.card;
 
 	pr_debug("%s(): wsa startup\n", __func__);
 
@@ -852,7 +843,7 @@ static int wsa881x_startup(struct wsa881x_pdata *pdata)
 		return ret;
 	}
 	if (pdata->enable_mclk) {
-		ret = pdata->enable_mclk(codec->card, true);
+		ret = pdata->enable_mclk(card, true);
 		if (ret < 0) {
 			pr_err("%s: mclk enable failed %d\n",
 				__func__, ret);
@@ -867,6 +858,7 @@ static int wsa881x_shutdown(struct wsa881x_pdata *pdata)
 {
 	int ret = 0, reg;
 	struct snd_soc_codec *codec = pdata->codec;
+	struct snd_soc_card *card = codec->component.card;
 
 	pr_debug("%s(): wsa shutdown\n", __func__);
 	ret = wsa881x_reset(pdata, false);
@@ -877,7 +869,7 @@ static int wsa881x_shutdown(struct wsa881x_pdata *pdata)
 	}
 
 	if (pdata->enable_mclk) {
-		ret = pdata->enable_mclk(codec->card, false);
+		ret = pdata->enable_mclk(card, false);
 		if (ret < 0) {
 			pr_err("%s: mclk disable failed %d\n",
 				__func__, ret);
@@ -955,6 +947,7 @@ static int32_t wsa881x_temp_reg_read(struct snd_soc_codec *codec,
 	wsa_temp_reg->d2_msb = snd_soc_read(codec, WSA881X_OTP_REG_3);
 	wsa_temp_reg->d2_lsb = snd_soc_read(codec, WSA881X_OTP_REG_4);
 
+	snd_soc_update_bits(codec, WSA881X_TEMP_OP, 0x04, 0x00);
 	wsa881x_resource_acquire(codec, false);
 
 	return 0;
@@ -967,6 +960,8 @@ static int wsa881x_probe(struct snd_soc_codec *codec)
 	int wsa881x_index = 0;
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	char *widget_name = NULL;
+	struct snd_soc_card *card = codec->component.card;
+	struct snd_soc_codec_conf *codec_conf = card->codec_conf;
 
 	client = dev_get_drvdata(codec->dev);
 	ret = wsa881x_i2c_get_client_index(client, &wsa881x_index);
@@ -988,19 +983,17 @@ static int wsa881x_probe(struct snd_soc_codec *codec)
 	snd_soc_codec_set_drvdata(codec, &wsa_pdata[wsa881x_index]);
 	wsa881x_init_thermal(&wsa_pdata[wsa881x_index].tz_pdata);
 
-	if (codec->name_prefix) {
+	if (codec_conf->name_prefix) {
 		widget_name = kcalloc(WIDGET_NAME_MAX_SIZE, sizeof(char),
 					GFP_KERNEL);
-		if (!widget_name) {
-			pr_err("%s: Cannot allocate memory for widget name",
-				__func__);
+		if (!widget_name)
 			return -ENOMEM;
-		}
+
 		snprintf(widget_name, WIDGET_NAME_MAX_SIZE,
-			"%s WSA_SPKR", codec->name_prefix);
+			"%s WSA_SPKR", codec_conf->name_prefix);
 		snd_soc_dapm_ignore_suspend(dapm, widget_name);
 		snprintf(widget_name, WIDGET_NAME_MAX_SIZE,
-			"%s WSA_IN", codec->name_prefix);
+			"%s WSA_IN", codec_conf->name_prefix);
 		snd_soc_dapm_ignore_suspend(dapm, widget_name);
 		kfree(widget_name);
 	} else {
@@ -1365,6 +1358,7 @@ static struct i2c_driver wsa881x_codec_driver = {
 static int __init wsa881x_codec_init(void)
 {
 	int i = 0;
+
 	for (i = 0; i < MAX_WSA881X_DEVICE; i++)
 		wsa_pdata[i].status = WSA881X_STATUS_PROBING;
 	return i2c_add_driver(&wsa881x_codec_driver);

@@ -521,7 +521,7 @@ static void msm8994_ext_control(struct snd_soc_codec *codec)
 {
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 
-	mutex_lock(&dapm->codec->mutex);
+	mutex_lock(&codec->mutex);
 	pr_debug("%s: msm8994_spk_control = %d", __func__, msm8994_spk_control);
 	if (msm8994_spk_control == MSM8994_SPK_ON) {
 		snd_soc_dapm_enable_pin(dapm, "Lineout_1 amp");
@@ -530,7 +530,7 @@ static void msm8994_ext_control(struct snd_soc_codec *codec)
 		snd_soc_dapm_disable_pin(dapm, "Lineout_1 amp");
 		snd_soc_dapm_disable_pin(dapm, "Lineout_2 amp");
 	}
-	mutex_unlock(&dapm->codec->mutex);
+	mutex_unlock(&codec->mutex);
 	snd_soc_dapm_sync(dapm);
 }
 
@@ -1726,7 +1726,7 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 
 static bool msm8994_swap_gnd_mic(struct snd_soc_codec *codec)
 {
-	struct snd_soc_card *card = codec->card;
+	struct snd_soc_card *card = codec->component.card;
 	struct msm8994_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
 	int value = gpio_get_value_cansleep(pdata->us_euro_gpio);
 	pr_debug("%s: swap select switch %d to %d\n", __func__, value, !value);

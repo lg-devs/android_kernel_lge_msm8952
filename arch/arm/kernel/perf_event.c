@@ -17,13 +17,14 @@
 #include <linux/pm_runtime.h>
 #include <linux/uaccess.h>
 #include <linux/irq.h>
+#include <linux/irqdesc.h>
 
 #include <asm/irq_regs.h>
 #include <asm/pmu.h>
 #include <asm/stacktrace.h>
 
 static int
-armpmu_map_cache_event(unsigned (*cache_map)
+armpmu_map_cache_event(const unsigned (*cache_map)
 				      [PERF_COUNT_HW_CACHE_MAX]
 				      [PERF_COUNT_HW_CACHE_OP_MAX]
 				      [PERF_COUNT_HW_CACHE_RESULT_MAX],
@@ -57,7 +58,7 @@ armpmu_map_hw_event(const unsigned (*event_map)[PERF_COUNT_HW_MAX], u64 config)
 	int mapping;
 
 	if (config >= PERF_COUNT_HW_MAX)
-		return -ENOENT;
+		return -EINVAL;
 
 	mapping = (*event_map)[config];
 	return mapping == HW_OP_UNSUPPORTED ? -ENOENT : mapping;
@@ -72,7 +73,7 @@ armpmu_map_raw_event(u32 raw_event_mask, u64 config)
 int
 armpmu_map_event(struct perf_event *event,
 		 const unsigned (*event_map)[PERF_COUNT_HW_MAX],
-		 unsigned (*cache_map)
+		 const unsigned (*cache_map)
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX],
@@ -99,10 +100,6 @@ int armpmu_event_set_period(struct perf_event *event)
 	s64 left = local64_read(&hwc->period_left);
 	s64 period = hwc->sample_period;
 	int ret = 0;
-
-	/* The period may have been changed by PERF_EVENT_IOC_PERIOD */
-	if (unlikely(period != hwc->last_period))
-		left = period - (hwc->last_period - left);
 
 	if (unlikely(left <= -period)) {
 		left = period;
@@ -135,9 +132,6 @@ u64 armpmu_event_update(struct perf_event *event)
 	struct arm_pmu *armpmu = to_arm_pmu(event->pmu);
 	struct hw_perf_event *hwc = &event->hw;
 	u64 delta, prev_raw_count, new_raw_count;
-
-	if (event->state <= PERF_EVENT_STATE_OFF)
-		return 0;
 
 again:
 	prev_raw_count = local64_read(&hwc->prev_count);
@@ -213,10 +207,8 @@ armpmu_del(struct perf_event *event, int flags)
 	armpmu_stop(event, PERF_EF_UPDATE);
 	hw_events->events[idx] = NULL;
 	clear_bit(idx, hw_events->used_mask);
-
-	/* Clear event constraints. */
-	if (armpmu->clear_event_constraints)
-		armpmu->clear_event_constraints(event);
+	if (armpmu->clear_event_idx)
+		armpmu->clear_event_idx(hw_events, event);
 
 	perf_event_update_userpage(event);
 }
@@ -231,17 +223,6 @@ armpmu_add(struct perf_event *event, int flags)
 	int err = 0;
 
 	perf_pmu_disable(event->pmu);
-	/*
-	 * Tests if event is constrained. If not sets it so that next
-	 * collision can be detected.
-	 */
-	if (armpmu->test_set_event_constraints)
-		if (armpmu->test_set_event_constraints(event) < 0) {
-			pr_err("Event: %llx failed constraint check.\n",
-					event->attr.config);
-			event->state = PERF_EVENT_STATE_OFF;
-			goto out;
-		}
 
 	/* If we don't have a space for the counter then finish early. */
 	idx = armpmu->get_event_idx(hw_events, event);
@@ -275,12 +256,11 @@ validate_event(struct pmu_hw_events *hw_events,
 	       struct perf_event *event)
 {
 	struct arm_pmu *armpmu = to_arm_pmu(event->pmu);
-	struct pmu *leader_pmu = event->group_leader->pmu;
 
 	if (is_software_event(event))
 		return 1;
 
-	if (event->pmu != leader_pmu || event->state < PERF_EVENT_STATE_OFF)
+	if (event->state < PERF_EVENT_STATE_OFF)
 		return 1;
 
 	if (event->state == PERF_EVENT_STATE_OFF && !event->attr.enable_on_exec)
@@ -319,84 +299,51 @@ validate_group(struct perf_event *event)
 
 static irqreturn_t armpmu_dispatch_irq(int irq, void *dev)
 {
-	struct arm_pmu *armpmu = *(struct arm_pmu **) dev;
-	struct platform_device *plat_device = armpmu->plat_device;
-	struct arm_pmu_platdata *plat = dev_get_platdata(&plat_device->dev);
+	struct arm_pmu *armpmu;
+	struct platform_device *plat_device;
+	struct arm_pmu_platdata *plat;
 	int ret;
 	u64 start_clock, finish_clock;
 
+	if (irq_is_percpu(irq))
+		dev = *(void **)dev;
+	armpmu = dev;
+	plat_device = armpmu->plat_device;
+	plat = dev_get_platdata(&plat_device->dev);
+
 	start_clock = sched_clock();
 	if (plat && plat->handle_irq)
-		ret = plat->handle_irq(irq, armpmu, armpmu->handle_irq);
+		ret = plat->handle_irq(irq, dev, armpmu->handle_irq);
 	else
-		ret = armpmu->handle_irq(irq, armpmu);
+		ret = armpmu->handle_irq(irq, dev);
 	finish_clock = sched_clock();
 
 	perf_sample_event_took(finish_clock - start_clock);
 	return ret;
 }
 
-static int
-armpmu_generic_request_irq(int irq, irq_handler_t *handle_irq, void *dev_id)
-{
-        return request_irq(irq, *handle_irq,
-                        IRQF_DISABLED | IRQF_NOBALANCING,
-                        "arm-pmu", dev_id);
-}
-
-static void
-armpmu_generic_free_irq(int irq, void *dev_id)
-{
-        if (irq >= 0)
-                free_irq(irq, dev_id);
-}
-
 static void
 armpmu_release_hardware(struct arm_pmu *armpmu)
 {
-	/*
-	 * If a cpu comes online during this function, do not enable its irq.
-	 * If a cpu goes offline, it should disable its irq.
-	 */
-	armpmu->pmu_state = ARM_PMU_STATE_GOING_DOWN;
 	armpmu->free_irq(armpmu);
 	pm_runtime_put_sync(&armpmu->plat_device->dev);
-	armpmu->pmu_state = ARM_PMU_STATE_OFF;
 }
 
 static int
 armpmu_reserve_hardware(struct arm_pmu *armpmu)
 {
 	int err;
-	int cpu;
-	struct arm_pmu_platdata *plat;
 	struct platform_device *pmu_device = armpmu->plat_device;
 
 	if (!pmu_device)
 		return -ENODEV;
 
 	pm_runtime_get_sync(&pmu_device->dev);
-
-	plat = dev_get_platdata(&pmu_device->dev);
-	if (plat && plat->request_pmu_irq)
-		armpmu->request_pmu_irq = plat->request_pmu_irq;
-	else if (!armpmu->request_pmu_irq)
-		armpmu->request_pmu_irq = armpmu_generic_request_irq;
-
-	if (plat && plat->free_pmu_irq)
-		armpmu->free_pmu_irq = plat->free_pmu_irq;
-	else if (!armpmu->free_pmu_irq)
-		armpmu->free_pmu_irq = armpmu_generic_free_irq;
-
 	err = armpmu->request_irq(armpmu, armpmu_dispatch_irq);
 	if (err) {
 		armpmu_release_hardware(armpmu);
 		return err;
 	}
-	armpmu->pmu_state = ARM_PMU_STATE_RUNNING;
-	if (armpmu->reset)
-		for_each_cpu(cpu, cpu_online_mask)
-			smp_call_function_single(cpu, armpmu->reset, armpmu, 1);
 
 	return 0;
 }
@@ -458,13 +405,12 @@ __hw_perf_event_init(struct perf_event *event)
 		return -EOPNOTSUPP;
 	}
 
-
 	/*
 	 * Store the event encoding into the config_base field.
 	 */
 	hwc->config_base	    |= (unsigned long)mapping;
 
-	if (!hwc->sample_period) {
+	if (!is_sampling_event(event)) {
 		/*
 		 * For non-sampling runs, limit the sample_period to half
 		 * of the counter width. That way, the new counter value
@@ -524,24 +470,6 @@ static void armpmu_enable(struct pmu *pmu)
 	struct arm_pmu *armpmu = to_arm_pmu(pmu);
 	struct pmu_hw_events *hw_events = armpmu->get_hw_events();
 	int enabled = bitmap_weight(hw_events->used_mask, armpmu->num_events);
-	int idx;
-
-	if (*hw_events->from_idle) {
-		for (idx = 0; idx <= armpmu->num_events; ++idx) {
-			struct perf_event *event = hw_events->events[idx];
-
-			if (!event)
-				continue;
-
-			armpmu->enable(event);
-		}
-
-		/* Reset bit so we don't needlessly re-enable counters.*/
-		*hw_events->from_idle = 0;
-	}
-
-	/* So we don't start the PMU before enabling counters after idle. */
-	barrier();
 
 	if (enabled)
 		armpmu->start(armpmu);
@@ -584,15 +512,16 @@ static void armpmu_init(struct arm_pmu *armpmu)
 	atomic_set(&armpmu->active_events, 0);
 	mutex_init(&armpmu->reserve_mutex);
 
-	armpmu->pmu.pmu_enable = armpmu_enable;
-	armpmu->pmu.pmu_disable = armpmu_disable;
-	armpmu->pmu.event_init = armpmu_event_init;
-	armpmu->pmu.add = armpmu_add;
-	armpmu->pmu.del = armpmu_del;
-	armpmu->pmu.start = armpmu_start;
-	armpmu->pmu.stop = armpmu_stop;
-	armpmu->pmu.read = armpmu_read;
-	armpmu->pmu.events_across_hotplug = 1;
+	armpmu->pmu = (struct pmu) {
+		.pmu_enable	= armpmu_enable,
+		.pmu_disable	= armpmu_disable,
+		.event_init	= armpmu_event_init,
+		.add		= armpmu_add,
+		.del		= armpmu_del,
+		.start		= armpmu_start,
+		.stop		= armpmu_stop,
+		.read		= armpmu_read,
+	};
 }
 
 int armpmu_register(struct arm_pmu *armpmu, int type)
@@ -631,11 +560,16 @@ user_backtrace(struct frame_tail __user *tail,
 	       struct perf_callchain_entry *entry)
 {
 	struct frame_tail buftail;
+	unsigned long err;
 
-	/* Also check accessibility of one struct frame_tail beyond */
 	if (!access_ok(VERIFY_READ, tail, sizeof(buftail)))
 		return NULL;
-	if (__copy_from_user_inatomic(&buftail, tail, sizeof(buftail)))
+
+	pagefault_disable();
+	err = __copy_from_user_inatomic(&buftail, tail, sizeof(buftail));
+	pagefault_enable();
+
+	if (err)
 		return NULL;
 
 	perf_callchain_store(entry, buftail.lr);
@@ -661,6 +595,10 @@ perf_callchain_user(struct perf_callchain_entry *entry, struct pt_regs *regs)
 	}
 
 	perf_callchain_store(entry, regs->ARM_pc);
+
+	if (!current->mm)
+		return;
+
 	tail = (struct frame_tail __user *)regs->ARM_fp - 1;
 
 	while ((entry->nr < PERF_MAX_STACK_DEPTH) &&
@@ -692,10 +630,7 @@ perf_callchain_kernel(struct perf_callchain_entry *entry, struct pt_regs *regs)
 		return;
 	}
 
-	fr.fp = regs->ARM_fp;
-	fr.sp = regs->ARM_sp;
-	fr.lr = regs->ARM_lr;
-	fr.pc = regs->ARM_pc;
+	arm_get_current_stackframe(regs, &fr);
 	walk_stackframe(&fr, callchain_trace, entry);
 }
 

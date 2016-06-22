@@ -83,7 +83,12 @@ enum mem_buffer_allocation_mode {
 };
 
 /* module parameters for load time configuration */
+#ifdef CONFIG_LGE_BROADCAST_ISDBT_JAPAN
+static int allocation_mode = MPQ_DMX_TSPP_CONTIGUOUS_PHYS_ALLOC;
+#else /* CONFIG_LGE_BROADCAST_ISDBT_JAPAN */
 static int allocation_mode = MPQ_DMX_TSPP_INTERNAL_ALLOC;
+#endif /* CONFIG_LGE_BROADCAST_ISDBT_JAPAN */
+
 static int tspp_out_buffer_size = TSPP_BUFFER_SIZE;
 static int tspp_notification_size =
 	TSPP_NOTIFICATION_SIZE(TSPP_DESCRIPTOR_SIZE);
@@ -332,7 +337,7 @@ static inline void mpq_dmx_tspp_swfilter_desc(struct mpq_demux *mpq_demux,
 
 /**
  * Demux TS packets from TSPP by secure-demux.
- * The fucntion assumes the buffer is physically contiguous
+ * The function assumes the buffer is physically contiguous
  * and that TSPP descriptors are continuous in memory.
  *
  * @tsif: The TSIF interface to process its packets
@@ -1562,10 +1567,8 @@ static int mpq_tspp_dmx_stop_filtering(struct dvb_demux_feed *feed)
 {
 	int ret = 0;
 	struct mpq_demux *mpq_demux = feed->demux->priv;
-	MPQ_DVB_DBG_PRINT(
-		"%s(%d) executed\n",
-		__func__,
-		feed->pid);
+
+	MPQ_DVB_DBG_PRINT("%s(%d) executed\n", __func__, feed->pid);
 
 	mpq_dmx_terminate_feed(feed);
 

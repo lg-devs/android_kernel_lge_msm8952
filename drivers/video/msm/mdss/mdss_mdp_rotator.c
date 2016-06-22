@@ -78,9 +78,7 @@ int mdss_mdp_rot_mgr_init(void)
 	mutex_init(&rot_mgr->session_lock);
 	mutex_init(&rot_mgr->pipe_lock);
 	INIT_LIST_HEAD(&rot_mgr->queue);
-	rot_mgr->rot_work_queue = alloc_workqueue("rot_commit_workq",
-			WQ_UNBOUND | WQ_HIGHPRI | WQ_MEM_RECLAIM,
-						MAX_ROTATOR_PIPE_COUNT);
+	rot_mgr->rot_work_queue = create_workqueue("rot_commit_workq");
 	if (!rot_mgr->rot_work_queue) {
 		pr_err("fail to create rot commit work queue\n");
 		kfree(rot_mgr);
@@ -256,8 +254,7 @@ static int mdss_mdp_rot_mgr_remove_free_pipe(void)
 		if (!rot_mgr->rot_pipes[i].pipe)
 			continue;
 
-		if (!rot_mgr->rot_pipes[i].active_session &&
-			!rot_mgr->rot_pipes[i].wait_count)
+		if (!rot_mgr->rot_pipes[i].active_session)
 			break;
 	}
 
@@ -273,7 +270,7 @@ static int mdss_mdp_rot_mgr_remove_free_pipe(void)
 		MDSS_MDP_WB_CTL_TYPE_BLOCK);
 	if (tmp) {
 		mixer = tmp->mixer_left;
-		mdss_mdp_wb_mixer_destroy(mixer);
+		mdss_mdp_block_mixer_destroy(mixer);
 	}
 
 	rot_mgr->rot_pipes[i].pipe = NULL;
@@ -458,7 +455,7 @@ static struct mdss_mdp_pipe *mdss_mdp_rotator_pipe_alloc(void)
 	struct mdss_mdp_mixer *mixer;
 	struct mdss_mdp_pipe *pipe = NULL;
 
-	mixer = mdss_mdp_wb_mixer_alloc(1);
+	mixer = mdss_mdp_block_mixer_alloc();
 	if (!mixer) {
 		pr_debug("wb mixer alloc failed\n");
 		return NULL;
@@ -466,7 +463,7 @@ static struct mdss_mdp_pipe *mdss_mdp_rotator_pipe_alloc(void)
 
 	pipe = mdss_mdp_pipe_alloc_dma(mixer);
 	if (!pipe) {
-		mdss_mdp_wb_mixer_destroy(mixer);
+		mdss_mdp_block_mixer_destroy(mixer);
 		pr_debug("dma pipe allocation failed\n");
 		return NULL;
 	}
@@ -480,18 +477,8 @@ static int mdss_mdp_rotator_busy_wait(struct mdss_mdp_rotator_session *rot,
 	struct mdss_mdp_pipe *pipe)
 {
 	if (rot->busy) {
-		int rc;
 		struct mdss_mdp_ctl *ctl = pipe->mixer_left->ctl;
-
-		rc = mdss_mdp_display_wait4comp(ctl);
-		if (rc) {
-			pr_err("wait4comp failed for ctl%d, pipe%d, rc=%d. Reseting ctl path.\n",
-				ctl->num, pipe->num, rc);
-			WARN(mdss_mdp_ctl_reset(ctl),
-				"ctl%d reset failed\n", ctl->num);
-			WARN(mdss_mdp_pipe_fetch_halt(pipe),
-				"pipe%d halt failed\n", pipe->num);
-		}
+		mdss_mdp_display_wait4comp(ctl);
 		rot->busy = false;
 		if (ctl->shared_lock)
 			mutex_unlock(ctl->shared_lock);
@@ -613,10 +600,6 @@ static int mdss_mdp_rotator_queue_sub(struct mdss_mdp_rotator_session *rot,
 	ATRACE_BEGIN("rotator_kickoff");
 	ret = mdss_mdp_rotator_kickoff(rot_ctl, rot, dst_data);
 	ATRACE_END("rotator_kickoff");
-	if (ret) {
-		pr_err("mdss_mdp_rotator_kickoff error : %d\n", ret);
-		goto error;
-	}
 
 	return ret;
 error:
@@ -639,6 +622,7 @@ static void mdss_mdp_rotator_commit_wq_handler(struct work_struct *work)
 		pr_err("rotator queue failed\n");
 
 	if (rot->rot_sync_pt_data) {
+		atomic_inc(&rot->rot_sync_pt_data->commit_cnt);
 		mdss_fb_signal_timeline(rot->rot_sync_pt_data);
 	} else {
 		pr_err("rot_sync_pt_data is NULL\n");
@@ -652,7 +636,6 @@ static struct msm_sync_pt_data *mdss_mdp_rotator_sync_pt_create(
 {
 	struct msm_sync_pt_data *sync_pt_data;
 	char timeline_name[16];
-	int id = rot->session_id & ~MDSS_MDP_ROT_SESSION_MASK;
 
 	rot->rot_sync_pt_data = kzalloc(
 		sizeof(struct msm_sync_pt_data), GFP_KERNEL);
@@ -662,7 +645,7 @@ static struct msm_sync_pt_data *mdss_mdp_rotator_sync_pt_create(
 	sync_pt_data->fence_name = "rot-fence";
 	sync_pt_data->threshold = 1;
 	snprintf(timeline_name, sizeof(timeline_name),
-					"mdss_rot_%d", id);
+					"mdss_rot_%d", rot->session_id);
 	sync_pt_data->timeline = sw_sync_timeline_create(timeline_name);
 	if (sync_pt_data->timeline == NULL) {
 		kfree(rot->rot_sync_pt_data);
@@ -711,12 +694,10 @@ static int mdss_mdp_rotator_queue(struct mdss_mdp_rotator_session *rot)
 {
 	int ret = 0;
 
-	if (rot->use_sync_pt) {
-		atomic_inc(&rot->rot_sync_pt_data->commit_cnt);
+	if (rot->use_sync_pt)
 		queue_work(rot_mgr->rot_work_queue, &rot->commit_work);
-	} else {
+	else
 		ret = mdss_mdp_rotator_queue_helper(rot);
-	}
 
 	pr_debug("rotator session=%x queue done\n", rot->session_id);
 
@@ -988,8 +969,8 @@ int mdss_mdp_rotator_release(struct mdss_mdp_rotator_session *rot)
 	int rc;
 
 	rc = mdss_mdp_rotator_finish(rot);
-	mdss_mdp_data_free(&rot->src_buf);
-	mdss_mdp_data_free(&rot->dst_buf);
+	mdss_mdp_data_free(&rot->src_buf, true, DMA_TO_DEVICE);
+	mdss_mdp_data_free(&rot->dst_buf, true, DMA_FROM_DEVICE);
 	mdss_mdp_rotator_session_free(rot);
 
 	return rc;
@@ -998,6 +979,10 @@ int mdss_mdp_rotator_release(struct mdss_mdp_rotator_session *rot)
 int mdss_mdp_rotator_release_all(void)
 {
 	struct mdss_mdp_rotator_session *rot;
+	if (!rot_mgr) {
+		pr_debug("rot manager not initialized\n");
+		return -EINVAL;
+	}
 
 	while (true) {
 		rot = mdss_mdp_rot_mgr_remove_first();
@@ -1019,6 +1004,7 @@ int mdss_mdp_rotator_play(struct msm_fb_data_type *mfd,
 			    struct msmfb_overlay_data *req)
 {
 	struct mdss_mdp_rotator_session *rot;
+	struct mdp_layer_buffer buffer;
 	int ret;
 	u32 flgs;
 	struct mdss_mdp_data src_buf;
@@ -1038,34 +1024,46 @@ int mdss_mdp_rotator_play(struct msm_fb_data_type *mfd,
 	mdss_iommu_ctrl(1);
 	mutex_lock(&rot->lock);
 
-	ret = mdss_mdp_data_get(&src_buf, &req->data, 1, flgs);
+	buffer.width = rot->src_rect.w;
+	buffer.height = rot->src_rect.h;
+	buffer.format = rot->format;
+	ret = mdss_mdp_data_get_and_validate_size(&src_buf,
+		&req->data, 1, flgs, &mfd->pdev->dev, true,
+		DMA_TO_DEVICE, &buffer);
 	if (ret) {
 		pr_err("src_data pmem error\n");
 		goto dst_buf_fail;
 	}
 
-	ret = mdss_mdp_data_map(&src_buf);
+	ret = mdss_mdp_data_map(&src_buf, true, DMA_TO_DEVICE);
 	if (ret) {
 		pr_err("unable to map source buffer\n");
-		mdss_mdp_data_free(&src_buf);
+		mdss_mdp_data_free(&src_buf, true, DMA_TO_DEVICE);
 		goto dst_buf_fail;
 	}
-	mdss_mdp_data_free(&rot->src_buf);
+	mdss_mdp_data_free(&rot->src_buf, true, DMA_TO_DEVICE);
 	memcpy(&rot->src_buf, &src_buf, sizeof(struct mdss_mdp_data));
 
-	mdss_mdp_data_free(&rot->dst_buf);
-	ret = mdss_mdp_data_get(&rot->dst_buf, &req->dst_data, 1, flgs);
+	mdss_mdp_data_free(&rot->dst_buf, true, DMA_FROM_DEVICE);
+	buffer.width = rot->dst.w;
+	buffer.height = rot->dst.h;
+	buffer.format = mdss_mdp_get_rotator_dst_format(rot->format,
+		rot->flags & MDP_ROT_90, rot->bwc_mode);
+
+	ret = mdss_mdp_data_get_and_validate_size(&rot->dst_buf,
+		&req->dst_data, 1, flgs, &mfd->pdev->dev, true,
+		DMA_FROM_DEVICE, &buffer);
 	if (ret) {
 		pr_err("dst_data pmem error\n");
-		mdss_mdp_data_free(&rot->src_buf);
+		mdss_mdp_data_free(&rot->src_buf, true, DMA_TO_DEVICE);
 		goto dst_buf_fail;
 	}
 
-	ret = mdss_mdp_data_map(&rot->dst_buf);
+	ret = mdss_mdp_data_map(&rot->dst_buf, true, DMA_FROM_DEVICE);
 	if (ret) {
 		pr_err("unable to map destination buffer\n");
-		mdss_mdp_data_free(&rot->dst_buf);
-		mdss_mdp_data_free(&rot->src_buf);
+		mdss_mdp_data_free(&rot->dst_buf, true, DMA_FROM_DEVICE);
+		mdss_mdp_data_free(&rot->src_buf, true, DMA_TO_DEVICE);
 		goto dst_buf_fail;
 	}
 

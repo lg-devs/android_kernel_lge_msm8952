@@ -86,7 +86,7 @@
 #define	EHOSTUNREACH	113	/* No route to host */
 #define	EALREADY	114	/* Operation already in progress */
 #define	EINPROGRESS	115	/* Operation now in progress */
-#define	ESTALE		116	/* Stale NFS file handle */
+#define	ESTALE		116	/* Stale file handle */
 #define	EUCLEAN		117	/* Structure needs cleaning */
 #define	ENOTNAM		118	/* Not a XENIX named type file */
 #define	ENAVAIL		119	/* No XENIX semaphores available */
@@ -110,4 +110,11 @@
 
 #define EHWPOISON	133	/* Memory page has hardware error */
 
+#ifdef CONFIG_MACH_LGE
+/* LGE_CHANGE
+ * add ext4 fs errno type for ext4 superblock
+ * 2015-10-26, H1-BSP-FS@lge.com
+ */
+#define ESUPER      150 /*ext4 superblock is damaged */
+#endif
 #endif

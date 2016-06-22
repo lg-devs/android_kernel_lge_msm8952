@@ -20,6 +20,10 @@
 
 #include <linux/mmc/sdhci.h>
 
+#if defined(CONFIG_LGE_MMC_DYNAMIC_LOG)
+#include <linux/mmc/debug_log.h>
+#endif
+
 /*
  * Controller registers
  */
@@ -72,6 +76,7 @@
 #define  SDHCI_WRITE_PROTECT	0x00080000
 #define  SDHCI_DATA_LVL_MASK	0x00F00000
 #define   SDHCI_DATA_LVL_SHIFT	20
+#define   SDHCI_DATA_0_LVL_MASK	0x00100000
 
 #define SDHCI_HOST_CONTROL	0x28
 #define  SDHCI_CTRL_LED		0x01
@@ -170,7 +175,7 @@
 #define   SDHCI_CTRL_UHS_SDR50		0x0002
 #define   SDHCI_CTRL_UHS_SDR104		0x0003
 #define   SDHCI_CTRL_UHS_DDR50		0x0004
-#define   SDHCI_CTRL_HS_SDR200		0x0005 /* reserved value in SDIO spec */
+#define   SDHCI_CTRL_HS400		0x0005 /* Non-standard */
 #define  SDHCI_CTRL_VDD_180		0x0008
 #define  SDHCI_CTRL_DRV_TYPE_MASK	0x0030
 #define   SDHCI_CTRL_DRV_TYPE_B		0x0000
@@ -179,7 +184,6 @@
 #define   SDHCI_CTRL_DRV_TYPE_D		0x0030
 #define  SDHCI_CTRL_EXEC_TUNING		0x0040
 #define  SDHCI_CTRL_TUNED_CLK		0x0080
-#define  SDHCI_CTRL_ASYNC_INT_ENABLE	0x4000
 #define  SDHCI_CTRL_PRESET_VAL_ENABLE	0x8000
 
 #define SDHCI_CAPABILITIES	0x40
@@ -200,7 +204,6 @@
 #define  SDHCI_CAN_VDD_300	0x02000000
 #define  SDHCI_CAN_VDD_180	0x04000000
 #define  SDHCI_CAN_64BIT	0x10000000
-#define  SDHCI_ASYNC_INTR	0x20000000
 
 #define  SDHCI_SUPPORT_SDR50	0x00000001
 #define  SDHCI_SUPPORT_SDR104	0x00000002
@@ -215,6 +218,7 @@
 #define  SDHCI_RETUNING_MODE_SHIFT		14
 #define  SDHCI_CLOCK_MUL_MASK	0x00FF0000
 #define  SDHCI_CLOCK_MUL_SHIFT	16
+#define  SDHCI_SUPPORT_HS400	0x80000000 /* Non-standard */
 
 #define SDHCI_CAPABILITIES_1	0x44
 
@@ -248,6 +252,7 @@
 #define SDHCI_PRESET_FOR_SDR50 0x6A
 #define SDHCI_PRESET_FOR_SDR104        0x6C
 #define SDHCI_PRESET_FOR_DDR50 0x6E
+#define SDHCI_PRESET_FOR_HS400 0x74 /* Non-standard */
 #define SDHCI_PRESET_DRV_MASK  0xC000
 #define SDHCI_PRESET_DRV_SHIFT  14
 #define SDHCI_PRESET_CLKGEN_SEL_MASK   0x400
@@ -295,43 +300,46 @@ struct sdhci_ops {
 	unsigned int	(*get_max_clock)(struct sdhci_host *host);
 	unsigned int	(*get_min_clock)(struct sdhci_host *host);
 	unsigned int	(*get_timeout_clock)(struct sdhci_host *host);
-	int		(*platform_bus_width)(struct sdhci_host *host,
-					       int width);
+	unsigned int	(*get_max_timeout_count)(struct sdhci_host *host);
+	void		(*set_timeout)(struct sdhci_host *host,
+				       struct mmc_command *cmd);
+	void		(*set_bus_width)(struct sdhci_host *host, int width);
 	void (*platform_send_init_74_clocks)(struct sdhci_host *host,
 					     u8 power_mode);
 	unsigned int    (*get_ro)(struct sdhci_host *host);
-	void	(*platform_reset_enter)(struct sdhci_host *host, u8 mask);
-	void	(*platform_reset_exit)(struct sdhci_host *host, u8 mask);
+	void		(*reset)(struct sdhci_host *host, u8 mask);
+	int	(*platform_execute_tuning)(struct sdhci_host *host, u32 opcode);
 	int	(*crypto_engine_cfg)(struct sdhci_host *host,
 				struct mmc_request *mrq, u32 slot);
 	int	(*crypto_engine_reset)(struct sdhci_host *host);
 	void	(*crypto_cfg_reset)(struct sdhci_host *host, unsigned int slot);
-	int	(*set_uhs_signaling)(struct sdhci_host *host, unsigned int uhs);
+	void	(*set_uhs_signaling)(struct sdhci_host *host, unsigned int uhs);
 	void	(*hw_reset)(struct sdhci_host *host);
-	void	(*platform_suspend)(struct sdhci_host *host);
-	void	(*platform_resume)(struct sdhci_host *host);
 	void    (*adma_workaround)(struct sdhci_host *host, u32 intmask);
+	unsigned int	(*get_max_segments)(void);
 	void	(*platform_init)(struct sdhci_host *host);
 	void    (*check_power_status)(struct sdhci_host *host, u32 req_type);
+	void	(*toggle_cdr)(struct sdhci_host *host, bool enable);
 #define REQ_BUS_OFF	(1 << 0)
 #define REQ_BUS_ON	(1 << 1)
 #define REQ_IO_LOW	(1 << 2)
 #define REQ_IO_HIGH	(1 << 3)
-	int	(*execute_tuning)(struct sdhci_host *host, u32 opcode);
-	void	(*toggle_cdr)(struct sdhci_host *host, bool enable);
-	unsigned int	(*get_max_segments)(void);
+	void    (*card_event)(struct sdhci_host *host);
+	int	(*enhanced_strobe)(struct sdhci_host *host);
 	void	(*platform_bus_voting)(struct sdhci_host *host, u32 enable);
-	void    (*disable_data_xfer)(struct sdhci_host *host);
 	void	(*dump_vendor_regs)(struct sdhci_host *host);
 	int	(*config_auto_tuning_cmd)(struct sdhci_host *host,
 					  bool enable,
 					  u32 type);
 	int	(*enable_controller_clock)(struct sdhci_host *host);
-	void	(*reset_workaround)(struct sdhci_host *host, u32 enable);
 	void	(*clear_set_dumpregs)(struct sdhci_host *host, bool set);
+	void	(*enhanced_strobe_mask)(struct sdhci_host *host, bool set);
+	void	(*detect)(struct sdhci_host *host, bool detected);
 	int	(*notify_load)(struct sdhci_host *host, enum mmc_load state);
-	void	(*notify_pm_status)(struct sdhci_host *host,
-					enum dev_state state);
+	void	(*reset_workaround)(struct sdhci_host *host, u32 enable);
+	void	(*init)(struct sdhci_host *host);
+	void	(*pre_req)(struct sdhci_host *host, struct mmc_request *req);
+	void	(*post_req)(struct sdhci_host *host, struct mmc_request *req);
 };
 
 #ifdef CONFIG_MMC_SDHCI_IO_ACCESSORS
@@ -430,6 +438,18 @@ static inline void *sdhci_priv(struct sdhci_host *host)
 extern void sdhci_card_detect(struct sdhci_host *host);
 extern int sdhci_add_host(struct sdhci_host *host);
 extern void sdhci_remove_host(struct sdhci_host *host, int dead);
+extern void sdhci_send_command(struct sdhci_host *host,
+				struct mmc_command *cmd);
+
+static inline bool sdhci_sdio_irq_enabled(struct sdhci_host *host)
+{
+	return !!(host->flags & SDHCI_SDIO_IRQ_ENABLED);
+}
+
+void sdhci_set_clock(struct sdhci_host *host, unsigned int clock);
+void sdhci_set_bus_width(struct sdhci_host *host, int width);
+void sdhci_reset(struct sdhci_host *host, u8 mask);
+void sdhci_set_uhs_signaling(struct sdhci_host *host, unsigned timing);
 
 #ifdef CONFIG_PM
 extern int sdhci_suspend_host(struct sdhci_host *host);
@@ -442,6 +462,4 @@ extern int sdhci_runtime_suspend_host(struct sdhci_host *host);
 extern int sdhci_runtime_resume_host(struct sdhci_host *host);
 #endif
 
-void sdhci_cfg_irq(struct sdhci_host *host, bool enable, bool sync);
-void sdhci_unvote_all_pm_qos(struct sdhci_host *host);
 #endif /* __SDHCI_HW_H */

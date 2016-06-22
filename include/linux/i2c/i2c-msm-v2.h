@@ -221,7 +221,7 @@ enum i2c_msm_clk_path_vec_idx {
 	I2C_MSM_CLK_PATH_RESUME_VEC,
 };
 #define I2C_MSM_CLK_PATH_AVRG_BW(ctrl) (0)
-#define I2C_MSM_CLK_PATH_BRST_BW(ctrl) (76800000)
+#define I2C_MSM_CLK_PATH_BRST_BW(ctrl) (ctrl->rsrcs.clk_freq_in * 8)
 
 enum i2c_msm_gpio_name_idx {
 	I2C_MSM_GPIO_SCL,

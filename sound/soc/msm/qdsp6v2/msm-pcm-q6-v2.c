@@ -37,7 +37,6 @@
 
 #include "msm-pcm-q6-v2.h"
 #include "msm-pcm-routing-v2.h"
-#include <linux/ratelimit.h>
 
 enum stream_state {
 	IDLE = 0,
@@ -317,6 +316,10 @@ static int msm_pcm_playback_prepare(struct snd_pcm_substream *substream)
 		return -ENOMEM;
 	}
 
+	ret = q6asm_send_cal(prtd->audio_client);
+	if (ret < 0)
+		pr_debug("%s : Send cal failed : %d", __func__, ret);
+
 	pr_debug("%s: session ID %d\n", __func__,
 			prtd->audio_client->session);
 	prtd->session_id = prtd->audio_client->session;
@@ -402,6 +405,10 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 			prtd->audio_client = NULL;
 			return -ENOMEM;
 		}
+
+		ret = q6asm_send_cal(prtd->audio_client);
+		if (ret < 0)
+			pr_debug("%s : Send cal failed : %d", __func__, ret);
 
 		pr_debug("%s: session ID %d\n",
 				__func__, prtd->audio_client->session);
@@ -504,7 +511,6 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 	struct snd_soc_pcm_runtime *soc_prtd = substream->private_data;
 	struct msm_audio *prtd;
 	int ret = 0;
-	static DEFINE_RATELIMIT_STATE(rl, HZ/2, 1);
 
 	prtd = kzalloc(sizeof(struct msm_audio), GFP_KERNEL);
 	if (prtd == NULL) {
@@ -515,8 +521,7 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 	prtd->audio_client = q6asm_audio_client_alloc(
 				(app_cb)event_handler, prtd);
 	if (!prtd->audio_client) {
-		if (__ratelimit(&rl))
-			pr_err("%s: Could not allocate memory\n", __func__);
+		pr_info("%s: Could not allocate memory\n", __func__);
 		kfree(prtd);
 		return -ENOMEM;
 	}
@@ -1266,6 +1271,9 @@ static int msm_pcm_probe(struct platform_device *pdev)
 		if (!rc) {
 			if (!strcmp(latency_level, "ultra"))
 				pdata->perf_mode = ULTRA_LOW_LATENCY_PCM_MODE;
+			else if (!strcmp(latency_level, "ull-pp"))
+				pdata->perf_mode =
+					ULL_POST_PROCESSING_PCM_MODE;
 		}
 	}
 	else

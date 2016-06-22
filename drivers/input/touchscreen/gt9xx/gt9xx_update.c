@@ -1,7 +1,7 @@
 /* drivers/input/touchscreen/gt9xx_update.c
  *
  * 2010 - 2012 Goodix Technology.
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -496,13 +496,12 @@ static u8 gup_enter_update_judge(struct i2c_client *client,
 		if (strlen(update_msg.ic_fw_msg.pid) < 3) {
 			pr_info("Illegal IC pid, need enter update");
 			return SUCCESS;
-		} else {
-			for (i = 0; i < 3; i++) {
-				if ((update_msg.ic_fw_msg.pid[i] < 0x30) ||
-					(update_msg.ic_fw_msg.pid[i] > 0x39)) {
-					pr_info("Illegal IC pid, out of bound, need enter update");
-					return SUCCESS;
-				}
+		}
+		for (i = 0; i < 3; i++) {
+			if ((update_msg.ic_fw_msg.pid[i] < 0x30) ||
+				(update_msg.ic_fw_msg.pid[i] > 0x39)) {
+				pr_info("Illegal IC pid, out of bound, need enter update");
+				return SUCCESS;
 			}
 		}
 		/* 20130523 end */
@@ -573,19 +572,15 @@ static s8 gup_update_config(struct i2c_client *client,
 	}
 
 	buf = devm_kzalloc(&client->dev, cfg->size, GFP_KERNEL);
-	if (!buf) {
-		dev_err(&client->dev, "Memory allocation failed for buf.");
+	if (!buf)
 		return -ENOMEM;
-	}
 
 	file_config = devm_kzalloc(&client->dev, chip_cfg_len + GTP_ADDR_LENGTH,
 								GFP_KERNEL);
-	if (!file_config) {
-		dev_err(&client->dev, "Memory allocation failed.");
+	if (!file_config)
 		return -ENOMEM;
-	}
 
-	pr_debug("Delete illgal charactor.");
+	pr_debug("Delete illegal character.");
 	for (i = 0, count = 0; i < cfg->size; i++) {
 		if (cfg->data[i] == ' ' || cfg->data[i] == '\r'
 					|| cfg->data[i] == '\n')

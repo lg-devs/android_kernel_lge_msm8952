@@ -163,28 +163,24 @@ static inline const char *mhi_sm_pcie_event_str(enum ep_pcie_event event)
  * struct mhi_sm_device_event - mhi-core event work
  * @event: mhi core state change event
  * @work: work struct
- * @id: event id, according to the event counter in stats
  *
  * used to add work for mhi state change event to mhi_sm_wq
  */
 struct mhi_sm_device_event {
 	enum mhi_dev_event event;
 	struct work_struct work;
-	int id;
 };
 
 /**
  * struct mhi_sm_ep_pcie_event - ep-pcie event work
  * @event: ep-pcie link state change event
  * @work: work struct
- * @id: event id, according to the event counter in stats
  *
  * used to add work for ep-pcie link state change event to mhi_sm_wq
  */
 struct mhi_sm_ep_pcie_event {
 	enum ep_pcie_event event;
 	struct work_struct work;
-	int id;
 };
 
 /**
@@ -219,11 +215,10 @@ struct mhi_sm_stats {
  * @d_state: EP-PCIe D state of the MHI device
  * @mhi_dev: MHI device struct pointer
  * @mhi_state_lock: mutex for mhi_state
- * @syserr_occurred:flag to indicate if a syserr condition has occured.
+ * @syserr_occurred:flag to indicate if a syserr condition has occurred.
  * @mhi_sm_wq: workqueue for state change events
  * @pending_device_events: number of pending mhi state change events in sm_wq
  * @pending_pcie_events: number of pending mhi state change events in sm_wq
- * @wakeup_trigger: flag to indicate if wakeup host is required
  * @stats: stats on the handled and pending events
  */
 struct mhi_sm_dev {
@@ -236,7 +231,6 @@ struct mhi_sm_dev {
 	atomic_t pending_device_events;
 	atomic_t pending_pcie_events;
 	struct mhi_sm_stats stats;
-	bool wakeup_trigger;
 };
 static struct mhi_sm_dev *mhi_sm_ctx;
 
@@ -438,7 +432,7 @@ static int mhi_sm_change_to_M0(void)
 {
 	enum mhi_dev_state old_state;
 	struct ep_pcie_msi_config cfg;
-	int res = 0;
+	int res;
 
 	MHI_SM_FUNC_ENTRY();
 
@@ -468,8 +462,11 @@ static int mhi_sm_change_to_M0(void)
 			goto exit;
 
 		}
+	} else {
+		MHI_SM_ERR("unexpected old_state: %s\n",
+			mhi_sm_mstate_str(old_state));
+		goto exit;
 	}
-
 	mhi_sm_mmio_set_mhistatus(MHI_DEV_M0_STATE);
 
 	/* Tell the host, device move to M0 */
@@ -561,35 +558,29 @@ exit:
 
 /**
  * mhi_sm_wakeup_host() - wakeup MHI-host
+ *@event: MHI state chenge event
  *
  * Sends wekup event to MHI-host via EP-PCIe, in case MHI is in M3 state.
  *
  * Return:	0:success
  *		negative: failure
  */
-static int mhi_sm_wakeup_host(void)
+static int mhi_sm_wakeup_host(enum mhi_dev_event event)
 {
 	int res = 0;
 
 	MHI_SM_FUNC_ENTRY();
 
 	if (mhi_sm_ctx->mhi_state == MHI_DEV_M3_STATE) {
-		mhi_sm_ctx->wakeup_trigger = true;
-		if (mhi_sm_ctx->d_state == MHI_SM_EP_PCIE_D3_HOT_STATE ||
-			mhi_sm_ctx->d_state == MHI_SM_EP_PCIE_D3_COLD_STATE) {
-			/*
-			  * ep_pcie driver is responsible to assert WAKE#,
-			  * done only in D3 state
-			  */
-			MHI_SM_DBG("Call ep_pcie wakup host, dstate = %s\n",
-				mhi_sm_dstate_str(mhi_sm_ctx->d_state));
-			res = ep_pcie_wakeup_host(mhi_sm_ctx->mhi_dev->phandle);
-			if (res) {
-				MHI_SM_ERR("Wakeup host Failed, returned %d\n",
-					res);
-				goto exit;
-			}
-			mhi_sm_ctx->wakeup_trigger = false;
+		/*
+		  * ep_pcie driver is responsible to send the right wakeup
+		  * event, assert WAKE#, according to Link state
+		  */
+		res = ep_pcie_wakeup_host(mhi_sm_ctx->mhi_dev->phandle);
+		if (res) {
+			MHI_SM_ERR("Failed to wakeup MHI host, returned %d\n",
+				res);
+			goto exit;
 		}
 	} else {
 		MHI_SM_DBG("Nothing to do, Host is already awake\n");
@@ -612,7 +603,7 @@ exit:
  */
 static int mhi_sm_handle_syserr(void)
 {
-	int res = 0;
+	int res;
 	enum ep_pcie_link_status link_status;
 	bool link_enabled = false;
 
@@ -680,16 +671,15 @@ exit:
  */
 static void mhi_sm_dev_event_manager(struct work_struct *work)
 {
-	int res = 0;
+	int res;
 	struct mhi_sm_device_event *chg_event = container_of(work,
 		struct mhi_sm_device_event, work);
 
 	MHI_SM_FUNC_ENTRY();
 
 	mutex_lock(&mhi_sm_ctx->mhi_state_lock);
-	MHI_SM_DBG("Start handling %s event No. %d, current states: %s & %s\n",
+	MHI_SM_DBG("Start handling %s event, current states: %s & %s\n",
 		mhi_sm_dev_event_str(chg_event->event),
-		chg_event->id,
 		mhi_sm_mstate_str(mhi_sm_ctx->mhi_state),
 		mhi_sm_dstate_str(mhi_sm_ctx->d_state));
 
@@ -724,7 +714,7 @@ static void mhi_sm_dev_event_manager(struct work_struct *work)
 		break;
 	case MHI_DEV_EVENT_HW_ACC_WAKEUP:
 	case MHI_DEV_EVENT_CORE_WAKEUP:
-		res = mhi_sm_wakeup_host();
+		res = mhi_sm_wakeup_host(chg_event->event);
 		if (res)
 			MHI_SM_ERR("Failed to wakeup MHI host\n");
 		break;
@@ -755,7 +745,7 @@ unlock_and_exit:
  */
 static void mhi_sm_pcie_event_manager(struct work_struct *work)
 {
-	int res = 0;
+	int res;
 	enum mhi_sm_ep_pcie_state old_dstate;
 	struct mhi_sm_ep_pcie_event *chg_event = container_of(work,
 		struct mhi_sm_ep_pcie_event, work);
@@ -766,9 +756,8 @@ static void mhi_sm_pcie_event_manager(struct work_struct *work)
 	mutex_lock(&mhi_sm_ctx->mhi_state_lock);
 	old_dstate = mhi_sm_ctx->d_state;
 
-	MHI_SM_DBG("Start handling %s event No.%d, current MHI state %s & %s\n",
+	MHI_SM_DBG("Start handling %s event, current MHI state %s and %s\n",
 		mhi_sm_pcie_event_str(chg_event->event),
-		chg_event->id,
 		mhi_sm_mstate_str(mhi_sm_ctx->mhi_state),
 		mhi_sm_dstate_str(old_dstate));
 
@@ -802,21 +791,12 @@ static void mhi_sm_pcie_event_manager(struct work_struct *work)
 			MHI_SM_ERR("Failed switching to SYSERR state\n");
 		goto unlock_and_exit;
 	case EP_PCIE_EVENT_PM_D3_HOT:
-		if (old_dstate == MHI_SM_EP_PCIE_D3_COLD_STATE) {
+		if (old_dstate == MHI_SM_EP_PCIE_D3_HOT_STATE) {
 			MHI_SM_DBG("cannot move to D3_HOT from D3_COLD\n");
 			break;
 		}
 		/* Backup MMIO is done on the callback function*/
 		mhi_sm_ctx->d_state = MHI_SM_EP_PCIE_D3_HOT_STATE;
-		if (mhi_sm_ctx->wakeup_trigger) {
-			res = mhi_sm_wakeup_host();
-			if (res) {
-				MHI_SM_ERR("Failed to wakeup MHI host, ");
-				MHI_SM_ERR("MHI State: %s and %s\n",
-				mhi_sm_mstate_str(mhi_sm_ctx->mhi_state),
-				mhi_sm_dstate_str(mhi_sm_ctx->d_state));
-			}
-		}
 		break;
 	case EP_PCIE_EVENT_PM_D3_COLD:
 		if (old_dstate == MHI_SM_EP_PCIE_D3_COLD_STATE) {
@@ -825,18 +805,8 @@ static void mhi_sm_pcie_event_manager(struct work_struct *work)
 		}
 		ep_pcie_disable_endpoint(mhi_sm_ctx->mhi_dev->phandle);
 		mhi_sm_ctx->d_state = MHI_SM_EP_PCIE_D3_COLD_STATE;
-		if (mhi_sm_ctx->wakeup_trigger) {
-			res = mhi_sm_wakeup_host();
-			if (res) {
-				MHI_SM_ERR("Failed to wakeup MHI host, ");
-				MHI_SM_ERR("MHI State: %s and %s\n",
-				mhi_sm_mstate_str(mhi_sm_ctx->mhi_state),
-				mhi_sm_dstate_str(mhi_sm_ctx->d_state));
-			}
-		}
 		break;
 	case EP_PCIE_EVENT_PM_RST_DEAST:
-		mhi_sm_ctx->wakeup_trigger = false;
 		if (old_dstate == MHI_SM_EP_PCIE_D0_STATE) {
 			MHI_SM_DBG("Nothing to do, already in D0 state\n");
 			break;
@@ -861,7 +831,6 @@ static void mhi_sm_pcie_event_manager(struct work_struct *work)
 		mhi_sm_ctx->d_state = MHI_SM_EP_PCIE_D0_STATE;
 		break;
 	case EP_PCIE_EVENT_PM_D0:
-		mhi_sm_ctx->wakeup_trigger = false;
 		if (old_dstate == MHI_SM_EP_PCIE_D0_STATE) {
 			MHI_SM_DBG("Nothing to do, already in D0 state\n");
 			break;
@@ -894,7 +863,7 @@ unlock_and_exit:
  */
 int mhi_dev_sm_init(struct mhi_dev *mhi_dev)
 {
-	int res = 0;
+	int res;
 	enum ep_pcie_link_status link_state;
 
 	MHI_SM_FUNC_ENTRY();
@@ -924,7 +893,6 @@ int mhi_dev_sm_init(struct mhi_dev *mhi_dev)
 	mhi_sm_ctx->mhi_dev = mhi_dev;
 	mhi_sm_ctx->mhi_state = MHI_DEV_RESET_STATE;
 	mhi_sm_ctx->syserr_occurred = false;
-	mhi_sm_ctx->wakeup_trigger = false;
 	atomic_set(&mhi_sm_ctx->pending_device_events, 0);
 	atomic_set(&mhi_sm_ctx->pending_pcie_events, 0);
 
@@ -990,7 +958,7 @@ EXPORT_SYMBOL(mhi_dev_sm_get_mhi_state);
  */
 int mhi_dev_sm_set_ready(void)
 {
-	int res = 0;
+	int res;
 	int is_ready;
 	enum mhi_dev_state state;
 
@@ -1060,8 +1028,7 @@ EXPORT_SYMBOL(mhi_dev_sm_set_ready);
 int mhi_dev_notify_sm_event(enum mhi_dev_event event)
 {
 	struct mhi_sm_device_event *state_change_event;
-	int res = 0;
-	int event_id;
+	int res;
 
 	MHI_SM_FUNC_ENTRY();
 
@@ -1070,22 +1037,21 @@ int mhi_dev_notify_sm_event(enum mhi_dev_event event)
 		return -EFAULT;
 	 }
 
+	MHI_SM_DBG("received: %s\n",
+		mhi_sm_dev_event_str(event));
+
 	switch (event) {
 	case MHI_DEV_EVENT_M0_STATE:
 		mhi_sm_ctx->stats.m0_event_cnt++;
-		event_id = mhi_sm_ctx->stats.m0_event_cnt;
 		break;
 	case MHI_DEV_EVENT_M3_STATE:
 		mhi_sm_ctx->stats.m3_event_cnt++;
-		event_id = mhi_sm_ctx->stats.m3_event_cnt;
 		break;
 	case MHI_DEV_EVENT_HW_ACC_WAKEUP:
 		mhi_sm_ctx->stats.hw_acc_wakeup_event_cnt++;
-		event_id = mhi_sm_ctx->stats.hw_acc_wakeup_event_cnt;
 		break;
 	case MHI_DEV_EVENT_CORE_WAKEUP:
 		mhi_sm_ctx->stats.mhi_core_wakeup_event_cnt++;
-		event_id = mhi_sm_ctx->stats.mhi_core_wakeup_event_cnt;
 		break;
 	case MHI_DEV_EVENT_CTRL_TRIG:
 	case MHI_DEV_EVENT_M1_STATE:
@@ -1100,9 +1066,6 @@ int mhi_dev_notify_sm_event(enum mhi_dev_event event)
 		goto exit;
 	}
 
-	MHI_SM_DBG("received: %s No. %d\n",
-		mhi_sm_dev_event_str(event), event_id);
-
 	/*init work and push to queue*/
 	state_change_event = kzalloc(sizeof(*state_change_event), GFP_ATOMIC);
 	if (!state_change_event) {
@@ -1112,7 +1075,6 @@ int mhi_dev_notify_sm_event(enum mhi_dev_event event)
 	}
 
 	state_change_event->event = event;
-	state_change_event->id = event_id;
 	INIT_WORK(&state_change_event->work, mhi_sm_dev_event_manager);
 	atomic_inc(&mhi_sm_ctx->pending_device_events);
 	queue_work(mhi_sm_ctx->mhi_sm_wq, &state_change_event->work);
@@ -1135,7 +1097,6 @@ void mhi_dev_sm_pcie_handler(struct ep_pcie_notify *notify)
 {
 	struct mhi_sm_ep_pcie_event *dstate_change_evt;
 	enum ep_pcie_event event;
-	int event_id;
 
 	MHI_SM_FUNC_ENTRY();
 
@@ -1150,54 +1111,46 @@ void mhi_dev_sm_pcie_handler(struct ep_pcie_notify *notify)
 	}
 
 	event = notify->event;
+	MHI_SM_DBG("received: %s\n",
+		mhi_sm_pcie_event_str(event));
 
-	switch (event) {
-	case EP_PCIE_EVENT_LINKUP:
-		mhi_sm_ctx->stats.linkup_event_cnt++;
-		event_id = mhi_sm_ctx->stats.linkup_event_cnt;
-		break;
-	case EP_PCIE_EVENT_PM_D3_COLD:
-		mhi_sm_ctx->stats.d3_cold_event_cnt++;
-		event_id = mhi_sm_ctx->stats.d3_cold_event_cnt;
-		break;
-	case EP_PCIE_EVENT_PM_D3_HOT:
-		mhi_sm_ctx->stats.d3_hot_event_cnt++;
-		event_id = mhi_sm_ctx->stats.d3_hot_event_cnt;
-		mhi_dev_backup_mmio(mhi_sm_ctx->mhi_dev);
-		break;
-	case EP_PCIE_EVENT_PM_RST_DEAST:
-		mhi_sm_ctx->stats.rst_deast_event_cnt++;
-		event_id = mhi_sm_ctx->stats.rst_deast_event_cnt;
-		break;
-	case EP_PCIE_EVENT_PM_D0:
-		mhi_sm_ctx->stats.d0_event_cnt++;
-		event_id = mhi_sm_ctx->stats.d0_event_cnt;
-		break;
-	case EP_PCIE_EVENT_LINKDOWN:
-		mhi_sm_ctx->stats.linkdown_event_cnt++;
-		event_id = mhi_sm_ctx->stats.linkdown_event_cnt;
-		mhi_sm_ctx->syserr_occurred = true;
-		MHI_SM_ERR("got %s, ERROR occured\n",
-			mhi_sm_pcie_event_str(event));
-		break;
-	default:
-		MHI_SM_ERR("Invalid ep_pcie event, received 0x%x event\n",
-			event);
-		goto exit;
-	}
-
-	MHI_SM_DBG("received: %s No.%d\n",
-		mhi_sm_pcie_event_str(event), event_id);
-
-	/*init work and push to queue*/
 	dstate_change_evt = kzalloc(sizeof(*dstate_change_evt), GFP_ATOMIC);
 	if (!dstate_change_evt) {
 		MHI_SM_ERR("kzalloc error\n");
 		goto exit;
 	}
 
+	switch (event) {
+	case EP_PCIE_EVENT_LINKUP:
+		mhi_sm_ctx->stats.linkup_event_cnt++;
+		break;
+	case EP_PCIE_EVENT_PM_D3_COLD:
+		mhi_sm_ctx->stats.d3_cold_event_cnt++;
+		break;
+	case EP_PCIE_EVENT_PM_D3_HOT:
+		mhi_sm_ctx->stats.d3_hot_event_cnt++;
+		mhi_dev_backup_mmio(mhi_sm_ctx->mhi_dev);
+		break;
+	case EP_PCIE_EVENT_PM_RST_DEAST:
+		mhi_sm_ctx->stats.rst_deast_event_cnt++;
+		break;
+	case EP_PCIE_EVENT_PM_D0:
+		mhi_sm_ctx->stats.d0_event_cnt++;
+		break;
+	case EP_PCIE_EVENT_LINKDOWN:
+		mhi_sm_ctx->stats.linkdown_event_cnt++;
+		mhi_sm_ctx->syserr_occurred = true;
+		MHI_SM_ERR("got %s, ERROR occurred\n",
+			mhi_sm_pcie_event_str(event));
+		break;
+	default:
+		MHI_SM_ERR("Invalid ep_pcie event, received 0x%x event\n",
+			event);
+		kfree(dstate_change_evt);
+		goto exit;
+	}
+
 	dstate_change_evt->event = event;
-	dstate_change_evt->id = event_id;
 	INIT_WORK(&dstate_change_evt->work, mhi_sm_pcie_event_manager);
 	queue_work(mhi_sm_ctx->mhi_sm_wq, &dstate_change_evt->work);
 	atomic_inc(&mhi_sm_ctx->pending_pcie_events);
@@ -1219,7 +1172,7 @@ EXPORT_SYMBOL(mhi_dev_sm_pcie_handler);
  */
 int mhi_dev_sm_syserr(void)
 {
-	int res = 0;
+	int res;
 
 	MHI_SM_FUNC_ENTRY();
 
@@ -1259,10 +1212,6 @@ static ssize_t mhi_sm_debugfs_read(struct file *file, char __user *ubuf,
 			MHI_SM_MAX_MSG_LEN - nbytes,
 			"M state: %s\n",
 			mhi_sm_mstate_str(mhi_sm_ctx->mhi_state));
-		nbytes += scnprintf(dbg_buff + nbytes,
-			MHI_SM_MAX_MSG_LEN - nbytes,
-			"Wakeup_trigger flag is: %s\n",
-			(mhi_sm_ctx->wakeup_trigger ? "ON" : "OFF"));
 		nbytes += scnprintf(dbg_buff + nbytes,
 			MHI_SM_MAX_MSG_LEN - nbytes,
 			"pending device events: %d\n",

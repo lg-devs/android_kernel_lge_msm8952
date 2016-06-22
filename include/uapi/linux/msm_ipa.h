@@ -65,7 +65,10 @@
 #define IPA_IOCTL_ADD_HDR_PROC_CTX 40
 #define IPA_IOCTL_DEL_HDR_PROC_CTX 41
 #define IPA_IOCTL_MDFY_RT_RULE 42
-#define IPA_IOCTL_MAX 43
+#define IPA_IOCTL_ADD_RT_RULE_AFTER 43
+#define IPA_IOCTL_ADD_FLT_RULE_AFTER 44
+#define IPA_IOCTL_GET_HW_VERSION 45
+#define IPA_IOCTL_MAX 46
 
 /**
  * max size of the header to be inserted
@@ -144,11 +147,13 @@ enum ipa_client_type {
 	IPA_CLIENT_ODU_PROD,
 	IPA_CLIENT_MHI_PROD,
 	IPA_CLIENT_Q6_LAN_PROD,
+	IPA_CLIENT_Q6_WAN_PROD,
 	IPA_CLIENT_Q6_CMD_PROD,
 	IPA_CLIENT_MEMCPY_DMA_SYNC_PROD,
 	IPA_CLIENT_MEMCPY_DMA_ASYNC_PROD,
 	IPA_CLIENT_Q6_DECOMP_PROD,
 	IPA_CLIENT_Q6_DECOMP2_PROD,
+	IPA_CLIENT_UC_USB_PROD,
 
 	/* Below PROD client type is only for test purpose */
 	IPA_CLIENT_TEST_PROD,
@@ -187,6 +192,7 @@ enum ipa_client_type {
 	IPA_CLIENT_MEMCPY_DMA_ASYNC_CONS,
 	IPA_CLIENT_Q6_DECOMP_CONS,
 	IPA_CLIENT_Q6_DECOMP2_CONS,
+	IPA_CLIENT_Q6_LTE_WIFI_AGGR_CONS,
 	/* Below CONS client type is only for test purpose */
 	IPA_CLIENT_TEST_CONS,
 	IPA_CLIENT_TEST1_CONS,
@@ -223,29 +229,14 @@ enum ipa_client_type {
 	(client) == IPA_CLIENT_Q6_WAN_CONS || \
 	(client) == IPA_CLIENT_Q6_DUN_CONS || \
 	(client) == IPA_CLIENT_Q6_DECOMP_CONS || \
-	(client) == IPA_CLIENT_Q6_DECOMP2_CONS)
+	(client) == IPA_CLIENT_Q6_DECOMP2_CONS || \
+	(client) == IPA_CLIENT_Q6_LTE_WIFI_AGGR_CONS)
 
 #define IPA_CLIENT_IS_Q6_PROD(client) \
 	((client) == IPA_CLIENT_Q6_LAN_PROD || \
+	(client) == IPA_CLIENT_Q6_WAN_PROD || \
 	(client) == IPA_CLIENT_Q6_CMD_PROD || \
 	(client) == IPA_CLIENT_Q6_DECOMP_PROD || \
-	(client) == IPA_CLIENT_Q6_DECOMP2_PROD)
-
-#define IPA_CLIENT_IS_Q6_NON_ZIP_CONS(client) \
-	((client) == IPA_CLIENT_Q6_LAN_CONS || \
-	(client) == IPA_CLIENT_Q6_WAN_CONS || \
-	(client) == IPA_CLIENT_Q6_DUN_CONS)
-
-#define IPA_CLIENT_IS_Q6_ZIP_CONS(client) \
-	((client) == IPA_CLIENT_Q6_DECOMP_CONS || \
-	(client) == IPA_CLIENT_Q6_DECOMP2_CONS)
-
-#define IPA_CLIENT_IS_Q6_NON_ZIP_PROD(client) \
-	((client) == IPA_CLIENT_Q6_LAN_PROD || \
-	(client) == IPA_CLIENT_Q6_CMD_PROD)
-
-#define IPA_CLIENT_IS_Q6_ZIP_PROD(client) \
-	((client) == IPA_CLIENT_Q6_DECOMP_PROD || \
 	(client) == IPA_CLIENT_Q6_DECOMP2_PROD)
 
 #define IPA_CLIENT_IS_MEMCPY_DMA_CONS(client) \
@@ -259,6 +250,11 @@ enum ipa_client_type {
 #define IPA_CLIENT_IS_MHI_CONS(client) \
 	((client) == IPA_CLIENT_MHI_CONS)
 
+#define IPA_CLIENT_IS_MHI(client) \
+	((client) == IPA_CLIENT_MHI_CONS || \
+	(client) == IPA_CLIENT_MHI_PROD)
+
+
 
 
 /**
@@ -268,6 +264,17 @@ enum ipa_ip_type {
 	IPA_IP_v4,
 	IPA_IP_v6,
 	IPA_IP_MAX
+};
+
+/**
+ * enum ipa_rule_type - Type of routing or filtering rule
+ * Hashable: Rule will be located at the hashable tables
+ * Non_Hashable: Rule will be located at the non-hashable tables
+ */
+enum ipa_rule_type {
+	IPA_RULE_HASHABLE,
+	IPA_RULE_NON_HASHABLE,
+	IPA_RULE_TYPE_MAX
 };
 
 /**
@@ -391,6 +398,7 @@ enum ipa_rm_resource_name {
  * @IPA_HW_v2_5: IPA hardware version 2.5
  * @IPA_HW_v2_6: IPA hardware version 2.6
  * @IPA_HW_v2_6L: IPA hardware version 2.6L
+ * @IPA_HW_v3_0: IPA hardware version 3.0
  */
 enum ipa_hw_type {
 	IPA_HW_None = 0,
@@ -401,6 +409,7 @@ enum ipa_hw_type {
 	IPA_HW_v2_5 = 5,
 	IPA_HW_v2_6 = IPA_HW_v2_5,
 	IPA_HW_v2_6L = 6,
+	IPA_HW_v3_0 = 10,
 	IPA_HW_MAX
 };
 
@@ -595,6 +604,14 @@ struct ipa_ipfltri_rule_eq {
  * @rt_tbl_idx: index of RT table referred to by filter rule (valid when
  * eq_attrib_type is true and non-exception action)
  * @eq_attrib_type: true if equation level form used to specify attributes
+ * @max_prio: bool switch. is this rule with Max priority? meaning on rule hit,
+ *  IPA will use the rule and will not look for other rules that may have
+ *  higher priority
+ * @hashable: bool switch. is this rule hashable or not?
+ *  ipa uses hashable rules to cache their hit results to be used in
+ *  consecutive packets
+ * @rule_id: rule_id to be assigned to the filter rule. In case client specifies
+ *  rule_id as 0 the driver will assign a new rule_id
  */
 struct ipa_flt_rule {
 	uint8_t retain_hdr;
@@ -605,6 +622,9 @@ struct ipa_flt_rule {
 	struct ipa_ipfltri_rule_eq eq_attrib;
 	uint32_t rt_tbl_idx;
 	uint8_t eq_attrib_type;
+	uint8_t max_prio;
+	uint8_t hashable;
+	uint16_t rule_id;
 };
 
 /**
@@ -645,12 +665,23 @@ enum ipa_hdr_proc_type {
  * @hdr_proc_ctx_hdl: handle to header processing context. if it is provided
 	hdr_hdl shall be 0
  * @attrib: attributes of the rule
+ * @max_prio: bool switch. is this rule with Max priority? meaning on rule hit,
+ *  IPA will use the rule and will not look for other rules that may have
+ *  higher priority
+ * @hashable: bool switch. is this rule hashable or not?
+ *  ipa uses hashable rules to cache their hit results to be used in
+ *  consecutive packets
+ * @retain_hdr: bool switch to instruct IPA core to add back to the packet
+ *  the header removed as part of header removal
  */
 struct ipa_rt_rule {
 	enum ipa_client_type dst;
 	uint32_t hdr_hdl;
 	uint32_t hdr_proc_ctx_hdl;
 	struct ipa_rule_attrib attrib;
+	uint8_t max_prio;
+	uint8_t hashable;
+	uint8_t retain_hdr;
 };
 
 /**
@@ -854,6 +885,28 @@ struct ipa_ioc_add_rt_rule {
 };
 
 /**
+ * struct ipa_ioc_add_rt_rule_after - routing rule addition after a specific
+ * rule parameters(supports multiple rules and commit);
+ *
+ * all rules MUST be added to same table
+ * @commit: should rules be written to IPA HW also?
+ * @ip: IP family of rule
+ * @rt_tbl_name: name of routing table resource
+ * @num_rules: number of routing rules that follow
+ * @add_after_hdl: the rules will be added after this specific rule
+ * @ipa_rt_rule_add rules: all rules need to go back to back here, no pointers
+ *			   at_rear field will be ignored when using this IOCTL
+ */
+struct ipa_ioc_add_rt_rule_after {
+	uint8_t commit;
+	enum ipa_ip_type ip;
+	char rt_tbl_name[IPA_RESOURCE_NAME_MAX];
+	uint8_t num_rules;
+	uint32_t add_after_hdl;
+	struct ipa_rt_rule_add rules[0];
+};
+
+/**
  * struct ipa_rt_rule_mdfy - routing rule descriptor includes
  * in and out parameters
  * @rule: actual rule to be added
@@ -961,6 +1014,27 @@ struct ipa_ioc_add_flt_rule {
 	enum ipa_client_type ep;
 	uint8_t global;
 	uint8_t num_rules;
+	struct ipa_flt_rule_add rules[0];
+};
+
+/**
+ * struct ipa_ioc_add_flt_rule_after - filtering rule addition after specific
+ * rule parameters (supports multiple rules and commit)
+ * all rules MUST be added to same table
+ * @commit: should rules be written to IPA HW also?
+ * @ip: IP family of rule
+ * @ep:	which "clients" pipe does this rule apply to?
+ * @num_rules: number of filtering rules that follow
+ * @add_after_hdl: rules will be added after the rule with this handle
+ * @rules: all rules need to go back to back here, no pointers. at rear field
+ *	   is ignored when using this IOCTL
+ */
+struct ipa_ioc_add_flt_rule_after {
+	uint8_t commit;
+	enum ipa_ip_type ip;
+	enum ipa_client_type ep;
+	uint8_t num_rules;
+	uint32_t add_after_hdl;
 	struct ipa_flt_rule_add rules[0];
 };
 
@@ -1108,6 +1182,8 @@ struct ipa_ioc_ext_intf_prop {
 	uint8_t mux_id;
 	uint32_t filter_hdl;
 	uint8_t is_xlat_rule;
+	uint32_t rule_id;
+	uint8_t is_rule_hashable;
 };
 
 /**
@@ -1368,12 +1444,18 @@ enum ipacm_client_enum {
 #define IPA_IOC_ADD_RT_RULE _IOWR(IPA_IOC_MAGIC, \
 					IPA_IOCTL_ADD_RT_RULE, \
 					struct ipa_ioc_add_rt_rule *)
+#define IPA_IOC_ADD_RT_RULE_AFTER _IOWR(IPA_IOC_MAGIC, \
+					IPA_IOCTL_ADD_RT_RULE_AFTER, \
+					struct ipa_ioc_add_rt_rule_after *)
 #define IPA_IOC_DEL_RT_RULE _IOWR(IPA_IOC_MAGIC, \
 					IPA_IOCTL_DEL_RT_RULE, \
 					struct ipa_ioc_del_rt_rule *)
 #define IPA_IOC_ADD_FLT_RULE _IOWR(IPA_IOC_MAGIC, \
 					IPA_IOCTL_ADD_FLT_RULE, \
 					struct ipa_ioc_add_flt_rule *)
+#define IPA_IOC_ADD_FLT_RULE_AFTER _IOWR(IPA_IOC_MAGIC, \
+					IPA_IOCTL_ADD_FLT_RULE_AFTER, \
+					struct ipa_ioc_add_flt_rule_after *)
 #define IPA_IOC_DEL_FLT_RULE _IOWR(IPA_IOC_MAGIC, \
 					IPA_IOCTL_DEL_FLT_RULE, \
 					struct ipa_ioc_del_flt_rule *)
@@ -1484,6 +1566,10 @@ enum ipacm_client_enum {
 #define IPA_IOC_DEL_HDR_PROC_CTX _IOWR(IPA_IOC_MAGIC, \
 				IPA_IOCTL_DEL_HDR_PROC_CTX, \
 				struct ipa_ioc_del_hdr_proc_ctx *)
+
+#define IPA_IOC_GET_HW_VERSION _IOWR(IPA_IOC_MAGIC, \
+				IPA_IOCTL_GET_HW_VERSION, \
+				enum ipa_hw_type *)
 
 /*
  * unique magic number of the Tethering bridge ioctls

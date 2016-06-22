@@ -365,6 +365,8 @@ static int _create_dsi_panel_nodes(struct mdss_panel_debugfs_info *dfs,
 			(char *)&pinfo->mipi.rx_eot_ignore);
 	debugfs_create_u8("tx_eot_append", 0644, mipi_root,
 			(char *)&pinfo->mipi.tx_eot_append);
+	debugfs_create_u32("adjust_timer_ms", 0644, mipi_root,
+			(u32 *)&pinfo->adjust_timer_delay_ms);
 
 	/* TE reltaed nodes */
 	debugfs_create_u32("te_tear_check_en", 0644, te_root,
@@ -438,7 +440,6 @@ int mdss_panel_debugfs_setup(struct mdss_panel_info *panel_info, struct dentry
 	if (IS_ERR_OR_NULL(debugfs_info->root)) {
 		pr_err("Debugfs create dir failed with error: %ld\n",
 					PTR_ERR(debugfs_info->root));
-		kfree(debugfs_info);
 		return -ENODEV;
 	}
 
@@ -506,6 +507,18 @@ void mdss_panel_debugfs_cleanup(struct mdss_panel_info *panel_info)
 	pr_debug("Cleaned up mdss_panel_debugfs_info\n");
 }
 
+void mdss_panel_override_te_params(struct mdss_panel_info *pinfo)
+{
+	pinfo->te.sync_cfg_height = mdss_panel_get_vtotal(pinfo);
+	pinfo->te.vsync_init_val = 0;
+	pinfo->te.start_pos = 5;
+	pinfo->te.rd_ptr_irq = 1;
+	pr_debug("SW TE override: read_ptr:%d,start_pos:%d,height:%d,init_val:%d\n",
+		pinfo->te.rd_ptr_irq, pinfo->te.start_pos,
+		pinfo->te.sync_cfg_height,
+		pinfo->te.vsync_init_val);
+}
+
 void mdss_panel_debugfsinfo_to_panelinfo(struct mdss_panel_info *panel_info)
 {
 	struct mdss_panel_data *pdata;
@@ -528,6 +541,8 @@ void mdss_panel_debugfsinfo_to_panelinfo(struct mdss_panel_info *panel_info)
 		pinfo->bl_min = dfs_info->panel_info.bl_min;
 		pinfo->bl_max = dfs_info->panel_info.bl_max;
 		pinfo->brightness_max = dfs_info->panel_info.brightness_max;
+		pinfo->adjust_timer_delay_ms =
+			dfs_info->panel_info.adjust_timer_delay_ms;
 
 		if ((pinfo->type == MIPI_CMD_PANEL) ||
 		    (pinfo->type == MIPI_VIDEO_PANEL)) {
@@ -552,6 +567,69 @@ void mdss_panel_debugfsinfo_to_panelinfo(struct mdss_panel_info *panel_info)
 		}
 
 		pinfo->panel_max_vtotal = mdss_panel_get_vtotal(pinfo);
+
+		/* override te parameters if panel is in sw te mode */
+		if (panel_info->sim_panel_mode == SIM_SW_TE_MODE)
+			mdss_panel_override_te_params(panel_info);
+
 		pdata = pdata->next;
 	} while (pdata);
+}
+
+struct mdss_panel_timing *mdss_panel_get_timing_by_name(
+		struct mdss_panel_data *pdata,
+		const char *name)
+{
+	struct mdss_panel_timing *pt;
+
+	if (pdata && name) {
+		list_for_each_entry(pt, &pdata->timings_list, list)
+			if (pt->name && !strcmp(pt->name, name))
+				return pt;
+	}
+
+	return NULL;
+}
+
+void mdss_panel_info_from_timing(struct mdss_panel_timing *pt,
+		struct mdss_panel_info *pinfo)
+{
+	if (!pt || !pinfo)
+		return;
+
+	pinfo->clk_rate = pt->clk_rate;
+	pinfo->xres = pt->xres;
+	pinfo->lcdc.h_front_porch = pt->h_front_porch;
+	pinfo->lcdc.h_back_porch = pt->h_back_porch;
+	pinfo->lcdc.h_pulse_width = pt->h_pulse_width;
+
+	pinfo->yres = pt->yres;
+	pinfo->lcdc.v_front_porch = pt->v_front_porch;
+	pinfo->lcdc.v_back_porch = pt->v_back_porch;
+	pinfo->lcdc.v_pulse_width = pt->v_pulse_width;
+
+	pinfo->lcdc.border_bottom = pt->border_bottom;
+	pinfo->lcdc.border_top = pt->border_top;
+	pinfo->lcdc.border_left = pt->border_left;
+	pinfo->lcdc.border_right = pt->border_right;
+	pinfo->lcdc.xres_pad = pt->border_left + pt->border_right;
+	pinfo->lcdc.yres_pad = pt->border_top + pt->border_bottom;
+
+	pinfo->lm_widths[0] = pt->lm_widths[0];
+	pinfo->lm_widths[1] = pt->lm_widths[1];
+
+	pinfo->mipi.frame_rate = pt->frame_rate;
+	pinfo->edp.frame_rate = pinfo->mipi.frame_rate;
+
+	pinfo->dsc = pt->dsc;
+	pinfo->dsc_enc_total = pt->dsc_enc_total;
+	pinfo->fbc = pt->fbc;
+	pinfo->compression_mode = pt->compression_mode;
+
+	pinfo->te = pt->te;
+
+	/* override te parameters if panel is in sw te mode */
+	if (pinfo->sim_panel_mode == SIM_SW_TE_MODE)
+		mdss_panel_override_te_params(pinfo);
+
 }

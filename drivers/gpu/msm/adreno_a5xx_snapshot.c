@@ -17,6 +17,7 @@
 #include "kgsl_snapshot.h"
 #include "adreno_snapshot.h"
 #include "a5xx_reg.h"
+#include "adreno_a5xx.h"
 
 enum a5xx_rbbm_debbus_id {
 	A5XX_RBBM_DBGBUS_CP          = 0x1,
@@ -337,12 +338,13 @@ static const unsigned int a5xx_vbif_ver_20040000_registers[] = {
 	0x3120, 0x3120, 0x3124, 0x3125, 0x3129, 0x3129, 0x3131, 0x3131,
 };
 
-const struct adreno_vbif_snapshot_registers a5xx_vbif_snapshot_registers[] = {
+static const struct adreno_vbif_snapshot_registers
+a5xx_vbif_snapshot_registers[] = {
 	{ 0x20040000, a5xx_vbif_ver_20040000_registers,
 				ARRAY_SIZE(a5xx_vbif_ver_20040000_registers)/2},
 };
 
-const unsigned int a5xx_vbif_snapshot_reg_cnt =
+static const unsigned int a5xx_vbif_snapshot_reg_cnt =
 				ARRAY_SIZE(a5xx_vbif_snapshot_registers);
 
 static void a5xx_snapshot_vbif_registers(struct kgsl_device *device,
@@ -376,7 +378,7 @@ static void a5xx_snapshot_vbif_registers(struct kgsl_device *device,
  * is the stop offset (inclusive)
  */
 
-const unsigned int a5xx_registers[] = {
+static const unsigned int a5xx_registers[] = {
 	/* RBBM */
 	0x0000, 0x0002, 0x0004, 0x0020, 0x0022, 0x0026, 0x0029, 0x002B,
 	0x002E, 0x0035, 0x0038, 0x0042, 0x0044, 0x0044, 0x0047, 0x0095,
@@ -431,9 +433,23 @@ const unsigned int a5xx_registers[] = {
 	0xEC00, 0xEC05, 0xEC08, 0xECE9, 0xECF0, 0xECF0,
 	/* VPC CTX 1 */
 	0xEA80, 0xEA80, 0xEA82, 0xEAA3, 0xEAA5, 0xEAC2,
+	/* GPMU */
+	0xA800, 0xA8FF, 0xAC60, 0xAC60,
+	/* DPM */
+	0xB000, 0xB97F, 0xB9A0, 0xB9BF,
 };
 
-const unsigned int a5xx_registers_count = ARRAY_SIZE(a5xx_registers) / 2;
+static const unsigned int a5xx_registers_count = ARRAY_SIZE(a5xx_registers) / 2;
+
+unsigned int a5xx_num_registers(void)
+{
+	unsigned int i, count = 0;
+
+	for (i = 0; i < a5xx_registers_count; ++i)
+		count += a5xx_registers[2*i + 1] - a5xx_registers[2*i] + 1;
+
+	return count;
+}
 
 struct a5xx_hlsq_sp_tp_regs {
 	unsigned int statetype;
@@ -672,8 +688,8 @@ static int get_hlsq_registers(struct kgsl_device *device,
 	return regs->size;
 }
 
-size_t a5xx_snapshot_dump_hlsq_sp_tp_regs(struct kgsl_device *device, u8 *buf,
-	size_t remain, void *priv)
+static size_t a5xx_snapshot_dump_hlsq_sp_tp_regs(struct kgsl_device *device,
+		u8 *buf, size_t remain, void *priv)
 {
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	struct kgsl_snapshot_regs *header = (struct kgsl_snapshot_regs *)buf;
@@ -707,6 +723,85 @@ size_t a5xx_snapshot_dump_hlsq_sp_tp_regs(struct kgsl_device *device, u8 *buf,
 	return (count * 8) + sizeof(*header);
 }
 
+size_t a5xx_snapshot_regs_crash_dumper(struct kgsl_device *device, u8 *buf,
+	size_t remain, void *priv)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_snapshot_regs *header = (struct kgsl_snapshot_regs *)buf;
+	unsigned int *data = (unsigned int *)(buf + sizeof(*header));
+	int i, j, start, end, num_regs;
+	uint64_t *script_ptr;
+	uint64_t dest_addr;
+	int reg;
+	unsigned long wait_time;
+	unsigned int script_size = 0;
+	unsigned int *ptr;
+
+	if (remain < (a5xx_num_registers() * 8) + sizeof(*header)) {
+		SNAPSHOT_ERR_NOMEM(device, "REGISTERS");
+		return 0;
+	}
+
+	script_ptr = (uint64_t *)adreno_dev->capturescript.hostptr;
+	dest_addr = adreno_dev->snapshot_registers.gpuaddr;
+	for (i = 0; i < a5xx_registers_count; ++i) {
+		num_regs = a5xx_registers[2*i + 1] - a5xx_registers[2*i] + 1;
+		*(script_ptr++) = dest_addr;
+		*(script_ptr++) = num_regs +
+				    ((uint64_t)(a5xx_registers[2*i]) << 44);
+		dest_addr += 4 * num_regs;
+		/* Increment script_size by 16 bytes. */
+		script_size += 16;
+		/* Check if script_ptr runs out of capturescript allocation.
+		 *  capturescript allocation size is PAGE_SIZE. The script ends
+		 * in 128 bits (16 bytes) of 0s.
+		*/
+		if (script_size > (PAGE_SIZE - 16)) {
+			KGSL_CORE_ERR("Not enough memory for capturescript");
+			return 0;
+		}
+	}
+
+	*(script_ptr++) = 0x0;
+	*(script_ptr++) = 0x0;
+
+	kgsl_regwrite(device, A5XX_CP_CRASH_SCRIPT_BASE_LO,
+			lower_32_bits(adreno_dev->capturescript.gpuaddr));
+	kgsl_regwrite(device, A5XX_CP_CRASH_SCRIPT_BASE_HI,
+			upper_32_bits(adreno_dev->capturescript.gpuaddr));
+	kgsl_regwrite(device, A5XX_CP_CRASH_DUMP_CNTL, 1);
+
+	wait_time = jiffies + msecs_to_jiffies(CP_CRASH_DUMPER_TIMEOUT);
+	while (!time_after(jiffies, wait_time)) {
+		kgsl_regread(device, A5XX_CP_CRASH_DUMP_CNTL, &reg);
+		if (reg & 0x4)
+			break;
+		cpu_relax();
+	}
+
+	if (!(reg & 0x4)) {
+		KGSL_CORE_ERR(
+			"cp crash dumper timed out without completion, reg: %d",
+			reg);
+		adreno_dev->capturescript_working = false;
+		return 0;
+	}
+
+	ptr = (unsigned int *)adreno_dev->snapshot_registers.hostptr;
+	for (i = 0; i < a5xx_registers_count; ++i) {
+		start = a5xx_registers[2*i];
+		end = a5xx_registers[2*i + 1];
+		for (j = start; j <= end; ++j) {
+			*data++ = j;
+			*data++ = *ptr++;
+		}
+	}
+
+	header->count = a5xx_num_registers();
+	/* Return the size of the section */
+	return (header->count * 8) + sizeof(*header);
+}
+
 /*
  * a5xx_snapshot() - A5XX GPU snapshot function
  * @adreno_dev: Device being snapshotted
@@ -732,13 +827,15 @@ void a5xx_snapshot(struct adreno_device *adreno_dev,
 	kgsl_regread(device, A5XX_RBBM_CLOCK_CNTL, &clock_ctl);
 	kgsl_regwrite(device, A5XX_RBBM_CLOCK_CNTL, 0);
 
-	/* Store relevant registers in list to snapshot */
-	adreno_snapshot_regs(regs, &list, a5xx_registers,
+	if (adreno_dev->capturescript_working)
+		kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_REGS,
+			snapshot, a5xx_snapshot_regs_crash_dumper, NULL);
+	if (!adreno_dev->capturescript_working)
+		/* Master set of (non debug) registers */
+		adreno_snapshot_regs(regs, &list, a5xx_registers,
 			a5xx_registers_count, 1);
 
 	a5xx_snapshot_vbif_registers(device, regs, &list);
-
-	/* Master set of (non debug) registers */
 	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_REGS, snapshot,
 		kgsl_snapshot_dump_regs, &list);
 
@@ -802,9 +899,8 @@ void a5xx_snapshot(struct adreno_device *adreno_dev,
 	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_DEBUG,
 		snapshot, a5xx_snapshot_cp_pm4, NULL);
 
-	/* Skip Shader memory dump for A510*/
-	if (!adreno_is_a510(adreno_dev))
-		a5xx_snapshot_shader(device, snapshot);
+	/* Shader memory */
+	a5xx_snapshot_shader(device, snapshot);
 
 	/* Debug bus */
 	a5xx_snapshot_debugbus(device, snapshot);

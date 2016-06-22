@@ -145,8 +145,7 @@ static int snd_compr_free(struct inode *inode, struct file *f)
 	case SNDRV_PCM_STATE_RUNNING:
 	case SNDRV_PCM_STATE_DRAINING:
 	case SNDRV_PCM_STATE_PAUSED:
-		data->stream.ops->trigger(&data->stream,
-					SNDRV_PCM_TRIGGER_STOP);
+		data->stream.ops->trigger(&data->stream, SNDRV_PCM_TRIGGER_STOP);
 		break;
 	default:
 		break;
@@ -388,8 +387,7 @@ static unsigned int snd_compr_poll(struct file *f, poll_table *wait)
 		return -EFAULT;
 
 	mutex_lock(&stream->device->lock);
-	if (stream->runtime->state == SNDRV_PCM_STATE_PAUSED ||
-			stream->runtime->state == SNDRV_PCM_STATE_OPEN) {
+	if (stream->runtime->state == SNDRV_PCM_STATE_OPEN) {
 		retval = -EBADFD;
 		goto out;
 	}
@@ -496,7 +494,7 @@ static int snd_compress_check_input(struct snd_compr_params *params)
 {
 	/* first let's check the buffer parameter's */
 	if (params->buffer.fragment_size == 0 ||
-			params->buffer.fragments > SIZE_MAX / params->buffer.fragment_size)
+	    params->buffer.fragments > INT_MAX / params->buffer.fragment_size)
 		return -EINVAL;
 
 	/* now codec parameters */
@@ -711,6 +709,7 @@ static int snd_compr_drain(struct snd_compr_stream *stream)
 		stream->runtime->state = SNDRV_PCM_STATE_DRAINING;
 		wake_up(&stream->runtime->sleep);
 	}
+
 ret:
 	mutex_unlock(&stream->device->lock);
 	return retval;
@@ -775,9 +774,7 @@ static int snd_compr_set_next_track_param(struct snd_compr_stream *stream,
 		return -EFAULT;
 
 	retval = stream->ops->set_next_track_param(stream, &codec_options);
-	if (retval != 0)
-		return retval;
-	return 0;
+	return retval;
 }
 
 static int snd_compress_simple_ioctls(struct file *file,

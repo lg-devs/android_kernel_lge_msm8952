@@ -23,33 +23,25 @@
 #include <net/route.h>
 #include <net/tcp_states.h>
 #include <net/xfrm.h>
+#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+#include <net/mptcp.h>
+#endif
 
 #ifdef INET_CSK_DEBUG
 const char inet_csk_timer_bug_msg[] = "inet_csk BUG: unknown timer value\n";
 EXPORT_SYMBOL(inet_csk_timer_bug_msg);
 #endif
 
-/*
- * This struct holds the first and last local port number.
- */
-struct local_ports sysctl_local_ports __read_mostly = {
-	.lock = __SEQLOCK_UNLOCKED(sysctl_local_ports.lock),
-	.range = { 32768, 61000 },
-};
-
-unsigned long *sysctl_local_reserved_ports;
-EXPORT_SYMBOL(sysctl_local_reserved_ports);
-
-void inet_get_local_port_range(int *low, int *high)
+void inet_get_local_port_range(struct net *net, int *low, int *high)
 {
 	unsigned int seq;
 
 	do {
-		seq = read_seqbegin(&sysctl_local_ports.lock);
+		seq = read_seqbegin(&net->ipv4.ip_local_ports.lock);
 
-		*low = sysctl_local_ports.range[0];
-		*high = sysctl_local_ports.range[1];
-	} while (read_seqretry(&sysctl_local_ports.lock, seq));
+		*low = net->ipv4.ip_local_ports.range[0];
+		*high = net->ipv4.ip_local_ports.range[1];
+	} while (read_seqretry(&net->ipv4.ip_local_ports.lock, seq));
 }
 EXPORT_SYMBOL(inet_get_local_port_range);
 
@@ -79,17 +71,16 @@ int inet_csk_bind_conflict(const struct sock *sk,
 			    (!reuseport || !sk2->sk_reuseport ||
 			    (sk2->sk_state != TCP_TIME_WAIT &&
 			     !uid_eq(uid, sock_i_uid(sk2))))) {
-				const __be32 sk2_rcv_saddr = sk_rcv_saddr(sk2);
-				if (!sk2_rcv_saddr || !sk_rcv_saddr(sk) ||
-				    sk2_rcv_saddr == sk_rcv_saddr(sk))
+
+				if (!sk2->sk_rcv_saddr || !sk->sk_rcv_saddr ||
+				    sk2->sk_rcv_saddr == sk->sk_rcv_saddr)
 					break;
 			}
 			if (!relax && reuse && sk2->sk_reuse &&
 			    sk2->sk_state != TCP_LISTEN) {
-				const __be32 sk2_rcv_saddr = sk_rcv_saddr(sk2);
 
-				if (!sk2_rcv_saddr || !sk_rcv_saddr(sk) ||
-				    sk2_rcv_saddr == sk_rcv_saddr(sk))
+				if (!sk2->sk_rcv_saddr || !sk->sk_rcv_saddr ||
+				    sk2->sk_rcv_saddr == sk->sk_rcv_saddr)
 					break;
 			}
 		}
@@ -116,13 +107,13 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 		int remaining, rover, low, high;
 
 again:
-		inet_get_local_port_range(&low, &high);
+		inet_get_local_port_range(net, &low, &high);
 		remaining = (high - low) + 1;
-		smallest_rover = rover = net_random() % remaining + low;
+		smallest_rover = rover = prandom_u32() % remaining + low;
 
 		smallest_size = -1;
 		do {
-			if (inet_is_reserved_local_port(rover))
+			if (inet_is_local_reserved_port(net, rover))
 				goto next_nolock;
 			head = &hashinfo->bhash[inet_bhashfn(net, rover,
 					hashinfo->bhash_size)];
@@ -182,7 +173,7 @@ have_snum:
 				hashinfo->bhash_size)];
 		spin_lock(&head->lock);
 
-		if (inet_is_reserved_local_port(snum) &&
+		if (inet_is_local_reserved_port(net, snum) &&
 		    !sysctl_reserved_port_bind) {
 			ret = 1;
 			goto fail_unlock;
@@ -428,8 +419,8 @@ struct dst_entry *inet_csk_route_req(struct sock *sk,
 			   RT_CONN_FLAGS(sk), RT_SCOPE_UNIVERSE,
 			   sk->sk_protocol,
 			   flags,
-			   (opt && opt->opt.srr) ? opt->opt.faddr : ireq->rmt_addr,
-			   ireq->loc_addr, ireq->rmt_port, inet_sk(sk)->inet_sport,
+			   (opt && opt->opt.srr) ? opt->opt.faddr : ireq->ir_rmt_addr,
+			   ireq->ir_loc_addr, ireq->ir_rmt_port, inet_sk(sk)->inet_sport,
 			   sock_i_uid(sk));
 	security_req_classify_flow(req, flowi4_to_flowi(fl4));
 	rt = ip_route_output_flow(net, fl4, sk);
@@ -465,8 +456,8 @@ struct dst_entry *inet_csk_route_child_sock(struct sock *sk,
 	flowi4_init_output(fl4, sk->sk_bound_dev_if, inet_rsk(req)->ir_mark,
 			   RT_CONN_FLAGS(sk), RT_SCOPE_UNIVERSE,
 			   sk->sk_protocol, inet_sk_flowi_flags(sk),
-			   (opt && opt->opt.srr) ? opt->opt.faddr : ireq->rmt_addr,
-			   ireq->loc_addr, ireq->rmt_port, inet_sk(sk)->inet_sport,
+			   (opt && opt->opt.srr) ? opt->opt.faddr : ireq->ir_rmt_addr,
+			   ireq->ir_loc_addr, ireq->ir_rmt_port, inet_sk(sk)->inet_sport,
 			   sock_i_uid(sk));
 	security_req_classify_flow(req, flowi4_to_flowi(fl4));
 	rt = ip_route_output_flow(net, fl4, sk);
@@ -486,8 +477,13 @@ no_route:
 }
 EXPORT_SYMBOL_GPL(inet_csk_route_child_sock);
 
+#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+u32 inet_synq_hash(const __be32 raddr, const __be16 rport, const u32 rnd,
+		   const u32 synq_hsize)
+#else
 static inline u32 inet_synq_hash(const __be32 raddr, const __be16 rport,
-				 const u32 rnd, const u32 synq_hsize)
+                                const u32 rnd, const u32 synq_hsize)
+#endif
 {
 	return jhash_2words((__force u32)raddr, (__force u32)rport, rnd) & (synq_hsize - 1);
 }
@@ -513,9 +509,9 @@ struct request_sock *inet_csk_search_req(const struct sock *sk,
 	     prev = &req->dl_next) {
 		const struct inet_request_sock *ireq = inet_rsk(req);
 
-		if (ireq->rmt_port == rport &&
-		    ireq->rmt_addr == raddr &&
-		    ireq->loc_addr == laddr &&
+		if (ireq->ir_rmt_port == rport &&
+		    ireq->ir_rmt_addr == raddr &&
+		    ireq->ir_loc_addr == laddr &&
 		    AF_INET_FAMILY(req->rsk_ops->family)) {
 			WARN_ON(req->sk);
 			*prevp = prev;
@@ -532,7 +528,8 @@ void inet_csk_reqsk_queue_hash_add(struct sock *sk, struct request_sock *req,
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct listen_sock *lopt = icsk->icsk_accept_queue.listen_opt;
-	const u32 h = inet_synq_hash(inet_rsk(req)->rmt_addr, inet_rsk(req)->rmt_port,
+	const u32 h = inet_synq_hash(inet_rsk(req)->ir_rmt_addr,
+				     inet_rsk(req)->ir_rmt_port,
 				     lopt->hash_rnd, lopt->nr_table_entries);
 
 	reqsk_queue_hash_req(&icsk->icsk_accept_queue, h, req, timeout);
@@ -666,8 +663,11 @@ void inet_csk_reqsk_queue_prune(struct sock *parent,
 	} while (--budget > 0);
 
 	lopt->clock_hand = i;
-
+#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+	if (lopt->qlen && !is_meta_sk(parent))
+#else
 	if (lopt->qlen)
+#endif
 		inet_csk_reset_keepalive_timer(parent, interval);
 }
 EXPORT_SYMBOL_GPL(inet_csk_reqsk_queue_prune);
@@ -684,7 +684,13 @@ struct sock *inet_csk_clone_lock(const struct sock *sk,
 				 const struct request_sock *req,
 				 const gfp_t priority)
 {
+#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+	struct sock *newsk;
+
+	newsk = sk_clone_lock(sk, priority);
+#else
 	struct sock *newsk = sk_clone_lock(sk, priority);
+#endif
 
 	if (newsk != NULL) {
 		struct inet_connection_sock *newicsk = inet_csk(newsk);
@@ -692,9 +698,9 @@ struct sock *inet_csk_clone_lock(const struct sock *sk,
 		newsk->sk_state = TCP_SYN_RECV;
 		newicsk->icsk_bind_hash = NULL;
 
-		inet_sk(newsk)->inet_dport = inet_rsk(req)->rmt_port;
-		inet_sk(newsk)->inet_num = ntohs(inet_rsk(req)->loc_port);
-		inet_sk(newsk)->inet_sport = inet_rsk(req)->loc_port;
+		inet_sk(newsk)->inet_dport = inet_rsk(req)->ir_rmt_port;
+		inet_sk(newsk)->inet_num = inet_rsk(req)->ir_num;
+		inet_sk(newsk)->inet_sport = htons(inet_rsk(req)->ir_num);
 		newsk->sk_write_space = sk_stream_write_space;
 
 		newsk->sk_mark = inet_rsk(req)->ir_mark;
@@ -763,7 +769,12 @@ int inet_csk_listen_start(struct sock *sk, const int nr_table_entries)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
+	#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+	int rc = reqsk_queue_alloc(&icsk->icsk_accept_queue, nr_table_entries,
+				   GFP_KERNEL);
+	#else
 	int rc = reqsk_queue_alloc(&icsk->icsk_accept_queue, nr_table_entries);
+	#endif
 
 	if (rc != 0)
 		return rc;
@@ -821,9 +832,18 @@ void inet_csk_listen_stop(struct sock *sk)
 
 	while ((req = acc_req) != NULL) {
 		struct sock *child = req->sk;
+		#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+		bool mutex_taken = false;
+		#endif
 
 		acc_req = req->dl_next;
 
+		#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+		if (is_meta_sk(child)) {
+			mutex_lock(&tcp_sk(child)->mpcb->mpcb_mutex);
+			mutex_taken = true;
+		}
+		#endif
 		local_bh_disable();
 		bh_lock_sock(child);
 		WARN_ON(sock_owned_by_user(child));
@@ -852,6 +872,10 @@ void inet_csk_listen_stop(struct sock *sk)
 
 		bh_unlock_sock(child);
 		local_bh_enable();
+		#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+		if (mutex_taken)
+			mutex_unlock(&tcp_sk(child)->mpcb->mpcb_mutex);
+		#endif
 		sock_put(child);
 
 		sk_acceptq_removed(sk);

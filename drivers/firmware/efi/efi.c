@@ -23,6 +23,7 @@
 #include <linux/of.h>
 #include <linux/of_fdt.h>
 #include <linux/io.h>
+#include <linux/platform_device.h>
 
 struct efi __read_mostly efi = {
 	.mps        = EFI_INVALID_TABLE_ADDR,
@@ -34,8 +35,33 @@ struct efi __read_mostly efi = {
 	.hcdp       = EFI_INVALID_TABLE_ADDR,
 	.uga        = EFI_INVALID_TABLE_ADDR,
 	.uv_systab  = EFI_INVALID_TABLE_ADDR,
+	.fw_vendor  = EFI_INVALID_TABLE_ADDR,
+	.runtime    = EFI_INVALID_TABLE_ADDR,
+	.config_table  = EFI_INVALID_TABLE_ADDR,
 };
 EXPORT_SYMBOL(efi);
+
+static bool disable_runtime;
+static int __init setup_noefi(char *arg)
+{
+	disable_runtime = true;
+	return 0;
+}
+early_param("noefi", setup_noefi);
+
+bool efi_runtime_disabled(void)
+{
+	return disable_runtime;
+}
+
+static int __init parse_efi_cmdline(char *str)
+{
+	if (parse_option_str(str, "noruntime"))
+		disable_runtime = true;
+
+	return 0;
+}
+early_param("efi", parse_efi_cmdline);
 
 static struct kobject *efi_kobj;
 static struct kobject *efivars_kobj;
@@ -73,13 +99,52 @@ static ssize_t systab_show(struct kobject *kobj,
 static struct kobj_attribute efi_attr_systab =
 			__ATTR(systab, 0400, systab_show, NULL);
 
+#define EFI_FIELD(var) efi.var
+
+#define EFI_ATTR_SHOW(name) \
+static ssize_t name##_show(struct kobject *kobj, \
+				struct kobj_attribute *attr, char *buf) \
+{ \
+	return sprintf(buf, "0x%lx\n", EFI_FIELD(name)); \
+}
+
+EFI_ATTR_SHOW(fw_vendor);
+EFI_ATTR_SHOW(runtime);
+EFI_ATTR_SHOW(config_table);
+
+static struct kobj_attribute efi_attr_fw_vendor = __ATTR_RO(fw_vendor);
+static struct kobj_attribute efi_attr_runtime = __ATTR_RO(runtime);
+static struct kobj_attribute efi_attr_config_table = __ATTR_RO(config_table);
+
 static struct attribute *efi_subsys_attrs[] = {
 	&efi_attr_systab.attr,
-	NULL,	/* maybe more in the future? */
+	&efi_attr_fw_vendor.attr,
+	&efi_attr_runtime.attr,
+	&efi_attr_config_table.attr,
+	NULL,
 };
+
+static umode_t efi_attr_is_visible(struct kobject *kobj,
+				   struct attribute *attr, int n)
+{
+	if (attr == &efi_attr_fw_vendor.attr) {
+		if (efi_enabled(EFI_PARAVIRT) ||
+				efi.fw_vendor == EFI_INVALID_TABLE_ADDR)
+			return 0;
+	} else if (attr == &efi_attr_runtime.attr) {
+		if (efi.runtime == EFI_INVALID_TABLE_ADDR)
+			return 0;
+	} else if (attr == &efi_attr_config_table.attr) {
+		if (efi.config_table == EFI_INVALID_TABLE_ADDR)
+			return 0;
+	}
+
+	return attr->mode;
+}
 
 static struct attribute_group efi_subsys_attr_group = {
 	.attrs = efi_subsys_attrs,
+	.is_visible = efi_attr_is_visible,
 };
 
 static struct efivars generic_efivars;
@@ -129,6 +194,10 @@ static int __init efisubsys_init(void)
 		       error);
 		goto err_unregister;
 	}
+
+	error = efi_runtime_map_init(efi_kobj);
+	if (error)
+		goto err_remove_group;
 
 	/* and the standard mountpoint for efivarfs */
 	efivars_kobj = kobject_create_and_add("efivars", efi_kobj);
@@ -192,7 +261,7 @@ static __initdata efi_config_table_type_t common_tables[] = {
 	{SAL_SYSTEM_TABLE_GUID, "SALsystab", &efi.sal_systab},
 	{SMBIOS_TABLE_GUID, "SMBIOS", &efi.smbios},
 	{UGA_IO_PROTOCOL_GUID, "UGA", &efi.uga},
-	{NULL_GUID, NULL, 0},
+	{NULL_GUID, NULL, NULL},
 };
 
 static __init int match_config_table(efi_guid_t *guid,
@@ -255,7 +324,7 @@ int __init efi_config_init(efi_config_table_type_t *arch_tables)
 			if (table64 >> 32) {
 				pr_cont("\n");
 				pr_err("Table located above 4GB, disabling EFI.\n");
-				early_iounmap(config_tables,
+				early_memunmap(config_tables,
 					       efi.systab->nr_tables * sz);
 				return -EINVAL;
 			}
@@ -271,9 +340,26 @@ int __init efi_config_init(efi_config_table_type_t *arch_tables)
 		tablep += sz;
 	}
 	pr_cont("\n");
-	early_iounmap(config_tables, efi.systab->nr_tables * sz);
+	early_memunmap(config_tables, efi.systab->nr_tables * sz);
+
+	set_bit(EFI_CONFIG_TABLES, &efi.flags);
+
 	return 0;
 }
+
+#ifdef CONFIG_EFI_VARS_MODULE
+static int __init efi_load_efivars(void)
+{
+	struct platform_device *pdev;
+
+	if (!efi_enabled(EFI_RUNTIME_SERVICES))
+		return 0;
+
+	pdev = platform_device_register_simple("efivars", 0, NULL, 0);
+	return IS_ERR(pdev) ? PTR_ERR(pdev) : 0;
+}
+device_initcall(efi_load_efivars);
+#endif
 
 #ifdef CONFIG_EFI_PARAMS_FROM_FDT
 
@@ -300,6 +386,7 @@ static __initdata struct {
 
 struct param_info {
 	int verbose;
+	int found;
 	void *params;
 };
 
@@ -307,25 +394,21 @@ static int __init fdt_find_uefi_params(unsigned long node, const char *uname,
 				       int depth, void *data)
 {
 	struct param_info *info = data;
-	void *prop, *dest;
-	unsigned long len;
+	const void *prop;
+	void *dest;
 	u64 val;
-	int i;
+	int i, len;
 
 	if (depth != 1 ||
 	    (strcmp(uname, "chosen") != 0 && strcmp(uname, "chosen@0") != 0))
 		return 0;
 
-	pr_info("Getting parameters from FDT:\n");
-
 	for (i = 0; i < ARRAY_SIZE(dt_params); i++) {
 		prop = of_get_flat_dt_prop(node, dt_params[i].propname, &len);
-		if (!prop) {
-			pr_err("Can't find %s in device tree!\n",
-			       dt_params[i].name);
+		if (!prop)
 			return 0;
-		}
 		dest = info->params + dt_params[i].offset;
+		info->found++;
 
 		val = of_read_number(prop, len / sizeof(u32));
 
@@ -344,10 +427,78 @@ static int __init fdt_find_uefi_params(unsigned long node, const char *uname,
 int __init efi_get_fdt_params(struct efi_fdt_params *params, int verbose)
 {
 	struct param_info info;
+	int ret;
+
+	pr_info("Getting EFI parameters from FDT:\n");
 
 	info.verbose = verbose;
+	info.found = 0;
 	info.params = params;
 
-	return of_scan_flat_dt(fdt_find_uefi_params, &info);
+	ret = of_scan_flat_dt(fdt_find_uefi_params, &info);
+	if (!info.found)
+		pr_info("UEFI not found.\n");
+	else if (!ret)
+		pr_err("Can't find '%s' in device tree!\n",
+		       dt_params[info.found].name);
+
+	return ret;
 }
 #endif /* CONFIG_EFI_PARAMS_FROM_FDT */
+
+static __initdata char memory_type_name[][20] = {
+	"Reserved",
+	"Loader Code",
+	"Loader Data",
+	"Boot Code",
+	"Boot Data",
+	"Runtime Code",
+	"Runtime Data",
+	"Conventional Memory",
+	"Unusable Memory",
+	"ACPI Reclaim Memory",
+	"ACPI Memory NVS",
+	"Memory Mapped I/O",
+	"MMIO Port Space",
+	"PAL Code"
+};
+
+char * __init efi_md_typeattr_format(char *buf, size_t size,
+				     const efi_memory_desc_t *md)
+{
+	char *pos;
+	int type_len;
+	u64 attr;
+
+	pos = buf;
+	if (md->type >= ARRAY_SIZE(memory_type_name))
+		type_len = snprintf(pos, size, "[type=%u", md->type);
+	else
+		type_len = snprintf(pos, size, "[%-*s",
+				    (int)(sizeof(memory_type_name[0]) - 1),
+				    memory_type_name[md->type]);
+	if (type_len >= size)
+		return buf;
+
+	pos += type_len;
+	size -= type_len;
+
+	attr = md->attribute;
+	if (attr & ~(EFI_MEMORY_UC | EFI_MEMORY_WC | EFI_MEMORY_WT |
+		     EFI_MEMORY_WB | EFI_MEMORY_UCE | EFI_MEMORY_WP |
+		     EFI_MEMORY_RP | EFI_MEMORY_XP | EFI_MEMORY_RUNTIME))
+		snprintf(pos, size, "|attr=0x%016llx]",
+			 (unsigned long long)attr);
+	else
+		snprintf(pos, size, "|%3s|%2s|%2s|%2s|%3s|%2s|%2s|%2s|%2s]",
+			 attr & EFI_MEMORY_RUNTIME ? "RUN" : "",
+			 attr & EFI_MEMORY_XP      ? "XP"  : "",
+			 attr & EFI_MEMORY_RP      ? "RP"  : "",
+			 attr & EFI_MEMORY_WP      ? "WP"  : "",
+			 attr & EFI_MEMORY_UCE     ? "UCE" : "",
+			 attr & EFI_MEMORY_WB      ? "WB"  : "",
+			 attr & EFI_MEMORY_WT      ? "WT"  : "",
+			 attr & EFI_MEMORY_WC      ? "WC"  : "",
+			 attr & EFI_MEMORY_UC      ? "UC"  : "");
+	return buf;
+}

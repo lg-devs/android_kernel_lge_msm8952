@@ -264,7 +264,7 @@ config CPU_ARM1026
 
 # SA110
 config CPU_SA110
-	bool "Support StrongARM(R) SA-110 processor" if ARCH_RPC
+	bool
 	select CPU_32v3 if ARCH_RPC
 	select CPU_32v4 if !ARCH_RPC
 	select CPU_ABRT_EV4
@@ -392,10 +392,20 @@ config CPU_V7
 	select CPU_CACHE_V7
 	select CPU_CACHE_VIPT
 	select CPU_COPY_V6 if MMU
-	select CPU_CP15_MMU
+	select CPU_CP15_MMU if MMU
+	select CPU_CP15_MPU if !MMU
 	select CPU_HAS_ASID if MMU
 	select CPU_PABRT_V7
 	select CPU_TLB_V7 if MMU
+
+# ARMv7M
+config CPU_V7M
+	bool
+	select CPU_32v7M
+	select CPU_ABRT_NOMMU
+	select CPU_CACHE_NOP
+	select CPU_PABRT_LEGACY
+	select CPU_THUMBONLY
 
 config CPU_THUMBONLY
 	bool
@@ -410,29 +420,29 @@ config CPU_32v3
 	bool
 	select CPU_USE_DOMAINS if MMU
 	select NEEDS_SYSCALL_FOR_CMPXCHG if SMP
-	select TLS_REG_EMUL if SMP || !MMU
 	select NEED_KUSER_HELPERS
+	select TLS_REG_EMUL if SMP || !MMU
 
 config CPU_32v4
 	bool
 	select CPU_USE_DOMAINS if MMU
 	select NEEDS_SYSCALL_FOR_CMPXCHG if SMP
-	select TLS_REG_EMUL if SMP || !MMU
 	select NEED_KUSER_HELPERS
+	select TLS_REG_EMUL if SMP || !MMU
 
 config CPU_32v4T
 	bool
 	select CPU_USE_DOMAINS if MMU
 	select NEEDS_SYSCALL_FOR_CMPXCHG if SMP
-	select TLS_REG_EMUL if SMP || !MMU
 	select NEED_KUSER_HELPERS
+	select TLS_REG_EMUL if SMP || !MMU
 
 config CPU_32v5
 	bool
 	select CPU_USE_DOMAINS if MMU
 	select NEEDS_SYSCALL_FOR_CMPXCHG if SMP
-	select TLS_REG_EMUL if SMP || !MMU
 	select NEED_KUSER_HELPERS
+	select TLS_REG_EMUL if SMP || !MMU
 
 config CPU_32v6
 	bool
@@ -442,6 +452,9 @@ config CPU_32v6K
 	bool
 
 config CPU_32v7
+	bool
+
+config CPU_32v7M
 	bool
 
 # The abort model
@@ -492,6 +505,9 @@ config CPU_CACHE_V6
 	bool
 
 config CPU_CACHE_V7
+	bool
+
+config CPU_CACHE_NOP
 	bool
 
 config CPU_CACHE_VIVT
@@ -616,7 +632,11 @@ config ARCH_DMA_ADDR_T_64BIT
 
 config ARM_THUMB
 	bool "Support Thumb user binaries" if !CPU_THUMBONLY
-	depends on CPU_ARM720T || CPU_ARM740T || CPU_ARM920T || CPU_ARM922T || CPU_ARM925T || CPU_ARM926T || CPU_ARM940T || CPU_ARM946E || CPU_ARM1020 || CPU_ARM1020E || CPU_ARM1022 || CPU_ARM1026 || CPU_XSCALE || CPU_XSC3 || CPU_MOHAWK || CPU_V6 || CPU_V6K || CPU_V7 || CPU_FEROCEON
+	depends on CPU_ARM720T || CPU_ARM740T || CPU_ARM920T || CPU_ARM922T || \
+		CPU_ARM925T || CPU_ARM926T || CPU_ARM940T || CPU_ARM946E || \
+		CPU_ARM1020 || CPU_ARM1020E || CPU_ARM1022 || CPU_ARM1026 || \
+		CPU_XSCALE || CPU_XSC3 || CPU_MOHAWK || CPU_V6 || CPU_V6K || \
+		CPU_V7 || CPU_FEROCEON || CPU_V7M
 	default y
 	help
 	  Say Y if you want to include kernel support for running user space
@@ -649,7 +669,7 @@ config ARM_VIRT_EXT
 	  details.
 
 config SWP_EMULATE
-	bool "Emulate SWP/SWPB instructions"
+	bool "Emulate SWP/SWPB instructions" if !SMP
 	depends on CPU_V7
 	default y if SMP
 	select HAVE_PROC_CPU if PROC_FS
@@ -672,21 +692,6 @@ config SWP_EMULATE
 	  monitor to maintain update atomicity. If your system does not
 	  implement a global monitor, this option can cause programs that
 	  perform SWP operations to uncached memory to deadlock.
-
-	  If unsure, say Y.
-
-config FORCE_INSTRUCTION_ALIGNMENT
-	bool "Force instructions address alignment"
-	depends on CPU_V7 && ALIGNMENT_TRAP
-	help
-	  Branching to an address in ARM state which is not word aligned,
-	  where this is defined to be UNPREDICTABLE, can cause one of the
-	  following two behaviours: 1. The unaligned location is forced to
-	  be aligned. 2. Using the unaligned address generates a Prefetch
-	  Abort on the first instruction using the unaligned PC value.
-
-	  To be consistant for the user space binaries, the unaligned location
-	  is forced aligned with this config.
 
 	  If unsure, say Y.
 
@@ -850,7 +855,7 @@ config OUTER_CACHE_SYNC
 
 config CACHE_FEROCEON_L2
 	bool "Enable the Feroceon L2 cache controller"
-	depends on ARCH_KIRKWOOD || ARCH_MV78XX0
+	depends on ARCH_MV78XX0 || ARCH_MVEBU
 	default y
 	select OUTER_CACHE
 	help
@@ -885,13 +890,64 @@ config CACHE_L2X0
 	help
 	  This option enables the L2x0 PrimeCell.
 
+if CACHE_L2X0
+
 config CACHE_PL310
 	bool
-	depends on CACHE_L2X0
 	default y if CPU_V7 && !(CPU_V6 || CPU_V6K)
 	help
 	  This option enables optimisations for the PL310 cache
 	  controller.
+
+config PL310_ERRATA_588369
+	bool "PL310 errata: Clean & Invalidate maintenance operations do not invalidate clean lines"
+	help
+	   The PL310 L2 cache controller implements three types of Clean &
+	   Invalidate maintenance operations: by Physical Address
+	   (offset 0x7F0), by Index/Way (0x7F8) and by Way (0x7FC).
+	   They are architecturally defined to behave as the execution of a
+	   clean operation followed immediately by an invalidate operation,
+	   both performing to the same memory location. This functionality
+	   is not correctly implemented in PL310 prior to r2p0 (fixed in r2p0)
+	   as clean lines are not invalidated as a result of these operations.
+
+config PL310_ERRATA_727915
+	bool "PL310 errata: Background Clean & Invalidate by Way operation can cause data corruption"
+	help
+	  PL310 implements the Clean & Invalidate by Way L2 cache maintenance
+	  operation (offset 0x7FC). This operation runs in background so that
+	  PL310 can handle normal accesses while it is in progress. Under very
+	  rare circumstances, due to this erratum, write data can be lost when
+	  PL310 treats a cacheable write transaction during a Clean &
+	  Invalidate by Way operation.  Revisions prior to r3p1 are affected by
+	  this errata (fixed in r3p1).
+
+config PL310_ERRATA_753970
+	bool "PL310 errata: cache sync operation may be faulty"
+	help
+	  This option enables the workaround for the 753970 PL310 (r3p0) erratum.
+
+	  Under some condition the effect of cache sync operation on
+	  the store buffer still remains when the operation completes.
+	  This means that the store buffer is always asked to drain and
+	  this prevents it from merging any further writes. The workaround
+	  is to replace the normal offset of cache sync operation (0x730)
+	  by another offset targeting an unmapped PL310 register 0x740.
+	  This has the same effect as the cache sync operation: store buffer
+	  drain and waiting for all buffers empty.
+
+config PL310_ERRATA_769419
+	bool "PL310 errata: no automatic Store Buffer drain"
+	help
+	  On revisions of the PL310 prior to r3p2, the Store Buffer does
+	  not automatically drain. This can cause normal, non-cacheable
+	  writes to be retained when the memory system is idle, leading
+	  to suboptimal I/O performance for drivers using coherent DMA.
+	  This option adds a write barrier to the cpu_idle loop so that,
+	  on systems with an outer cache, the store buffer is drained
+	  explicitly.
+
+endif
 
 config CACHE_TAUROS2
 	bool "Enable the Tauros2 L2 cache controller"
@@ -948,14 +1004,29 @@ config ARCH_HAS_BARRIERS
 	  This option allows the use of custom mandatory barriers
 	  included via the mach/barriers.h file.
 
-config STRICT_MEMORY_RWX
-	bool "restrict kernel memory permissions as much as possible"
-	default n
+config ARCH_SUPPORTS_BIG_ENDIAN
+	bool
 	help
-	  If this is set, kernel text will be made RX, kernel data and stack
-	  RW, rodata R (otherwise all of the kernel 1-to-1 mapping is
-	  made RWX).
-	  The tradeoff is that several sections are padded to
-	  1M boundaries (because their permissions are different and
-	  splitting the 1M pages into 4K ones causes TLB performance
-	  problems), wasting memory.
+	  This option specifies the architecture can support big endian
+	  operation.
+
+config ARM_KERNMEM_PERMS
+	bool "Restrict kernel memory permissions"
+	help
+	  If this is set, kernel memory other than kernel text (and rodata)
+	  will be made non-executable. The tradeoff is that each region is
+	  padded to section-size (1MiB) boundaries (because their permissions
+	  are different and splitting the 1M pages into 4K ones causes TLB
+	  performance problems), wasting memory.
+
+config DEBUG_RODATA
+	bool "Make kernel text and rodata read-only"
+	depends on ARM_KERNMEM_PERMS
+	default y
+	help
+	  If this is set, kernel text and rodata will be made read-only. This
+	  is to help catch accidental or malicious attempts to change the
+	  kernel's executable code. Additionally splits rodata from kernel
+	  text so it can be made explicitly non-executable. This creates
+	  another section-size padded region, so it can waste more memory
+	  space while gaining the read-only protections.
