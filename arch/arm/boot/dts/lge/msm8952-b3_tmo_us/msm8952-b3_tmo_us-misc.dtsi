@@ -1,0 +1,58 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&soc {
+	gpio_keys {
+		compatible = "gpio-keys";
+		input-name = "gpio-keys";
+		pinctrl-names = "tlmm_gpio_key_active","tlmm_gpio_key_suspend";
+		pinctrl-0 = <&gpio_key_active>;
+		pinctrl-1 = <&gpio_key_suspend>;
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&pm8950_gpios 5 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+
+		hot_key {
+			label = "hot_key";
+			gpios = <&msm_gpio 13 0x1>;
+			linux,input-type = <1>;
+			linux,code = <377>;
+			gpio-key,wakeup;
+			debounce-interval = <160>;
+		};
+
+		hall_ic {
+			label = "hall_ic";
+			gpios = <&msm_gpio 46 0x1>;
+			linux,input-type = <5>;
+			linux,code = <0>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+	};
+	spi_6: spi@7af6000 {
+		sdc-spi-ir@0 {
+			lge,ext-ldo-ctrl = <1>;
+			lge,gpio-ldo-ctrl = <&msm_gpio 61 0>;
+			pinctrl-names = "irrc_default", "irrc_sleep";
+			pinctrl-0 = <&irrc_default>;
+			pinctrl-1 = <&irrc_sleep>;
+		};
+	};
+};

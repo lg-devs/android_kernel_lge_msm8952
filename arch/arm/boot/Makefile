@@ -37,7 +37,11 @@ DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
 else
 DTB_LIST := $(dtb-y)
 endif
+ifeq ($(CONFIG_MACH_LGE),y)
+DTB_OBJS := $(addprefix $(obj)/dts/lge/,$(DTB_LIST))
+else
 DTB_OBJS := $(addprefix $(obj)/dts/qcom/,$(DTB_LIST))
+endif
 
 ifeq ($(CONFIG_XIP_KERNEL),y)
 

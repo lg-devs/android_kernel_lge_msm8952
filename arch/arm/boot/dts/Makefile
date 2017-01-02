@@ -519,6 +519,7 @@ dtb-$(CONFIG_ARCH_MEDIATEK) += mt6589-aquaris5.dtb
 
 #used for cleaning - not building
 subdir- := qcom
+subdir- += lge
 endif
 
 dtbs: $(addprefix $(obj)/, $(DTB_LIST))
