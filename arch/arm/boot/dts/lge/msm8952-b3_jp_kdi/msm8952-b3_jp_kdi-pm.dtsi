@@ -1,0 +1,411 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&spmi_bus {
+	pm8950_1: qcom,pm8950@1 {
+		pm8950_pwm: pwm@bc00 {
+			status = "disabled";
+		};
+	};
+
+	qcom,pm8950@0 {
+		qcom,power-on@800 {
+			qcom,pon_1 {
+				qcom,s1-timer = <10256>;
+				qcom,s2-timer = <2000>;
+				qcom,s2-type = <4>;
+				qcom,support-reset = <0>;
+			};
+			qcom,pon_3 {
+				qcom,pon-type = <3>;
+				qcom,support-reset = <1>;
+				qcom,pull-up = <1>;
+				qcom,s1-timer = <6720>;
+				qcom,s2-timer = <2000>;
+				qcom,s2-type = <7>;
+				qcom,use-bark;
+			};
+		};
+	};
+};
+
+&soc {
+	lge,battery-id {
+		compatible = "lge,battery-id";
+		lge,restrict-mode-enabled;
+	};
+};
+
+/{
+	lge_batterydata: qcom,battery-data {
+		qcom,batt-id-range-pct = <15>;
+		#include "../LGE_BLT20_LGC_4800mAh.dtsi"
+	};
+};
+
+&pmi8950_fg {
+	qcom,battery-data = <&lge_batterydata>;
+	qcom,thermal-coefficients = [D2 85 0E 4A A5 35];
+	qcom,fg-chg-iterm-ma = <250>;
+	qcom,fg-iterm-ma = <300>;
+	qcom,ext-sense-type;
+	qcom,resume-soc = <99>;
+	qcom,vbat-estimate-diff-mv = <200>;
+	qcom,fg-cutoff-voltage-mv = <3400>;
+	qcom,fg-control-slope-limiter;
+	qcom,fg-slope-limit-high-temp-chg = <2>;
+	qcom,fg-slope-limit-high-temp-dischg = <2>;
+	qcom,fg-slope-limit-low-temp-chg = <14>;
+	qcom,fg-slope-limit-low-temp-dischg = <14>;
+};
+
+&pmi8950_charger {
+	spmi-dev-container;
+	compatible = "qcom,qpnp-smbcharger";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	/*lge,jeita-disabled;*/
+	/*lge,aicl-en = <1>;*/
+	/*qcom,dc-psy-type;*/
+
+	qcom,iterm-ma = <300>;
+	qcom,fastchg-current-ma = <1200>;
+	qcom,float-voltage-mv = <4350>;
+	qcom,resume-delta-mv = <200>;
+	qcom,chg-inhibit-fg;
+	qcom,rparasitic-uohm = <100000>;
+	qcom,bms-psy-name = "bms";
+	qcom,bmd-pin-src = "bpd_none";
+	qcom,battery-data = <&lge_batterydata>;
+	qcom,pm-vadc = <&pm8950_vadc>;
+	qcom,charging-timeout-mins = <768>;
+	qcom,thermal-mitigation = <1800 1600 1500 1450 1400 1200 1100 1000 950 900 700 650 600>;
+
+	/* ref resistance 200K */
+	lge,no-init-cable = <0 0 0>;
+	lge,cable-mhl-1k = <5000 500 500>;
+	lge,cable-u-28p7k = <10000 1500 500>;
+	lge,cable-28p7k = <250000 1500 500>;
+	lge,cable-56k = <600000 2000 2000>;
+	lge,cable-100k = <620000 1500 500>;
+	lge,cable-130k = <780000 1500 1500>;
+	lge,cable-180k = <870000 1500 500>;
+	lge,cable-200k = <910000 1500 500>;
+	lge,cable-220k = <960000 1500 500>;
+	lge,cable-270k = <1050000 1500 500>;
+	lge,cable-330k = <1150000 1500 500>;
+	lge,cable-620k = <1380000 1500 500>;
+	lge,cable-910k = <1630000 2000 2000>;
+	lge,cable-none = <1900000 1500  500>;
+
+};
+
+&spmi_bus {
+	qcom,pmi8950@3 {
+		qcom,leds@d800 {
+			qcom,ibb-pwrup-dly = <1>;
+			//qcom,fs-curr-ua = <17500>;
+			qcom,fs-curr-ua = <19000>;
+			qcom,led-strings-list = [00 01 02 03];
+			//qcom,max-current = <20>;
+			//qcom,en-cabc;
+			lge,blmap_size = <256>;
+			lge,dev_blmap = <
+				0 40 40 40 40 40 40 40 40 40                        /* 0 ~ 9 */
+				40 54 59 64 66 68 70 72 74 76                       /* 10 ~ 19 */
+				78 80 82 84 86 88 90 92 94 96                       /* 20 ~ 29 */
+				98 100 102 104 106 108 110 112 114 116              /* 30 ~ 39 */
+				118 120 122 124 126 128 130 132 134 136             /* 40 ~ 49 */
+				138 140 142 144 146 148 150 152 154 156             /* 50 ~ 59 */
+				158 159 166 173 180 187 194 201 208 215             /* 60 ~ 69 */
+				222 228 233 240 247 254 261 269 277 285             /* 70 ~ 79 */
+				293 301 309 317 325 334 343 352 361 370             /* 80 ~ 89 */
+				379 388 397 406 416 426 436 437 438 451             /* 90 ~ 99 */
+				464 477 490 503 516 529 542 556 570 571             /* 100 ~ 109 */
+				583 595 608 621 634 647 660 673 686 699             /* 110 ~ 119 */
+				712 725 726 742 758 774 790 806 822 838             /* 120 ~ 129 */
+				854 870 886 902 903 918 933 948 963 978             /* 130 ~ 139 */
+				993 1008 1023 1038 1053 1068 1084 1100 1122 1144    /* 140 ~ 149 */
+				1166 1189 1212 1235 1258 1281 1304 1327 1328 1329   /* 150 ~ 159 */
+				1351 1373 1396 1419 1442 1465 1470 1475 1510 1545   /* 160 ~ 169 */
+				1580 1581 1606 1631 1656 1681 1706 1731 1756 1782   /* 170 ~ 179 */
+				1808 1834 1860 1861 1888 1915 1942 1969 1996 2023   /* 180 ~ 189 */
+				2050 2077 2104 2132 2160 2161 2192 2223 2254 2285   /* 190 ~ 199 */
+				2315 2345 2375 2405 2435 2465 2495 2523 2551 2579   /* 200 ~ 209 */
+				2607 2635 2663 2691 2719 2747 2775 2803 2831 2860   /* 210 ~ 219 */
+				2861 2895 2929 2963 2997 3031 3065 3100 3135 3170   /* 220 ~ 229 */
+				3205 3240 3241 3278 3315 3352 3389 3427 3465 3503   /* 230 ~ 239 */
+				3541 3579 3617 3655 3691 3727 3763 3799 3836 3873   /* 240 ~ 249 */
+				3910 3947 3984 4021 4058 4095>;                     /* 250 ~ 255 */
+			lge,dev_blmap_no_batt = <
+				0 40 40 40 40 40 40 40 40 40                        /* 0 ~ 9 */
+				40 40 40 40 40 40 40 40 40 40                       /* 10 ~ 19 */
+				40 40 40 40 40 40 40 40 40 40                       /* 20 ~ 29 */
+				40 40 40 40 40 40 40 40 40 40                       /* 30 ~ 39 */
+				40 40 40 40 40 40 40 40 40 40                       /* 40 ~ 49 */
+				40 40 40 40 40 40 40 40 40 40                       /* 50 ~ 59 */
+				40 40 40 40 40 40 40 40 40 40                       /* 60 ~ 69 */
+				40 40 40 40 40 40 40 40 40 40                       /* 70 ~ 79 */
+				40 40 40 40 40 40 40 40 40 40                       /* 80 ~ 89 */
+				40 40 40 40 40 40 40 40 40 40                       /* 90 ~ 99 */
+				40 40 40 40 40 40 40 40 40 40                       /* 100 ~ 109 */
+				40 40 40 40 40 40 40 40 40 40                       /* 110 ~ 119 */
+				40 40 40 40 40 40 40 40 40 40                       /* 120 ~ 129 */
+				40 40 40 40 40 40 40 40 40 40                       /* 130 ~ 139 */
+				40 40 40 40 40 40 40 40 40 40                       /* 140 ~ 149 */
+				40 40 40 40 40 40 40 40 40 40                       /* 150 ~ 159 */
+				40 40 40 40 40 40 40 40 40 40                       /* 160 ~ 169 */
+				40 40 40 40 40 40 40 40 40 40                       /* 170 ~ 179 */
+				40 40 40 40 40 40 40 40 40 40                       /* 180 ~ 189 */
+				40 40 40 40 40 40 40 40 40 40                       /* 190 ~ 199 */
+				40 40 40 40 40 40 40 40 40 40                       /* 200 ~ 209 */
+				40 40 40 40 40 40 40 40 40 40                       /* 210 ~ 219 */
+				40 40 40 40 40 40 40 40 40 40                       /* 220 ~ 229 */
+				40 40 40 40 40 40 40 40 40 40                       /* 230 ~ 239 */
+				40 40 40 40 40 40 40 40 40 40                       /* 240 ~ 249 */
+				40 40 40 40 40 40 40 40 40 40>;                     /* 250 ~ 255 */
+		};
+
+		qcom,haptic@c000 {
+			status = "ok";
+			compatible = "qcom,qpnp-haptic";
+			reg = <0xc000 0x100>;
+			interrupts = <0x3 0xc0 0x0>,
+					<0x3 0xc0 0x1>;
+			interrupt-names = "sc-irq", "play-irq";
+			qcom,play-mode = "direct";
+			qcom,wave-play-rate-us = <5263>;
+			qcom,actuator-type = "erm";
+			qcom,wave-shape = "square";
+			qcom,vmax-mv = <2900>;
+			qcom,ilim-ma = <800>;
+			qcom,sc-deb-cycles = <8>;
+			qcom,int-pwm-freq-khz = <505>;
+			qcom,en-brake;
+			qcom,brake-pattern = [03 03 00 00];
+			qcom,use-play-irq;
+			qcom,use-sc-irq;
+			qcom,wave-samples = [3e 3e 3e 3e 3e 3e 3e 3e];
+			qcom,wave-rep-cnt = <1>;
+			qcom,wave-samp-rep-cnt = <1>;
+		};
+	};
+};
+
+
+&pmi8950_vadc {
+	chan@10 {
+		label = "mpp1_usb_id";
+		reg = <0x10>;
+		qcom,decimation = <0>;
+		qcom,pre-div-channel-scaling = <0>;
+		qcom,calibration-type = "ratiometric";
+		qcom,scale-function = <0>;
+		qcom,hw-settle-time = <2>;
+		qcom,fast-avg-setup = <3>;
+	};
+};
+
+&pmi8950_mpps {
+	mpp@a000 {
+		reg = <0xa000 0x100>;
+		qcom,pin-num = <1>;
+		status = "okay";
+		qcom,vin-sel = <2>;
+		qcom,mode = <4>; /* AIN input */
+		qcom,invert = <1>; /* Enable MPP */
+		qcom,ain-route = <0>; /* AMUX 5 */
+		qcom,master-en = <1>;
+		qcom,src-sel = <0>; /* Function constant */
+	};
+};
+
+&pm8950_gpios {
+	gpio@c300 { /* GPIO 4 */
+		reg = <0xc300 0x100>;
+		qcom,pin-num = <0x4>;
+		status = "ok";
+		qcom,mode = <0x0>;
+		qcom,pull = <0x0>;
+		qcom,vin-sel = <0x2>;
+		qcom,src-sel = <0x0>;
+	};
+
+	gpio@c400 { /* GPIO 5 */
+		reg = <0xc400 0x100>;
+		qcom,pin-num = <0x5>;
+		status = "ok";
+		qcom,mode = <0x0>;
+		qcom,pull = <0x0>;
+		qcom,vin-sel = <0x2>;
+		qcom,src-sel = <0x0>;
+	};
+};
+
+&soc{
+	qcom,msm-thermal {
+		qcom,hotplug-temp = <105>;
+		qcom,hotplug-temp-hysteresis = <15>;
+		qcom,freq-mitigation-temp = <105>;
+		qcom,freq-mitigation-temp-hysteresis = <10>;
+		qcom,freq-control-list = <&CPU0 &CPU1 &CPU2 &CPU3>;
+		qcom,core-control-list = <&CPU0 &CPU1 &CPU2 &CPU3>;
+		qcom,freq-mitigation-control-list = <&CPU0 &CPU1 &CPU2 &CPU3>;
+		qcom,freq-mitigation-value = <800000>;
+		qcom,limit-temp = <90>;
+		qcom,freq-step = <1>;
+		qcom,core-limit-temp = <100>;
+	};
+
+};
+
+&soc {
+
+	lge,cable_detect {
+		statuc = "ok";
+		compatible = "lge,cable-detect";
+		qcom,lge_cable_detect-vadc = <&pmi8950_vadc>;
+
+		lge,usb_id_chan = <0x10>;
+		lge,usb_max_mode_current = <900>;
+
+		lge,no-init-cable = <0 0 0 0 0 0 >;
+		lge,cable-mhl-1k = <1 5000 500 500 500 500>;
+		lge,cable-u-28p7k = <5001 10000 1700 500 1500 1800>;
+		lge,cable-28p7k = <10001 250000 1700 500 1500 1800>;
+		lge,cable-56k = <250001 600000 2000 2000 500 500>;
+		lge,cable-100k = <600001 620000 1700 500 1500 1800>;
+		lge,cable-130k = <620001 780000 1500 1500 500 500>;
+		lge,cable-180k = <780001 870000 1700 500 1500 1800>;
+		lge,cable-200k = <870001 910000 1700 500 1500 1800>;
+		lge,cable-220k = <910001 960000 1700 500 1500 1800>;
+		lge,cable-270k = <960001 1050000 1700 500 1500 1800>;
+		lge,cable-330k = <1050001 1150000 1700 500 1500 1800>;
+		lge,cable-620k = <1150001 1380000 1700 500 1500 1800>;
+		lge,cable-910k = <1380001 1630000 2000 2000 500 500>;
+		lge,cable-none = <1630001 1900000 1700 500 1500 2000>;
+	};
+
+	lge,adc_qct {
+		compatible = "lge,adc_qct";
+		lge,xo_therm_chan = <0x32>;
+		lge,pa_therm_chan = <0x36>;
+		lge,batt_therm_chan = <0xff>;
+		lge,usb_id_chan = <0x10>;
+		qcom,lge_adc_qct-vadc = <&pmi8950_vadc>;
+	};
+
+	lge,charging_controller {
+		compatible = "lge,charging_controller";
+	};
+
+	lge,battery_id_check {
+		compatible = "lge,batt_id";
+		lge,pack_name = "BLT20";
+		lge,batt_capacity = "4800";
+	};
+
+	lge,dock {
+		compatible = "lge,dock";
+	};
+
+	lge,uevent {
+		compatible = "lge,uevent";
+	};
+
+	lge,hw_rev {
+		compatible = "lge,hw_rev";
+	};
+
+	lge,vzw {
+		compatible = "lge,vzw";
+		lge,under_chg_current = <400>;
+	};
+
+	lge,store_mode {
+		compatible = "lge,store_mode";
+		lge,llk_max = <35>;
+		lge,llk_min = <30>;
+	};
+};
+&soc {
+	lge,power-sysfs {
+		compatible = "lge,power-sysfs";
+
+		sysfs,node =
+			/* group , user_node,  kernel node */
+			/* ADC/MPP */
+			"adc", "thermal", "/sys/class/thermal/",
+			"adc", "xo_therm", "/sys/class/hwmon/hwmon1/device/xo_therm",
+			"adc", "batt_therm", "/sys/class/power_supply/battery/temp",
+			"adc", "batt_id", "/sys/class/power_supply/battery/valid_batt_id",
+			"adc", "pa_therm0", "/sys/class/hwmon/hwmon1/device/pa_therm0",
+			"adc", "pa_therm1", "/sys/class/hwmon/hwmon1/device/pa_therm1",
+			"adc", "usb_in", "/sys/class/hwmon/hwmon6/device/usbin",
+			"adc", "vcoin", "/sys/class/hwmon/hwmon1/device/vcoin",
+			"adc", "vph_pwr", "/sys/class/hwmon/hwmon1/device/vph_pwr",
+			"adc", "usb_id", "/sys/class/hwmon/hwmon6/device/mpp1_usb_id",
+			/* Battery */
+			"battery", "capacity", "/sys/class/power_supply/battery/capacity",
+			"battery", "health", "/sys/class/power_supply/battery/health",
+			"battery", "present", "/sys/class/power_supply/battery/present",
+			"battery", "pseudo_batt", "/sys/class/power_supply/battery/pseudo_batt",
+			"battery", "status", "/sys/class/power_supply/battery/status",
+			"battery", "temp", "/sys/class/power_supply/battery/temp",
+			"battery", "valid_batt_id", "/sys/class/power_supply/battery/valid_batt_id",
+			"battery", "voltage_now", "/sys/class/power_supply/battery/voltage_now",
+			/* Charger */
+			"charger", "ac_online", "NULL",
+			"charger", "usb_online", "/sys/class/power_supply/usb/online",
+			"charger", "present", "/sys/class/power_supply/usb/present",
+			"charger", "wlc_online", "NULL",
+			"charger", "type", "/sys/class/power_supply/usb/type",
+			"charger", "time_out", "NULL",
+			"charger", "charging_enabled", "/sys/class/power_supply/battery/charging_enabled",
+			"charger", "ibat_current", "/sys/class/power_supply/battery/current_now",
+			"charger", "ichg_current", "/sys/class/power_supply/usb/current_max",
+			"charger", "iusb_control", "NULL",
+			"charger", "thermal_mitigation", "/sys/module/lge_power_class_charging_controller/parameters/lgcc_thermal_mitigation",
+			"charger", "quick_thermal_mitigation", "/sys/module/lge_power_class_charging_controller/parameters/lgcc_hvdcp_thermal_mitigation",
+			"charger", "wlc_thermal_mitigation", "NULL",
+			"charger", "usb_parallel_chg_status", "NULL",
+			"charger", "usb_parallel_charging_enabled", "NULL",
+			/* LCD Backlight */
+			"lcd", "brightness", "/sys/class/leds/lcd-backlight/brightness",
+			"lcd", "max_brightness", "/sys/class/leds/lcd-backlight/max_brightness",
+			/* KEY LED */
+			"key_led", "red_brightness", "/sys/class/leds/red/brightness",
+			"key_led", "green_brightness", "/sys/class/leds/green/brightness",
+			"key_led", "blue_brightness", "/sys/class/leds/blue/brightness",
+			/* CPU */
+			"cpu", "cpu_idle_modes", "NULL",
+			/* GPU */
+			"gpu", "busy", "/sys/class/kgsl/kgsl-3d0/gpubusy",
+			/* PLATFORM */
+			"platform", "speed_bin", "NULL",
+			"platform", "pvs_bin", "NULL",
+			"platform", "power_state", "/sys/power/autosleep",
+			"platform", "poweron_alarm", "/sys/module/qpnp_rtc/parameters/poweron_alarm",
+			"platform", "pcb_rev", "/sys/class/hwmon/hwmon0/device/pcb_rev",
+			/* testmode */
+			"testmode", "charge", "/sys/class/power_supply/battery/charging_enabled",
+			"testmode", "chcomp", "/sys/class/power_supply/battery/device/at_chcomp",
+			"testmode", "chgmodeoff", "/sys/class/power_supply/battery/charging_enabled",
+			"testmode", "fuelrst", "NULL",
+			"testmode", "rtc_time", "/dev/rtc0",
+			"testmode", "pmrst", "NULL",
+			"testmode", "battexit", "/sys/class/power_supply/battery/present"
+			;
+	};
+};
