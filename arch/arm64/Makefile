@@ -59,6 +59,12 @@ endif
 
 KBUILD_DTBS	:= dtbs
 
+ifeq ($(CONFIG_MACH_LGE),y)
+DTSSUBDIR := lge
+else
+DTSSUBDIR := qcom
+endif
+
 all:	$(KBUILD_IMAGE) $(KBUILD_DTBS)
 
 boot := arch/arm64/boot
@@ -74,8 +80,7 @@ zinstall install: vmlinux
 
 dtbs: scripts
 	$(Q)$(MAKE) $(build)=$(boot)/dts dtbs
-	$(Q)$(MAKE) $(build)=$(boot)/dts/qcom dtbs
-	$(Q)$(MAKE) $(build)=$(boot)/dts/lge dtbs
+	$(foreach DIR, $(DTSSUBDIR), $(Q)$(MAKE) $(build)=$(boot)/dts/$(DIR) dtbs)
 
 PHONY += vdso_install
 vdso_install:
