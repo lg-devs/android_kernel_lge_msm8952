@@ -1049,7 +1049,7 @@ static void deconfigure_qcrypto(void)
 	fde_eng = NULL;
 	mutex_unlock(&engine_list_mutex);
 
-	if (tfm) {
+	if (tfm && !IS_ERR(tfm)) {
 		crypto_free_ablkcipher(tfm);
 		tfm = NULL;
 	}

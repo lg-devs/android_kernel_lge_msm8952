@@ -3983,6 +3983,17 @@ int sdhci_add_host(struct sdhci_host *host)
 			host->caps1 :
 			sdhci_readl(host, SDHCI_CAPABILITIES_1);
 
+#ifdef CONFIG_LGE_MMC_SD_USE_SDCC3
+	/* LGE_CHANGE
+	 * If SDcard use SDCC3 which doesn't support dual-voltage(3V, 1.8V),
+	 * proper handling is needed just like below.
+	 * 2014-01-02, B2-BSP-FS@lge.com
+	 */
+	if (strcmp(host->hw_name, "msm_sdcc.3") == 0) {
+		caps[0] |= (SDHCI_CAN_VDD_330 | SDHCI_CAN_VDD_300 | SDHCI_CAN_VDD_180);
+	}
+#endif
+
 	if (host->quirks & SDHCI_QUIRK_FORCE_DMA)
 		host->flags |= SDHCI_USE_SDMA;
 	else if (!(caps[0] & SDHCI_CAN_DO_SDMA))

@@ -2119,9 +2119,13 @@ unsigned int snd_soc_read(struct snd_soc_codec *codec, unsigned int reg)
 {
 	unsigned int ret;
 
-	ret = codec->read(codec, reg);
-	dev_dbg(codec->dev, "read %x => %x\n", reg, ret);
-	trace_snd_soc_reg_read(codec, reg, ret);
+        if (codec->read) {
+		ret = codec->read(codec, reg);
+		dev_dbg(codec->dev, "read %x => %x\n", reg, ret);
+		trace_snd_soc_reg_read(codec, reg, ret);
+        }
+        else
+		ret = -EIO;
 
 	return ret;
 }
@@ -2130,9 +2134,13 @@ EXPORT_SYMBOL_GPL(snd_soc_read);
 unsigned int snd_soc_write(struct snd_soc_codec *codec,
 			   unsigned int reg, unsigned int val)
 {
-	dev_dbg(codec->dev, "write %x = %x\n", reg, val);
-	trace_snd_soc_reg_write(codec, reg, val);
-	return codec->write(codec, reg, val);
+	if (codec->write) {
+		dev_dbg(codec->dev, "write %x = %x\n", reg, val);
+		trace_snd_soc_reg_write(codec, reg, val);
+		return codec->write(codec, reg, val);
+        }
+	else
+		return -EIO;
 }
 EXPORT_SYMBOL_GPL(snd_soc_write);
 
@@ -2793,6 +2801,34 @@ int snd_soc_get_volsw_sx(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_soc_get_volsw_sx);
+
+#ifdef CONFIG_MACH_LGE
+int snd_soc_get_volsw_sx_for_s8(struct snd_kcontrol *kcontrol,
+                      struct snd_ctl_elem_value *ucontrol)
+{
+        struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+        struct soc_mixer_control *mc =
+            (struct soc_mixer_control *)kcontrol->private_value;
+
+        unsigned int reg = mc->reg;
+        unsigned int reg2 = mc->rreg;
+        unsigned int shift = mc->shift;
+        unsigned int rshift = mc->rshift;
+        int max = mc->max;
+        int min = mc->min;
+        int mask = (1 << (fls(min + max) - 1)) - 1;
+
+        ucontrol->value.integer.value[0] =
+            (((signed char)(snd_soc_read(codec, reg)) >> shift) - min) & mask;
+
+        if (snd_soc_volsw_is_stereo(mc))
+                ucontrol->value.integer.value[1] =
+                        (((signed char)(snd_soc_read(codec, reg2)) >> rshift) - min) & mask;
+
+        return 0;
+}
+EXPORT_SYMBOL_GPL(snd_soc_get_volsw_sx_for_s8);
+#endif
 
 /**
  * snd_soc_put_volsw_sx - double mixer set callback

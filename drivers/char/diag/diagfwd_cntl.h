@@ -46,6 +46,9 @@
 #define DIAG_CTRL_MSG_DCI_HANDSHAKE_PKT		29
 #define DIAG_CTRL_MSG_PD_STATUS			30
 #define DIAG_CTRL_MSG_TIME_SYNC_PKT		31
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
+#define DIAG_CTRL_MSG_LGE_DIAG_ENABLE 100
+#endif
 
 /*
  * Feature Mask Definitions: Feature mask is used to sepcify Diag features
@@ -261,6 +264,7 @@ struct diag_ctrl_set_wq_val {
 } __packed;
 
 int diagfwd_cntl_init(void);
+void diagfwd_cntl_channel_init(void);
 void diagfwd_cntl_exit(void);
 void diag_cntl_channel_open(struct diagfwd_info *p_info);
 void diag_cntl_channel_close(struct diagfwd_info *p_info);

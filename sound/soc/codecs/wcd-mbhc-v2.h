@@ -15,6 +15,10 @@
 #include <linux/wait.h>
 #include <linux/stringify.h>
 #include "wcdcal-hwdep.h"
+#ifndef CONFIG_AUDIO_NO_LGE_HSD
+#include <linux/switch.h>
+#endif
+
 
 #define TOMBAK_MBHC_NC	0
 #define TOMBAK_MBHC_NO	1
@@ -421,6 +425,10 @@ struct wcd_mbhc {
 	/* Work to correct accessory type */
 	struct work_struct correct_plug_swch;
 	struct notifier_block nblock;
+#ifndef CONFIG_AUDIO_NO_LGE_HSD
+	struct switch_dev sdev;
+	int aux_inserted;
+#endif
 
 	struct wcd_mbhc_register *wcd_mbhc_regs;
 

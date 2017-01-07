@@ -1051,7 +1051,11 @@ retry:
 			sts_cmd.opcode = MMC_SEND_STATUS;
 			sts_cmd.arg = card->rca << 16;
 			sts_cmd.flags = MMC_RSP_R1 | MMC_CMD_AC;
+		#ifdef CONFIG_MACH_LGE
+			sts_retry = 100;
+		#else
 			sts_retry = 5;
+		#endif
 			while (sts_retry) {
 				mmc_wait_for_cmd(mmc, &sts_cmd, 0);
 
@@ -2557,6 +2561,24 @@ static void sdhci_msm_check_power_status(struct sdhci_host *host, u32 req_type)
 	bool done = false;
 	u32 io_sig_sts;
 
+#ifdef CONFIG_LGE_MMC_SD_USE_SDCC3
+	/* LGE_CHANGE
+	 * Handle I/O voltage switch here if this request is for SDC3.
+	 * 2014-01-23, B2-BSP-FS@lge.com
+	 */
+	if (strcmp(host->hw_name, "msm_sdcc.3") == 0) {
+		if (req_type == REQ_IO_HIGH) {
+			/* Switch voltage High */
+			sdhci_msm_set_vdd_io_vol(msm_host->pdata, VDD_IO_HIGH, 0);
+			msm_host->curr_io_level = REQ_IO_HIGH;
+		} else if (req_type == REQ_IO_LOW) {
+			/* Switch voltage Low */
+			sdhci_msm_set_vdd_io_vol(msm_host->pdata, VDD_IO_LOW, 0);
+			msm_host->curr_io_level = REQ_IO_LOW;
+		}
+	}
+#endif
+
 	spin_lock_irqsave(&host->lock, flags);
 	pr_debug("%s: %s: request %d curr_pwr_state %x curr_io_level %x\n",
 			mmc_hostname(host->mmc), __func__, req_type,
@@ -3824,12 +3846,24 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	msm_host->mmc->caps2 |= (MMC_CAP2_BOOTPART_NOACC |
 				MMC_CAP2_DETECT_ON_ERR);
 	msm_host->mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
+#ifndef CONFIG_MACH_LGE
 	msm_host->mmc->caps2 |= MMC_CAP2_CLK_SCALE;
+#endif
 	msm_host->mmc->caps2 |= MMC_CAP2_STOP_REQUEST;
 	msm_host->mmc->caps2 |= MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE;
 	msm_host->mmc->pm_caps |= MMC_PM_KEEP_POWER | MMC_PM_WAKE_SDIO_IRQ;
 	msm_host->mmc->caps2 |= MMC_CAP2_CORE_PM;
 	msm_host->mmc->caps2 |= MMC_CAP2_SANITIZE;
+
+
+#if defined (CONFIG_MACH_LGE) && defined (CONFIG_LGE_MMC_BKOPS_ENABLE) && defined(CONFIG_MMC_SDHCI_MSM)
+	/* LGE_CHANGE
+	 * Enable BKOPS feature since it has been disabled by default.
+	 * If you want to use BKOPS, you have to set Y in kernel/arch/arm/configs/XXXX_defconfig file.
+	 * 2014-01-16, B2-BSP-FS@lge.com
+	 */
+	msm_host->mmc->caps2 |= MMC_CAP2_INIT_BKOPS;
+#endif
 
 	if (msm_host->pdata->nonremovable)
 		msm_host->mmc->caps |= MMC_CAP_NONREMOVABLE;

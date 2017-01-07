@@ -28,6 +28,8 @@
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <trace/events/power.h>
+#include <soc/qcom/lge/lge_boot_mode.h>
+#include <soc/qcom/lge/lge_battery_id.h>
 
 static DEFINE_MUTEX(l2bw_lock);
 
@@ -384,7 +386,9 @@ static int __init msm_cpufreq_probe(struct platform_device *pdev)
 	struct clk *c;
 	int cpu;
 	struct cpufreq_frequency_table *ftbl;
-
+#ifdef CONFIG_LGE_PM
+	enum lge_boot_mode_type boot_mode = lge_get_boot_mode();
+#endif
 	l2_clk = devm_clk_get(dev, "l2_clk");
 	if (IS_ERR(l2_clk))
 		l2_clk = NULL;
@@ -415,8 +419,40 @@ static int __init msm_cpufreq_probe(struct platform_device *pdev)
 	 * CPU clock.
 	 */
 	for_each_possible_cpu(cpu) {
+#ifdef CONFIG_LGE_PM_LGE_POWER_CLASS_BATTERY_ID_CHECKER
+		pr_info("batt[%d] boot_mode[%d] => load %s\n",
+				lge_is_battery_present(), boot_mode, tbl_name);
+		if ((lge_is_battery_present() == 0) &&
+				(boot_mode == LGE_BOOT_MODE_PIF_56K ||
+				boot_mode == LGE_BOOT_MODE_PIF_910K)) {
+			snprintf(tbl_name, sizeof(tbl_name),
+					"lge,cpufreq-table-%d", cpu);
+		} else {
+			snprintf(tbl_name, sizeof(tbl_name),
+					"qcom,cpufreq-table-%d", cpu);
+		}
+
+		dev_info(dev, "batt[%d] boot_mode[%d] => load %s\n",
+				lge_is_battery_present(), boot_mode, tbl_name);
+#else
+#ifdef CONFIG_LGE_PM
+		if (!is_battery_present &&
+				(boot_mode == LGE_BOOT_MODE_PIF_56K ||
+				boot_mode == LGE_BOOT_MODE_PIF_910K)) {
+			snprintf(tbl_name, sizeof(tbl_name),
+					"lge,cpufreq-table-%d", cpu);
+		} else {
+			snprintf(tbl_name, sizeof(tbl_name),
+					"qcom,cpufreq-table-%d", cpu);
+		}
+
+		dev_info(dev, "batt[%d] boot_mode[%d] => load %s\n",
+				is_battery_present, boot_mode, tbl_name);
+#else
 		snprintf(tbl_name, sizeof(tbl_name),
-			 "qcom,cpufreq-table-%d", cpu);
+					"qcom,cpufreq-table-%d", cpu);
+#endif
+#endif
 		ftbl = cpufreq_parse_dt(dev, tbl_name, cpu);
 
 		/* CPU0 must contain freq table */

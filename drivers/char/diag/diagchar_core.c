@@ -47,6 +47,10 @@
 #include <linux/compat.h>
 #endif
 
+#ifdef CONFIG_LGE_DIAG_BYPASS
+#include "lg_diag_bypass.h"
+#endif
+
 MODULE_DESCRIPTION("Diag Char Driver");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0");
@@ -625,8 +629,10 @@ static void diag_cmd_invalidate_polling(int change_flag)
 	struct diag_cmd_reg_t *item = NULL;
 
 	if (change_flag == DIAG_CMD_ADD) {
-		if (driver->polling_reg_flag)
-			return;
+		if (driver->polling_reg_flag) {
+			DIAG_LOG(DIAG_DEBUG_PERIPHERALS," exiting function %s",__func__);
+ 			return;
+		}
 	}
 
 	driver->polling_reg_flag = 0;
@@ -2578,6 +2584,9 @@ static ssize_t diagchar_write(struct file *file, const char __user *buf,
 	int err = 0;
 	int pkt_type = 0;
 	int payload_len = 0;
+#ifdef CONFIG_LGE_DM_APP
+    char *buf_cmp;
+#endif
 	const char __user *payload_buf = NULL;
 
 	/*
@@ -2596,8 +2605,21 @@ static ssize_t diagchar_write(struct file *file, const char __user *buf,
 				   __func__, err);
 		return -EIO;
 	}
+#ifdef CONFIG_LGE_DM_APP
+    if (driver->logging_mode == DM_APP_MODE) {
+        /* only diag cmd #250 for supporting testmode tool */
+        buf_cmp = (char *)buf + 4;
+        if (*(buf_cmp) != 0xFA)
+            return 0;
+    }
+#endif
 
+
+#ifdef CONFIG_LGE_DIAG_BYPASS
+	if (driver->logging_mode == USB_MODE && !driver->usb_connected && !lge_bypass_status()) {
+#else
 	if (driver->logging_mode == USB_MODE && !driver->usb_connected) {
+#endif
 		if (!((pkt_type == DCI_DATA_TYPE) ||
 		    (pkt_type == DCI_PKT_TYPE) ||
 		    (pkt_type & DATA_TYPE_DCI_LOG) ||
@@ -2908,8 +2930,8 @@ static int diagchar_setup_cdev(dev_t devno)
 		return -1;
 	}
 
-	driver->diag_dev = device_create(driver->diagchar_class, NULL, devno,
-					 (void *)driver, "diag");
+         driver->diag_dev = device_create(driver->diagchar_class, NULL, devno,
+                                            (void *)driver, "diag");
 
 	if (!driver->diag_dev)
 		return -EIO;
@@ -2991,6 +3013,7 @@ static int __init diagchar_init(void)
 	mutex_init(&driver->diag_file_mutex);
 	mutex_init(&driver->delayed_rsp_mutex);
 	mutex_init(&apps_data_mutex);
+	mutex_init(&driver->diagfwd_channel_mutex);
 	init_waitqueue_head(&driver->wait_q);
 	INIT_WORK(&(driver->diag_drain_work), diag_drain_work_fn);
 	INIT_WORK(&(driver->update_user_clients),
@@ -3030,12 +3053,13 @@ static int __init diagchar_init(void)
 	ret = diagfwd_bridge_init();
 	if (ret)
 		goto fail;
-	ret = diagfwd_peripheral_init();
-	if (ret)
-		goto fail;
 	ret = diagfwd_cntl_init();
 	if (ret)
 		goto fail;
+	ret = diagfwd_peripheral_init();
+	if (ret)
+		goto fail;
+	diagfwd_cntl_channel_init();
 	driver->dci_state = diag_dci_init();
 	pr_debug("diagchar initializing ..\n");
 	driver->num = 1;

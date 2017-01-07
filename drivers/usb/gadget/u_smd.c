@@ -657,9 +657,15 @@ static void gsmd_notify_modem(void *gptr, u8 portno, int ctrl_bits)
 					port->cbits_to_laptop);
 	}
 
+#ifdef CONFIG_LGE_USB_G_ANDROID
+	smd_tiocmset(port->pi->ch,
+			port->cbits_to_modem | TIOCM_RTS,
+			~(port->cbits_to_modem | TIOCM_RTS));
+#else
 	smd_tiocmset(port->pi->ch,
 			port->cbits_to_modem,
 			~port->cbits_to_modem);
+#endif
 }
 
 int gsmd_connect(struct gserial *gser, u8 portno)

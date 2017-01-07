@@ -668,6 +668,7 @@ int sysmon_notifier_register(struct subsys_desc *desc)
 
 	if (data->instance_id <= 0) {
 		pr_debug("SSCTL instance id not defined\n");
+		mutex_lock(&sysmon_list_lock);
 		goto add_list;
 	}
 

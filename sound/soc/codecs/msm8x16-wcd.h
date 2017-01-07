@@ -215,6 +215,12 @@ struct msm8916_asoc_mach_data {
 	int ext_pa;
 	int us_euro_gpio;
 	int spk_ext_pa_gpio;
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	int spk_ext_pa_r_gpio;
+#endif
+	int spk_boost_en_gpio;
+#endif
 	int ext_audio_switch_gpio;
 	u32 ext_audio_switch_active_high;
 	struct regulator *ext_audio_switch_supply;

@@ -1309,6 +1309,11 @@ int mmc_interrupt_hpi(struct mmc_card *card)
 	} while (!err);
 
 out:
+	#ifdef CONFIG_MACH_LGE
+		if (err)
+			pr_err("[LGE][MMC] %s: mmc_interrupt_hpi() failed. err: (%d)\n",	mmc_hostname(card->host), err);
+	#endif
+
 	mmc_release_host(card->host);
 	return err;
 }
@@ -2262,7 +2267,13 @@ void mmc_power_up(struct mmc_host *host)
 	 * This delay should be sufficient to allow the power supply
 	 * to reach the minimum voltage.
 	 */
+#ifdef CONFIG_LGE_MMC_P1V_VDD_ALWAYS_ON
+	if(host->index == 1){
+		mmc_delay(10);
+	}
+#else
 	mmc_delay(10);
+#endif
 
 	host->ios.clock = host->f_init;
 
@@ -2273,7 +2284,13 @@ void mmc_power_up(struct mmc_host *host)
 	 * This delay must be at least 74 clock sizes, or 1 ms, or the
 	 * time required to reach a stable voltage.
 	 */
+#ifdef CONFIG_LGE_MMC_P1V_VDD_ALWAYS_ON
+	if(host->index == 1){
+		mmc_delay(10);
+	}
+#else
 	mmc_delay(10);
+#endif
 
 	/* Set signal voltage to 3.3V */
 	__mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330);
@@ -2284,7 +2301,18 @@ void mmc_power_up(struct mmc_host *host)
 void mmc_power_off(struct mmc_host *host)
 {
 	if (host->ios.power_mode == MMC_POWER_OFF)
+	#ifdef CONFIG_MACH_LGE
+	/* LGE_CHANGE
+	 * If it is already power-off, skip below.
+	 * 2014-09-01, Z2G4-BSP-FileSys@lge.com
+	 */
+	{
+		printk(KERN_INFO "[LGE][MMC][%-18s( )] host->index:%d, already power-off, skip below\n", __func__, host->index);
 		return;
+	}
+	#else
+		return;
+	#endif
 
 	mmc_host_clk_hold(host);
 
@@ -3139,7 +3167,14 @@ int mmc_can_reset(struct mmc_card *card)
 		rst_n_function = card->ext_csd.rst_n_function;
 		if ((rst_n_function & EXT_CSD_RST_N_EN_MASK) !=
 		    EXT_CSD_RST_N_ENABLED)
+		#ifdef CONFIG_MACH_LGE
+		{
+			printk("%s: mmc, MMC_CAP_HW_RESET, rst_n_function=0x%02x\n", __func__, rst_n_function);
 			return 0;
+		}
+		#else
+			return 0;
+		#endif
 	}
 	return 1;
 }
@@ -3744,6 +3779,10 @@ int _mmc_detect_card_removed(struct mmc_host *host)
 		pr_debug("%s: card remove detected\n", mmc_hostname(host));
 	}
 
+	#ifdef CONFIG_MACH_LGE
+		pr_info("[LGE][MMC][%-18s( )] mmc%d, ret : %d\n", __func__, host->index, ret);
+	#endif
+
 	return ret;
 }
 
@@ -3788,6 +3827,10 @@ void mmc_rescan(struct work_struct *work)
 	struct mmc_host *host =
 		container_of(work, struct mmc_host, detect.work);
 	bool extend_wakelock = false;
+
+#ifdef CONFIG_MACH_LGE
+	pr_info("[LGE][MMC][%-18s( ) START!] mmc%d\n", __func__, host->index);
+#endif
 
 	if (host->rescan_disable)
 		return;
@@ -4065,6 +4108,10 @@ int mmc_suspend_host(struct mmc_host *host)
 	bool remove_pm_vote = false;
 	ktime_t start = ktime_get();
 
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+//		pr_info("%s: %s\n", mmc_hostname(host), __func__);
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
+
 	if (mmc_bus_needs_resume(host))
 		return 0;
 
@@ -4137,6 +4184,16 @@ int mmc_suspend_host(struct mmc_host *host)
 	}
 	mmc_bus_put(host);
 
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+	if (host->index == 0 && host->card) {
+		pr_info("%s: %s: host->pm_flags(0x%x) | MMC_PM_KEEP_POWER\n",
+			mmc_hostname(host), __func__, host->pm_flags);
+		host->pm_flags |= MMC_PM_KEEP_POWER;
+		host->clk_old = host->ios.clock;
+		host->ios.clock = 0;
+		mmc_set_ios(host);
+	}
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
 	if (!err && !mmc_card_keep_power(host)) {
 		mmc_claim_host(host);
 		mmc_power_off(host);
@@ -4174,6 +4231,10 @@ int mmc_resume_host(struct mmc_host *host)
 	bool remove_pm_vote = false;
 	ktime_t start = ktime_get();
 
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+//		pr_info("%s: %s\n", mmc_hostname(host), __func__);
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
+
 	mmc_bus_get(host);
 	if (mmc_bus_manual_resume(host)) {
 		host->bus_resume_flags |= MMC_BUSRESUME_NEEDS_RESUME;
@@ -4182,6 +4243,13 @@ int mmc_resume_host(struct mmc_host *host)
 	}
 
 	if (host->bus_ops && !host->bus_dead) {
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+		if (host->index == 0 && host->card) {
+			pr_info("%s: %s: host->pm_flags(0x%x)\n",
+				mmc_hostname(host), __func__, host->pm_flags);
+			mmc_set_clock(host, host->clk_old);
+		}
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
 		if (host->ops->notify_pm_status)
 			host->ops->notify_pm_status(host, DEV_RESUMING);
 		if (!mmc_card_keep_power(host)) {

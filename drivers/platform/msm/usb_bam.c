@@ -57,7 +57,7 @@ do {									\
 	unsigned long flags;						\
 	char *buf;							\
 	if (dlog)							\
-		pr_debug(x);						\
+		pr_info(x);						\
 	if (enable_event_log) {						\
 		write_lock_irqsave(&usb_bam_dbg.lck, flags);		\
 		buf = usb_bam_dbg.buf[usb_bam_dbg.idx];			\
@@ -278,7 +278,7 @@ void msm_bam_set_hsic_host_dev(struct device *dev)
 
 void msm_bam_set_usb_dev(struct device *dev)
 {
-	pr_debug("%s: Updating usb device for power managment\n", __func__);
+	pr_info("%s: Updating usb device for power managment\n", __func__);
 	usb_device = dev;
 }
 
@@ -366,7 +366,7 @@ static int usb_bam_alloc_buffer(struct usb_bam_pipe_connect *pipe_connect)
 	struct sps_mem_buffer *data_buf = &(pipe_connect->data_mem_buf);
 	struct sps_mem_buffer *desc_buf = &(pipe_connect->desc_mem_buf);
 
-	pr_debug("%s: data_fifo size:%x desc_fifo_size:%x\n",
+	pr_info("%s: data_fifo size:%x desc_fifo_size:%x\n",
 				__func__, pipe_connect->data_fifo_size,
 				pipe_connect->desc_fifo_size);
 	switch (pipe_connect->mem_type) {
@@ -821,7 +821,7 @@ static int disconnect_pipe(u8 idx)
 	ctx.usb_bam_sps.sps_pipes[idx] = NULL;
 
 
-	pr_debug("%s(): data size:%x desc size:%x\n",
+	pr_info("%s(): data size:%x desc size:%x\n",
 			__func__, sps_connection->data.size,
 			sps_connection->desc.size);
 
@@ -2176,7 +2176,7 @@ bool msm_bam_host_lpm_ok(enum usb_ctrl bam_type)
 			IPA_RM_RESOURCE_RELEASED &&
 		    ctx.is_bam_inactivity[bam_type] && info[bam_type].in_lpm) {
 
-			pr_debug("%s(): checking HSIC Host pipe state\n",
+			pr_info("%s(): checking HSIC Host pipe state\n",
 								__func__);
 			ret = msm_bam_hsic_host_pipe_empty();
 			if (!ret) {
@@ -2382,7 +2382,7 @@ int usb_bam_connect_ipa(struct usb_bam_connect_ipa_params *ipa_params)
 	} else {
 		spin_unlock(&usb_bam_lock);
 		if (!ctx.pipes_enabled_per_bam[cur_bam])
-			pr_debug("No BAM reset on connect, just pipe reset\n");
+			pr_info("No BAM reset on connect, just pipe reset\n");
 	}
 
 	if (ipa_params->dir == USB_TO_PEER_PERIPHERAL) {
@@ -2921,7 +2921,7 @@ static struct msm_usb_bam_platform_data *usb_bam_dt_to_pdata(
 	rc = of_property_read_u32(node, "qcom,usb-bam-fifo-baseaddr",
 			&addr);
 	if (rc)
-		pr_debug("%s: Invalid usb base address property\n", __func__);
+		pr_info("%s: Invalid usb base address property\n", __func__);
 	else
 		pdata->usb_bam_fifo_baseaddr = addr;
 
@@ -2994,7 +2994,7 @@ static struct msm_usb_bam_platform_data *usb_bam_dt_to_pdata(
 		rc = of_property_read_u32(node, "qcom,bam-mode",
 			&usb_bam_connections[i].bam_mode);
 		if (rc) {
-			pr_debug("%s: bam mode is missing in device tree\n",
+			pr_info("%s: bam mode is missing in device tree\n",
 				__func__);
 			/*
 			 * In cases where bam_mode is not set, the default
@@ -3029,7 +3029,7 @@ static struct msm_usb_bam_platform_data *usb_bam_dt_to_pdata(
 		rc = of_property_read_u32(node, "qcom,pipe-connection-type",
 			&usb_bam_connections[i].pipe_type);
 		if (rc)
-			pr_debug("%s: pipe type is defaulting to bam2bam\n",
+			pr_info("%s: pipe type is defaulting to bam2bam\n",
 					__func__);
 
 		reset_bam = of_property_read_bool(node,
@@ -3091,7 +3091,7 @@ static int usb_bam_init(int bam_type)
 
 	memset(&props, 0, sizeof(props));
 
-	pr_debug("%s: usb_bam_init - %s\n", __func__,
+	pr_info("%s: usb_bam_init - %s\n", __func__,
 		bam_enable_strings[bam_type]);
 	res = platform_get_resource_byname(ctx.usb_bam_pdev, IORESOURCE_MEM,
 		bam_enable_strings[bam_type]);
@@ -3163,7 +3163,7 @@ static int usb_bam_init(int bam_type)
 	 * from legacy to BAM with ongoing data transfers.
 	 */
 	if (pdata->enable_hsusb_bam_on_boot && bam_type == CI_CTRL) {
-		pr_debug("Register and enable HSUSB BAM\n");
+		pr_info("Register and enable HSUSB BAM\n");
 		props.options |= SPS_BAM_OPT_ENABLE_AT_BOOT;
 	}
 	ret = sps_register_bam_device(&props, &(ctx.h_bam[bam_type]));
@@ -3555,7 +3555,7 @@ bool msm_bam_device_lpm_ok(enum usb_ctrl bam_type)
 
 void msm_bam_set_qdss_usb_active(bool is_active)
 {
-	pr_debug("%s: set qdss_usb_active: %d\n", __func__, is_active);
+	pr_info("%s: set qdss_usb_active: %d\n", __func__, is_active);
 	qdss_usb_active = is_active;
 }
 EXPORT_SYMBOL(msm_bam_set_qdss_usb_active);
@@ -3608,7 +3608,7 @@ bool msm_bam_hsic_host_pipe_empty(void)
 	int i, ret;
 	u32 status;
 
-	pr_debug("%s: enter\n", __func__);
+	pr_info("%s: enter\n", __func__);
 
 	for (i = 0; i < ctx.max_connections; i++) {
 		pipe_connect = &usb_bam_connections[i];
@@ -3635,7 +3635,7 @@ bool msm_bam_hsic_host_pipe_empty(void)
 						pipe_connect->dst_pipe_index);
 				return false;
 			} else {
-				pr_debug("%s(): SRC index(%d), DEST index(%d):\n",
+				pr_info("%s(): SRC index(%d), DEST index(%d):\n",
 						__func__,
 						pipe_connect->src_pipe_index,
 						pipe_connect->dst_pipe_index);

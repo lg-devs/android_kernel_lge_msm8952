@@ -2551,6 +2551,14 @@ static int rt6_fill_node(struct net *net,
 		if (nla_put(skb, RTA_PREFSRC, 16, &saddr_buf))
 			goto nla_put_failure;
 	}
+    /*  2014-11-21, hani.park@lge.com LGP_DATA_QC_CR [START] */
+    //G3L netlink kernel crash in case of WiFi on/off repeat
+    if (unlikely((unsigned long)dst_metrics_ptr(&rt->dst) < 2)) {
+        WARN(1, "Got null _metrics from rt->dst");
+        printk(KERN_DEBUG "Got null _metrics from rt->dst \n");
+        goto nla_put_failure;
+    }
+    /*  2014-11-21, hani.park@lge.com LGP_DATA_QC_CR [END] */
 
 	if (rtnetlink_put_metrics(skb, dst_metrics_ptr(&rt->dst)) < 0)
 		goto nla_put_failure;
@@ -2996,7 +3004,8 @@ static int __net_init ip6_route_net_init(struct net *net)
 #endif
 
 	net->ipv6.sysctl.flush_delay = 0;
-	net->ipv6.sysctl.ip6_rt_max_size = 4096;
+  //for memory full issue workaround during MTBF 2016_05_30
+	net->ipv6.sysctl.ip6_rt_max_size = 32768; //original value is 4096.
 	net->ipv6.sysctl.ip6_rt_gc_min_interval = HZ / 2;
 	net->ipv6.sysctl.ip6_rt_gc_timeout = 60*HZ;
 	net->ipv6.sysctl.ip6_rt_gc_interval = 30*HZ;

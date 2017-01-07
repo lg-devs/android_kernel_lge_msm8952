@@ -62,3 +62,55 @@ config FB_MSM_MDSS_XLOG_DEBUG
 	features to: Dump MDSS registers during driver errors, panic
 	driver during fatal errors and enable some display-driver logging
 	into an internal buffer (this avoids logging overhead).
+
+config LGE_VSYNC_SKIP
+        bool "MDSS VSYNC Skip scheme"
+        ---help---
+        This feature provides VSYNC skip scheme.
+
+config TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL
+	depends on FB_MSM_MDSS
+	bool "Support FHD TOVIS PANEL"
+	---help---
+	The TOVIS Panel provides support for FHD video mode.
+	The fps is 60HZ and four lane for data is used.
+
+config LGE_LCD_TUNING
+	bool "lcd_gamma_tuning"
+	default n
+	depends on MACH_LGE
+	---help---
+	Support LCD gamma tuning
+	Support sysfs
+
+config LGE_DISPLAY_POWER_SEQUENCE
+	bool "lge panel power sequence"
+	default y
+	---help---
+	Support panel power sequence
+config INNOLUX_NT51021_WUXGA_VIDEO_PANEL
+	depends on FB_MSM_MDSS
+	bool "MIPI INNOLUX NT51021 WUXGA LCD Video Panel"
+	default n
+	---help---
+	The TOVIS Panel provides support for WUXGA video mode.
+	The fps is 60HZ and four lane for data is used.
+
+config SHARP_NT35596_FHD_VIDEO_LCD_PANEL
+	depends on FB_MSM_MDSS
+	bool "Support Sharp NT35596 FHD Video PANEL"
+	---help---
+	The SHARP Panel provides support for FHD video mode.
+	The fps is 60HZ and four lane for data is used.
+
+config TOVIS_NT51021_WUXGA_VIDEO_PANEL
+	depends on FB_MSM_MDSS
+	bool "MIPI TOVIS NT51021 WUXGA LCD Video Panel"
+	default n
+	---help---
+	The TOVIS Panel provides support for WUXGA video mode.
+	The fps is 60HZ and four lane for data is used.
+
+config LGE_READER_MODE
+	bool "LGE reader mode"
+	default n

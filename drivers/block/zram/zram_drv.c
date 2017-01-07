@@ -49,7 +49,7 @@ static const char *default_compressor = "lzo";
 #define ALLOC_ERROR_LOG_RATE_MS 1000
 
 /* Module params (documentation at end) */
-static unsigned int num_devices = 1;
+static unsigned int num_devices = 2;
 
 static inline void deprecated_attr_warn(const char *name)
 {
@@ -77,6 +77,52 @@ static inline bool init_done(struct zram *zram)
 {
 	return zram->disksize;
 }
+
+#ifdef CONFIG_HSWAP
+int zrams_free_size(void)
+{
+	int i;
+	int val = 0;
+
+	if (!zram_devices)
+		return 0;
+
+	for (i = 0; i < num_devices; i++) {
+		struct zram *zram = &zram_devices[i];
+
+		if (init_done(zram))
+			val += (int)((zram->disksize >> PAGE_SHIFT) -
+				(u64)(atomic64_read(&zram->stats.pages_stored)) -
+				(u64)(atomic64_read(&zram->stats.zero_pages)));
+	}
+
+	if (0 < val)
+		return val;
+
+	return 0;
+}
+
+int zram0_free_size(void)
+{
+	struct zram *zram;
+	int val = 0;
+
+	if (!zram_devices)
+		return 0;
+
+	zram = &zram_devices[0];
+
+	if (init_done(zram))
+		val = (int)((zram->disksize >> PAGE_SHIFT) -
+				(u64)(atomic64_read(&zram->stats.pages_stored)) -
+				(u64)(atomic64_read(&zram->stats.zero_pages)));
+
+	if (0 < val)
+		return val;
+
+	return 0;
+}
+#endif
 
 static int zram_show_mem_notifier(struct notifier_block *nb,
 				unsigned long action,
@@ -125,7 +171,6 @@ static inline struct zram *dev_to_zram(struct device *dev)
 static ssize_t compact_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
-	unsigned long nr_migrated;
 	struct zram *zram = dev_to_zram(dev);
 	struct zram_meta *meta;
 
@@ -136,8 +181,7 @@ static ssize_t compact_store(struct device *dev,
 	}
 
 	meta = zram->meta;
-	nr_migrated = zs_compact(meta->mem_pool);
-	atomic64_add(nr_migrated, &zram->stats.num_migrated);
+	zs_compact(meta->mem_pool);
 	up_read(&zram->init_lock);
 
 	return len;
@@ -1065,8 +1109,53 @@ static void zram_slot_free_notify(struct block_device *bdev,
 	atomic64_inc(&zram->stats.notify_free);
 }
 
+static int zram_rw_page(struct block_device *bdev, sector_t sector,
+			struct page *page, int rw)
+{
+	int offset, err = -EIO;
+	u32 index;
+	struct zram *zram;
+	struct bio_vec bv;
+
+	zram = bdev->bd_disk->private_data;
+	if (unlikely(!zram_meta_get(zram)))
+		goto out;
+
+	if (!valid_io_request(zram, sector, PAGE_SIZE)) {
+		atomic64_inc(&zram->stats.invalid_io);
+		err = -EINVAL;
+		goto put_zram;
+	}
+
+	index = sector >> SECTORS_PER_PAGE_SHIFT;
+	offset = sector & (SECTORS_PER_PAGE - 1) << SECTOR_SHIFT;
+
+	bv.bv_page = page;
+	bv.bv_len = PAGE_SIZE;
+	bv.bv_offset = 0;
+
+	err = zram_bvec_rw(zram, &bv, index, offset, rw);
+	put_zram:
+	zram_meta_put(zram);
+	out:
+	/*
+	 * If I/O fails, just return error(ie, non-zero) without
+	 * calling page_endio.
+	 * It causes resubmit the I/O with bio request by upper functions
+	 * of rw_page(e.g., swap_readpage, __swap_writepage) and
+	 * bio->bi_end_io does things to handle the error
+	 * (e.g., SetPageError, set_page_dirty and extra works).
+	 */
+	if (err == 0)
+		page_endio(page, rw, 0);
+	return err;
+}
+
+
+
 static const struct block_device_operations zram_devops = {
 	.swap_slot_free_notify = zram_slot_free_notify,
+	.rw_page = zram_rw_page,
 	.owner = THIS_MODULE
 };
 
@@ -1108,13 +1197,16 @@ static ssize_t mm_stat_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct zram *zram = dev_to_zram(dev);
+	struct zs_pool_stats pool_stats = {0};
 	u64 orig_size, mem_used = 0;
 	long max_used;
 	ssize_t ret;
 
 	down_read(&zram->init_lock);
-	if (init_done(zram))
+	if (init_done(zram)) {
 		mem_used = zs_get_total_pages(zram->meta->mem_pool);
+		zs_pool_stats(zram->meta->mem_pool, &pool_stats);
+	}
 
 	orig_size = atomic64_read(&zram->stats.pages_stored);
 	max_used = atomic_long_read(&zram->stats.max_used_pages);
@@ -1127,7 +1219,7 @@ static ssize_t mm_stat_show(struct device *dev,
 			zram->limit_pages << PAGE_SHIFT,
 			max_used << PAGE_SHIFT,
 			(u64)atomic64_read(&zram->stats.zero_pages),
-			(u64)atomic64_read(&zram->stats.num_migrated));
+			pool_stats.pages_compacted);
 	up_read(&zram->init_lock);
 
 	return ret;

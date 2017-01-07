@@ -358,6 +358,12 @@ void usb_serial_generic_read_bulk_callback(struct urb *urb)
 		if (urb == port->read_urbs[i])
 			break;
 	}
+
+	if (i == ARRAY_SIZE(port->read_urbs)) {
+		dev_dbg(&port->dev, "%s - urb error status \n", __func__);
+		return;
+	}
+
 	set_bit(i, &port->read_urbs_free);
 
 	dev_dbg(&port->dev, "%s - urb %d, len %d\n", __func__, i,

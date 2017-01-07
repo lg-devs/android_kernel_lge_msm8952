@@ -1,0 +1,14 @@
+#
+# LGE touch core configuration
+#
+
+if INPUT_TOUCHSCREEN
+
+menuconfig TOUCHSCREEN_ATMEL_T1664_JP 
+	bool "ATMEL Touch T1664 for JP Model - Generic"
+	depends on I2C 
+	help
+	  If your plaform is generic linux, say Y
+
+endif
+

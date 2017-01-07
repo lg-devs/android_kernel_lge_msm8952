@@ -967,7 +967,16 @@ static void mdss_dsi_link_clk_unprepare(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 
 static int mdss_dsi_link_clk_set_rate(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
+#ifdef CONFIG_MACH_LGE
+	#if defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) || defined(CONFIG_SHARP_NT35596_FHD_VIDEO_LCD_PANEL) \
+		|| defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+	u32 esc_clk_rate = 12800000;
+	#else
 	u32 esc_clk_rate = 19200000;
+	#endif
+#else
+	u32 esc_clk_rate = 19200000;
+#endif
 	int rc = 0;
 
 	if (ctrl_pdata->panel_data.panel_info.cont_splash_enabled) {

@@ -82,6 +82,20 @@
 		{.reg = xreg, .rreg = xreg, \
 		.shift = xshift, .rshift = xshift, \
 		.max = xmax, .min = xmin} }
+#ifdef CONFIG_MACH_LGE
+#define SOC_SINGLE_SX_FOR_S8_TLV(xname, xreg, xshift, xmin, xmax, tlv_array) \
+{       .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+        .access = SNDRV_CTL_ELEM_ACCESS_TLV_READ | \
+        SNDRV_CTL_ELEM_ACCESS_READWRITE, \
+        .tlv.p  = (tlv_array),\
+        .info = snd_soc_info_volsw, \
+        .get = snd_soc_get_volsw_sx_for_s8,\
+        .put = snd_soc_put_volsw_sx, \
+        .private_value = (unsigned long)&(struct soc_mixer_control) \
+                {.reg = xreg, .rreg = xreg, \
+                .shift = xshift, .rshift = xshift, \
+                .max = xmax, .min = xmin} }
+#endif
 #define SOC_SINGLE_RANGE_TLV(xname, xreg, xshift, xmin, xmax, xinvert, tlv_array) \
 {	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname),\
 	.access = SNDRV_CTL_ELEM_ACCESS_TLV_READ |\
@@ -522,6 +536,10 @@ int snd_soc_put_volsw(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol);
 #define snd_soc_get_volsw_2r snd_soc_get_volsw
 #define snd_soc_put_volsw_2r snd_soc_put_volsw
+#ifdef CONFIG_MACH_LGE
+int snd_soc_get_volsw_sx_for_s8(struct snd_kcontrol *kcontrol,
+        struct snd_ctl_elem_value *ucontrol);
+#endif
 int snd_soc_get_volsw_sx(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol);
 int snd_soc_put_volsw_sx(struct snd_kcontrol *kcontrol,

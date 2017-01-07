@@ -518,6 +518,11 @@ config LEDS_BLINKM
 	  This option enables support for the BlinkM RGB LED connected
 	  through I2C. Say Y to enable support for the BlinkM LED.
 
+config LGE_DISPLAY_BACKLIGHT_CURVE_ALGO
+	bool "Enable support for BL Curve"
+	help
+	  Support to dynamically modify the bl map
+
 config LEDS_AW2013
 	tristate "LED support for AW2013"
 	depends on LEDS_CLASS && I2C
@@ -527,5 +532,12 @@ config LEDS_AW2013
 
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"
+
+config LGE_LEDS_PM8952
+	bool "LGE PM8952 Emotional LED"
+	default n
+	help
+	  This option enables support for PM8952 in MSM8952.
+	  PM8952 only supports RED LED with PWM.
 
 endif # NEW_LEDS

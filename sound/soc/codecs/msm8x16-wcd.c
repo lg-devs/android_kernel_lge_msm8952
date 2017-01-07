@@ -129,6 +129,9 @@ enum {
 	RX_MIX1_INP_SEL_RX3,
 };
 
+#ifdef CONFIG_MACH_LGE
+static int tapan_tx_mute = 0;
+#endif
 static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
 static const DECLARE_TLV_DB_SCALE(analog_gain, 0, 25, 1);
 static struct snd_soc_dai_driver msm8x16_wcd_i2s_dai[];
@@ -2390,6 +2393,43 @@ static int msm8x16_wcd_put_iir_band_audio_mixer(
 	return 0;
 }
 
+#ifdef CONFIG_MACH_LGE
+static const char *const tapan_tx_mute_text[] = {"unmute", "mute"};
+static const struct soc_enum tapan_tx_mute_enum[] = {
+	SOC_ENUM_SINGLE_EXT(2, tapan_tx_mute_text),
+};
+
+static int tapan_tx_mute_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: tapan_tx_mute  = %d", __func__, tapan_tx_mute);
+	ucontrol->value.integer.value[0] = tapan_tx_mute;
+	return 0;
+}
+static int tapan_tx_mute_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	u16 tx_vol_ctl_reg0 = MSM8X16_WCD_A_CDC_TX1_VOL_CTL_CFG;
+	u16 tx_vol_ctl_reg1 = MSM8X16_WCD_A_CDC_TX1_VOL_CTL_CFG + 32;
+	switch (ucontrol->value.integer.value[0]) {
+		case 0:
+			snd_soc_update_bits(codec, tx_vol_ctl_reg0, 0x01, 0);
+			snd_soc_update_bits(codec, tx_vol_ctl_reg1, 0x01, 0);
+			break;
+		case 1:
+			snd_soc_update_bits(codec, tx_vol_ctl_reg0, 0x01, 1);
+			snd_soc_update_bits(codec, tx_vol_ctl_reg1, 0x01, 1);
+			break;
+		default:
+			break;
+	}
+	tapan_tx_mute = ucontrol->value.integer.value[0];
+	pr_debug("%s: tapan_tx_mute = %d\n", __func__, tapan_tx_mute);
+	return 0;
+}
+#endif
+
 static const char * const msm8x16_wcd_loopback_mode_ctrl_text[] = {
 		"DISABLE", "ENABLE"};
 static const struct soc_enum msm8x16_wcd_loopback_mode_ctl_enum[] = {
@@ -2448,6 +2488,10 @@ static const struct soc_enum cf_rxmix3_enum =
 
 static const struct snd_kcontrol_new msm8x16_wcd_snd_controls[] = {
 
+#ifdef CONFIG_MACH_LGE
+	SOC_ENUM_EXT("TX_VOL_CTL_MUTE", tapan_tx_mute_enum[0],
+		tapan_tx_mute_get, tapan_tx_mute_put),
+#endif
 	SOC_ENUM_EXT("Boost Option", msm8x16_wcd_boost_option_ctl_enum[0],
 		msm8x16_wcd_boost_option_get, msm8x16_wcd_boost_option_set),
 
@@ -2472,7 +2516,40 @@ static const struct snd_kcontrol_new msm8x16_wcd_snd_controls[] = {
 					8, 0, analog_gain),
 	SOC_SINGLE_TLV("ADC3 Volume", MSM8X16_WCD_A_ANALOG_TX_3_EN, 3,
 					8, 0, analog_gain),
+#ifdef CONFIG_MACH_LGE
+	SOC_SINGLE_SX_FOR_S8_TLV("RX1 Digital Volume",
+			  MSM8X16_WCD_A_CDC_RX1_VOL_CTL_B2_CTL,
+			0,  -84, 40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("RX2 Digital Volume",
+			  MSM8X16_WCD_A_CDC_RX2_VOL_CTL_B2_CTL,
+			0,  -84, 40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("RX3 Digital Volume",
+			  MSM8X16_WCD_A_CDC_RX3_VOL_CTL_B2_CTL,
+			0,  -84, 40, digital_gain),
 
+	SOC_SINGLE_SX_FOR_S8_TLV("DEC1 Volume",
+			  MSM8X16_WCD_A_CDC_TX1_VOL_CTL_GAIN,
+			0,  -84, 40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("DEC2 Volume",
+			  MSM8X16_WCD_A_CDC_TX2_VOL_CTL_GAIN,
+			0,  -84, 40, digital_gain),
+
+	SOC_SINGLE_SX_FOR_S8_TLV("IIR1 INP1 Volume",
+			  MSM8X16_WCD_A_CDC_IIR1_GAIN_B1_CTL,
+			0,  -84, 40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("IIR1 INP2 Volume",
+			  MSM8X16_WCD_A_CDC_IIR1_GAIN_B2_CTL,
+			0,  -84, 40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("IIR1 INP3 Volume",
+			  MSM8X16_WCD_A_CDC_IIR1_GAIN_B3_CTL,
+			0,  -84, 40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("IIR1 INP4 Volume",
+			  MSM8X16_WCD_A_CDC_IIR1_GAIN_B4_CTL,
+			0,  -84,    40, digital_gain),
+	SOC_SINGLE_SX_FOR_S8_TLV("IIR2 INP1 Volume",
+			  MSM8X16_WCD_A_CDC_IIR2_GAIN_B1_CTL,
+			0,  -84, 40, digital_gain),
+#else
 	SOC_SINGLE_SX_TLV("RX1 Digital Volume",
 			  MSM8X16_WCD_A_CDC_RX1_VOL_CTL_B2_CTL,
 			0,  -84, 40, digital_gain),
@@ -2505,6 +2582,7 @@ static const struct snd_kcontrol_new msm8x16_wcd_snd_controls[] = {
 	SOC_SINGLE_SX_TLV("IIR2 INP1 Volume",
 			  MSM8X16_WCD_A_CDC_IIR2_GAIN_B1_CTL,
 			0,  -84, 40, digital_gain),
+#endif
 
 	SOC_ENUM("TX1 HPF cut off", cf_dec1_enum),
 	SOC_ENUM("TX2 HPF cut off", cf_dec2_enum),
@@ -3956,18 +4034,22 @@ static int msm8x16_wcd_hphl_dac_event(struct snd_soc_dapm_widget *w,
 			MSM8X16_WCD_A_DIGITAL_CDC_DIG_CLK_CTL, 0x01, 0x01);
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_DIGITAL_CDC_ANA_CLK_CTL, 0x02, 0x02);
+#ifndef CONFIG_MACH_LGE
 		if (!ret)
 			wcd_imped_config(codec, impedl, true);
 		else
 			dev_dbg(codec->dev, "Failed to get mbhc impedance %d\n",
 				ret);
+#endif
 		break;
 	case SND_SOC_DAPM_POST_PMU:
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_RX_HPH_L_PA_DAC_CTL, 0x02, 0x00);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
+#ifndef CONFIG_MACH_LGE
 		wcd_imped_config(codec, impedl, false);
+#endif
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_DIGITAL_CDC_ANA_CLK_CTL, 0x02, 0x00);
 		snd_soc_update_bits(codec,
@@ -4461,6 +4543,11 @@ int msm8x16_wcd_digital_mute(struct snd_soc_dai *dai, int mute)
 		__func__);
 		return 0;
 	}
+
+#ifdef CONFIG_MACH_LGE
+	mute |= tapan_tx_mute;
+	pr_debug("%s: Re-Digital Mute val = %d\n", __func__, mute);
+#endif
 
 	mute = (mute) ? 1 : 0;
 	if (!mute) {
@@ -5033,6 +5120,10 @@ static const struct msm8x16_wcd_reg_mask_val
 	 */
 	{MSM8X16_WCD_A_ANALOG_RX_COM_OCP_CTL, 0xFF, 0x12},
 	{MSM8X16_WCD_A_ANALOG_RX_COM_OCP_COUNT, 0xFF, 0xFF},
+#ifdef CONFIG_MACH_LGE
+	{MSM8X16_WCD_A_ANALOG_MICB_1_EN, 0x01, 0x01},
+	{MSM8X16_WCD_A_ANALOG_MICB_1_INT_RBIAS, 0x7F, 0x48},
+#endif
 };
 
 static void msm8x16_wcd_codec_init_reg(struct snd_soc_codec *codec)

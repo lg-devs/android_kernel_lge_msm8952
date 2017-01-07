@@ -18,6 +18,9 @@
 #include <linux/stat.h>
 
 #include "power_supply.h"
+#ifdef CONFIG_LGE_PM_PSEUDO_BATTERY
+#include <soc/qcom/lge/lge_pseudo_batt.h>
+#endif
 
 /*
  * This is because the name "current" breaks the device attr macro.
@@ -38,17 +41,35 @@
 	.store = power_supply_store_property,				\
 }
 
+#ifdef CONFIG_LGE_PM_PSEUDO_BATTERY
+#define PSEUDO_BATT_ATTR(_name)						\
+{									\
+	.attr = { .name = #_name, .mode = 0644},			\
+	.show = pseudo_batt_show_property,				\
+	.store = pseudo_batt_store_property,				\
+}
+#endif
+
 static struct device_attribute power_supply_attrs[];
 
 static ssize_t power_supply_show_property(struct device *dev,
 					  struct device_attribute *attr,
 					  char *buf) {
+#ifdef CONFIG_LGE_PM_NOT_USE_QC20
+	static char *type_text[] = {
+		"Unknown", "Battery", "UPS", "Mains", "USB",
+		"USB_DCP", "USB_CDP", "USB_ACA",
+		"USB_DCP", "USB_DCP", "Wireless", "BMS", "USB_Parallel",
+		"Wipower"
+	};
+#else
 	static char *type_text[] = {
 		"Unknown", "Battery", "UPS", "Mains", "USB",
 		"USB_DCP", "USB_CDP", "USB_ACA",
 		"USB_HVDCP", "USB_HVDCP_3", "Wireless", "BMS", "USB_Parallel",
 		"Wipower"
 	};
+#endif
 	static char *status_text[] = {
 		"Unknown", "Charging", "Discharging", "Not charging", "Full"
 	};
@@ -70,6 +91,11 @@ static ssize_t power_supply_show_property(struct device *dev,
 	static char *scope_text[] = {
 		"Unknown", "System", "Device"
 	};
+	static char *lge_hw_rev_text[] = {
+		"evb1", "evb2", "evb3", "rev_a", "rev_b", "rev_c", "rev_d",
+		"rev_e", "rev_f", "rev_g", "rev_h", "rev_10", "rev_11", "revserved"
+	};
+
 	ssize_t ret = 0;
 	struct power_supply *psy = dev_get_drvdata(dev);
 	const ptrdiff_t off = attr - power_supply_attrs;
@@ -104,8 +130,11 @@ static ssize_t power_supply_show_property(struct device *dev,
 		return sprintf(buf, "%s\n", type_text[value.intval]);
 	else if (off == POWER_SUPPLY_PROP_SCOPE)
 		return sprintf(buf, "%s\n", scope_text[value.intval]);
+	else if (off == POWER_SUPPLY_PROP_HW_REV)
+		return sprintf(buf, "%s\n", lge_hw_rev_text[value.intval]);
 	else if (off >= POWER_SUPPLY_PROP_MODEL_NAME)
 		return sprintf(buf, "%s\n", value.strval);
+
 
 	if (off == POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT)
 		return sprintf(buf, "%lld\n", value.int64val);
@@ -135,6 +164,57 @@ static ssize_t power_supply_store_property(struct device *dev,
 
 	return count;
 }
+
+#ifdef CONFIG_LGE_PM_PSEUDO_BATTERY
+static ssize_t pseudo_batt_show_property(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+	ssize_t ret;
+	struct power_supply *psy = dev_get_drvdata(dev);
+	const ptrdiff_t off = attr - power_supply_attrs;
+	union power_supply_propval value;
+
+	static char *pseudo_batt[] = {
+		"NORMAL", "PSEUDO",
+	};
+
+	ret = psy->get_property(psy, off, &value);
+
+	if (ret < 0) {
+		if (ret != -ENODEV)
+			dev_err(dev, "driver failed to report `%s' property\n",
+					attr->attr.name);
+		return ret;
+	}
+	if (off == POWER_SUPPLY_PROP_PSEUDO_BATT)
+		return sprintf(buf, "[%s]\nusage: echo [mode] [ID] [therm] [temp] [volt] [cap] [charging] > pseudo_batt\n",
+				pseudo_batt[value.intval]);
+
+	return 0;
+}
+
+static ssize_t pseudo_batt_store_property(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	int ret = -EINVAL;
+	struct pseudo_batt_info_type info;
+
+	if (sscanf(buf, "%d %d %d %d %d %d %d", &info.mode, &info.id, &info.therm,
+				&info.temp, &info.volt, &info.capacity, &info.charging) != 7) {
+		if (info.mode == 1) {
+			pr_err("usage : echo [mode] [ID] [therm] [temp] [volt] [cap] [charging] > pseudo_batt");
+			goto out;
+		}
+	}
+	set_pseudo_batt_info(&info);
+	ret = count;
+
+out:
+	return ret;
+}
+#endif
 
 /* Must be in the same order as POWER_SUPPLY_PROP_* */
 static struct device_attribute power_supply_attrs[] = {
@@ -214,6 +294,9 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(resistance_capacitive),
 	POWER_SUPPLY_ATTR(resistance_id),
 	POWER_SUPPLY_ATTR(resistance_now),
+#ifdef CONFIG_LGE_PM_PSEUDO_BATTERY
+	PSEUDO_BATT_ATTR(pseudo_batt),
+#endif
 	/* Local extensions */
 	POWER_SUPPLY_ATTR(usb_hc),
 	POWER_SUPPLY_ATTR(usb_otg),
@@ -221,7 +304,7 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(flash_current_max),
 	POWER_SUPPLY_ATTR(update_now),
 	POWER_SUPPLY_ATTR(esr_count),
-	POWER_SUPPLY_ATTR(safety_timer_enabled),
+	POWER_SUPPLY_ATTR(safety_timer),
 	POWER_SUPPLY_ATTR(charge_done),
 	POWER_SUPPLY_ATTR(flash_active),
 	POWER_SUPPLY_ATTR(flash_trigger),
@@ -237,10 +320,30 @@ static struct device_attribute power_supply_attrs[] = {
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_ATTR(charge_counter_ext),
 	/* Properties of type `const char *' */
+#ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
+	POWER_SUPPLY_ATTR(batt_id),
+	POWER_SUPPLY_ATTR(valid_batt_id),
+#elif defined (CONFIG_LGE_PM_OLD_PSY_NODE)
+	POWER_SUPPLY_ATTR(valid_batt_id),
+#endif
+#if defined (CONFIG_LGE_PM_OLD_PSY_NODE)
+	POWER_SUPPLY_ATTR(vzw_chg),
+#endif
+#ifdef CONFIG_LGE_PM_WA_FG_WRONG_SOC
+	POWER_SUPPLY_ATTR(restart),
+#endif
+#ifdef CONFIG_LGE_PM_QC20_DETECT
+	POWER_SUPPLY_ATTR(is_qc20_ta),
+	POWER_SUPPLY_ATTR(is_evp_ta),
+#endif
+#if defined(CONFIG_LGE_PM_FG_AGE)
+	POWER_SUPPLY_ATTR(battery_condition),
+#endif
 	POWER_SUPPLY_ATTR(model_name),
 	POWER_SUPPLY_ATTR(manufacturer),
 	POWER_SUPPLY_ATTR(serial_number),
 	POWER_SUPPLY_ATTR(battery_type),
+	POWER_SUPPLY_ATTR(hw_rev),
 };
 
 static struct attribute *

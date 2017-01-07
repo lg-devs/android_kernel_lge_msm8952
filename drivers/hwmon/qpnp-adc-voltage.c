@@ -33,6 +33,13 @@
 #include <linux/power_supply.h>
 #include <linux/thermal.h>
 
+#ifdef CONFIG_LGE_USB_TYPE_C
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
+
+#define QPNP_VADC_SBU_NORAML	0
+#define QPNP_VADC_SBU_USB_ID	1
+#endif
 /* QPNP VADC register definition */
 #define QPNP_VADC_REVISION1				0x0
 #define QPNP_VADC_REVISION2				0x1
@@ -59,6 +66,13 @@
 #define QPNP_VADC_STATUS2_CONV_SEQ_TIMEOUT_STS			BIT(0)
 #define QPNP_VADC_STATUS2_CONV_SEQ_STATE_SHIFT			4
 #define QPNP_VADC_CONV_TIMEOUT_ERR				2
+
+#define QPNP_VADC_THR_INT_EN_SET				0x15
+#define QPNP_VADC_LOW_THR_INT_EN_SET				BIT(4)
+#define QPNP_VADC_HIGH_THR_INT_EN_SET				BIT(3)
+#define QPNP_VADC_THR_INT_EN_CLR				0x16
+#define QPNP_VADC_LOW_THR_INT_EN_CLR				BIT(4)
+#define QPNP_VADC_HIGH_THR_INT_EN_CLR				BIT(3)
 
 #define QPNP_VADC_MODE_CTL					0x40
 #define QPNP_VADC_OP_MODE_SHIFT					3
@@ -156,6 +170,9 @@ struct qpnp_vadc_chip {
 	struct qpnp_vadc_thermal_data	*vadc_therm_chan;
 	struct power_supply		*vadc_chg_vote;
 	struct sensor_device_attribute	sens_attr[0];
+#ifdef CONFIG_LGE_USB_TYPE_C
+	int	sbu_gpio;
+#endif
 };
 
 LIST_HEAD(qpnp_vadc_device_list);
@@ -599,6 +616,7 @@ static irqreturn_t qpnp_vadc_low_thr_isr(int irq, void *data)
 	struct qpnp_vadc_chip *vadc = data;
 	u8 mode_ctl = 0, mode = 0;
 	int rc = 0;
+	pr_err("VADC threshold low\n");
 
 	rc = qpnp_vadc_read_reg(vadc, QPNP_VADC_MODE_CTL, &mode);
 	if (rc < 0) {
@@ -625,6 +643,7 @@ static irqreturn_t qpnp_vadc_high_thr_isr(int irq, void *data)
 	struct qpnp_vadc_chip *vadc = data;
 	u8 mode_ctl = 0, mode = 0;
 	int rc = 0;
+	pr_err("VADC threshold high\n");
 
 	rc = qpnp_vadc_read_reg(vadc, QPNP_VADC_MODE_CTL, &mode);
 	if (rc < 0) {
@@ -1854,7 +1873,18 @@ int32_t qpnp_vadc_read(struct qpnp_vadc_chip *vadc,
 		}
 
 		return 0;
-	} else
+	}
+#ifdef CONFIG_LGE_USB_TYPE_C
+	else if ((channel == P_MUX1_1_1) && (vadc->sbu_gpio >= 0)) {
+		gpio_set_value(vadc->sbu_gpio, QPNP_VADC_SBU_USB_ID);
+		msleep(10);
+		rc = qpnp_vadc_conv_seq_request(vadc, ADC_SEQ_NONE,
+				channel, result);
+		gpio_set_value(vadc->sbu_gpio, QPNP_VADC_SBU_NORAML);
+		return rc;
+	}
+#endif
+	else
 		return qpnp_vadc_conv_seq_request(vadc, ADC_SEQ_NONE,
 				channel, result);
 }
@@ -2023,6 +2053,69 @@ static int32_t qpnp_vadc_thr_update(struct qpnp_vadc_chip *vadc,
 	return rc;
 }
 
+static int32_t qpnp_vadc_high_thr_int_en(struct qpnp_vadc_chip *chip,
+                                        bool state)
+{
+        int rc = 0;
+        struct qpnp_vadc_chip *vadc = dev_get_drvdata(chip->dev);
+        u8 data = QPNP_VADC_HIGH_THR_INT_EN_SET;
+
+        pr_debug("%s\n", __func__);
+
+        if(state == true) {
+            rc = qpnp_vadc_write_reg(vadc,
+                        QPNP_VADC_THR_INT_EN_SET,
+                        data);
+
+            if(rc < 0) {
+                    pr_err("enabling high thr interrupt failed, err:%d\n", rc);
+                    return rc;
+            }
+        } else {
+            rc = qpnp_vadc_write_reg(vadc,
+                        QPNP_VADC_THR_INT_EN_CLR,
+                        data);
+
+            if(rc < 0) {
+                    pr_err("disabling high thr interrupt failed, err:%d\n", rc);
+                    return rc;
+            }
+        }
+
+        return rc;
+}
+
+static int32_t qpnp_vadc_low_thr_int_en(struct qpnp_vadc_chip *vadc,
+					bool state)
+{
+	int rc = 0;
+	u8 data = QPNP_VADC_LOW_THR_INT_EN_SET;
+
+	pr_debug("%s\n", __func__);
+
+	if(state == true) {
+	    rc = qpnp_vadc_write_reg(vadc,
+			QPNP_VADC_THR_INT_EN_SET,
+			data);
+
+	    if(rc < 0) {
+		    pr_err("enabling low thr interrupt failed, err:%d\n", rc);
+		    return rc;
+	    }
+	} else {
+	    rc = qpnp_vadc_write_reg(vadc,
+			QPNP_VADC_THR_INT_EN_CLR,
+			data);
+
+	    if(rc < 0) {
+		    pr_err("disabling low thr interrupt failed, err:%d\n", rc);
+		    return rc;
+	    }
+	}
+
+	return rc;
+}
+
 int32_t qpnp_vadc_channel_monitor(struct qpnp_vadc_chip *chip,
 					struct qpnp_adc_tm_btm_param *param)
 {
@@ -2106,6 +2199,17 @@ int32_t qpnp_vadc_channel_monitor(struct qpnp_vadc_chip *chip,
 		pr_err("vadc meas timer failed with %d\n", rc);
 		goto fail_unlock;
 	}
+
+        if (param->state_request == ADC_TM_HIGH_THR_ENABLE) {
+                qpnp_vadc_low_thr_int_en(vadc, false);
+                qpnp_vadc_high_thr_int_en(vadc, true);
+        } else if (param->state_request == ADC_TM_LOW_THR_ENABLE) {
+                qpnp_vadc_high_thr_int_en(vadc, false);
+                qpnp_vadc_low_thr_int_en(vadc, true);
+        } else if (param->state_request == ADC_TM_HIGH_LOW_THR_ENABLE) {
+                qpnp_vadc_high_thr_int_en(vadc, true);
+                qpnp_vadc_low_thr_int_en(vadc, true);
+        }
 
 	rc = qpnp_vadc_thr_update(vadc, high_thr, low_thr);
 	if (rc) {
@@ -2446,6 +2550,32 @@ static int qpnp_vadc_probe(struct spmi_device *spmi)
 		INIT_WORK(&vadc->trigger_low_thr_work, qpnp_vadc_low_thr_fn);
 	}
 
+#ifdef CONFIG_LGE_USB_TYPE_C
+
+	rc = of_get_named_gpio(node, "lge,sbu-switch-gpio", 0);
+
+	if (rc < 0) {
+		dev_err(&spmi->dev, "lge,sbu-switch-gpio is not existed.\n");
+	} else {
+
+		vadc->sbu_gpio = rc;
+
+		if (gpio_is_valid(vadc->sbu_gpio)) {
+			rc = gpio_request_one(vadc->sbu_gpio,
+						GPIOF_OUT_INIT_LOW, "qpnp_vadc_sbu_gpio");
+			if (rc) {
+				dev_err(&spmi->dev,
+						"unable to request sbu_gpio, \
+						node=%s, gpio=%d, rc=%d\n",
+						node->name, vadc->sbu_gpio, rc);
+			}
+		} else {
+			dev_err(&spmi->dev,
+					"sbu_gpio is not valid. gpio=%d\n",
+					vadc->sbu_gpio);
+		}
+	}
+#endif
 	vadc->vadc_iadc_sync_lock = false;
 	dev_set_drvdata(&spmi->dev, vadc);
 	list_add(&vadc->list, &qpnp_vadc_device_list);
@@ -2472,6 +2602,10 @@ static int qpnp_vadc_remove(struct spmi_device *spmi)
 	struct device_node *node = spmi->dev.of_node;
 	struct device_node *child;
 	int i = 0;
+#ifdef CONFIG_LGE_USB_TYPE_C
+	if (vadc->sbu_gpio)
+		gpio_free(vadc->sbu_gpio);
+#endif
 
 	for_each_child_of_node(node, child) {
 		device_remove_file(&spmi->dev,

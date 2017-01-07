@@ -115,6 +115,11 @@ struct msm_dai_q6_auxpcm_dai_data {
 	struct msm_dai_q6_dai_data bdai_data; /* incoporate base DAI data */
 };
 
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+extern void mi2s_ext_speaker_on(void);
+extern void mi2s_ext_speaker_off(void);
+#endif
+
 static void msm_dai_q6_dsi_dba_cb(void *data, enum msm_dba_callback_event event)
 {
 	struct msm_dai_q6_mi2s_hdmi_dai_data *ctrl_pdata =
@@ -2890,6 +2895,12 @@ static int msm_dai_q6_mi2s_prepare(struct snd_pcm_substream *substream,
 		else
 			set_bit(STATUS_PORT_STARTED,
 				dai_data->status_mask);
+
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+		if (port_id == AFE_PORT_ID_QUATERNARY_MI2S_RX) {
+			mi2s_ext_speaker_on();
+		}
+#endif
 	}
 	if (!test_bit(STATUS_PORT_STARTED, dai_data->hwfree_status)) {
 		set_bit(STATUS_PORT_STARTED, dai_data->hwfree_status);
@@ -3104,6 +3115,11 @@ static void msm_dai_q6_mi2s_shutdown(struct snd_pcm_substream *substream,
 			__func__, port_id);
 
 	if (test_bit(STATUS_PORT_STARTED, dai_data->status_mask)) {
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+		if (port_id == AFE_PORT_ID_QUATERNARY_MI2S_RX) {
+			mi2s_ext_speaker_off();
+		}
+#endif
 		rc = afe_close(port_id);
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close AFE port\n");

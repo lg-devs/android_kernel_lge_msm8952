@@ -844,7 +844,8 @@ static ssize_t environ_read(struct file *file, char __user *buf,
 	int ret = 0;
 	struct mm_struct *mm = file->private_data;
 
-	if (!mm)
+	/* Ensure the process spawned far enough to have an environment. */
+	if (!mm || !mm->env_end)
 		return 0;
 
 	page = (char *)__get_free_page(GFP_TEMPORARY);
@@ -1039,6 +1040,9 @@ static ssize_t oom_score_adj_write(struct file *file, const char __user *buf,
 	unsigned long flags;
 	int oom_score_adj;
 	int err;
+#ifdef CONFIG_HSWAP
+        struct timespec ts;
+#endif
 
 	memset(buffer, 0, sizeof(buffer));
 	if (count > sizeof(buffer) - 1)
@@ -1080,7 +1084,24 @@ static ssize_t oom_score_adj_write(struct file *file, const char __user *buf,
 		goto err_sighand;
 	}
 
+#ifdef CONFIG_HSWAP
+	if (!task->signal->oom_score_adj) {
+		ts = current_kernel_time();
+		task->signal->top_time += ts.tv_sec - task->signal->before_time;
+		if (task->signal->reclaimed)
+			task->signal->reclaimed = 0;
+	}
+#endif
+
 	task->signal->oom_score_adj = (short)oom_score_adj;
+
+#ifdef CONFIG_HSWAP
+	if (!task->signal->oom_score_adj) {
+		ts = current_kernel_time();
+		task->signal->before_time = ts.tv_sec;
+	}
+#endif
+
 	if (has_capability_noaudit(current, CAP_SYS_RESOURCE))
 		task->signal->oom_score_adj_min = (short)oom_score_adj;
 	trace_oom_score_adj_update(task);

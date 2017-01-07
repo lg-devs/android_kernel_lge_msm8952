@@ -55,6 +55,24 @@ enum btsco_rates {
 	RATE_16KHZ_ID,
 };
 
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+enum {
+	STEREO_SPK_DIR_0,
+	STEREO_SPK_DIR_180,
+};
+
+static int spk_direction = STEREO_SPK_DIR_0;
+
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+enum {
+	SPK_STEREO,
+	SPK_L_ONLY,
+	SPK_R_ONLY,
+};
+static int spk_lr_mode = SPK_STEREO;
+#endif
+#endif
+
 static bool ext_codec;
 
 static int msm8952_auxpcm_rate = 8000;
@@ -79,6 +97,40 @@ static int msm8952_wsa_switch_event(struct snd_soc_dapm_widget *w,
 			      struct snd_kcontrol *kcontrol, int event);
 static int msm8952_ext_audio_switch_event(struct snd_soc_dapm_widget *w,
 			      struct snd_kcontrol *kcontrol, int event);
+
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+static int speaker_control = 0;
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+static int speaker_r_control = 0;
+#endif
+extern void mi2s_ext_speaker_on(void)
+{
+	pr_debug ("%s - Set SD_MODE : High \n", __func__);
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	if(spk_lr_mode == SPK_L_ONLY) {
+		gpio_direction_output(speaker_control, 1);
+	}
+	else if (spk_lr_mode == SPK_R_ONLY) {
+		gpio_direction_output(speaker_r_control, 1);
+	}
+	else {
+		gpio_direction_output(speaker_r_control, 1);
+		gpio_direction_output(speaker_control, 1);
+	}
+#else
+		gpio_direction_output(speaker_control, 1);
+#endif
+}
+
+extern void mi2s_ext_speaker_off(void)
+{
+	pr_debug ("%s - Set SD_MODE : Low\n", __func__);
+	gpio_direction_output(speaker_control, 0);
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	gpio_direction_output(speaker_r_control, 0);
+#endif
+}
+#endif
 
 /*
  * Android L spec
@@ -184,6 +236,12 @@ int is_ext_spk_gpio_support(struct platform_device *pdev,
 			struct msm8916_asoc_mach_data *pdata)
 {
 	const char *spk_ext_pa = "qcom,msm-spk-ext-pa";
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	const char *spk_ext_pa_r = "qcom,msm-spk-ext-pa-r";
+#endif
+	const char *spk_boost_en = "qcom,msm-spk-boost-en";
+#endif
 
 	pr_debug("%s:Enter\n", __func__);
 
@@ -200,6 +258,45 @@ int is_ext_spk_gpio_support(struct platform_device *pdev,
 			return -EINVAL;
 		}
 	}
+
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	pdata->spk_ext_pa_r_gpio = of_get_named_gpio(pdev->dev.of_node,
+				spk_ext_pa_r, 0);
+	if (pdata->spk_ext_pa_r_gpio < 0) {
+		dev_dbg(&pdev->dev,
+			"%s: missing %s in dt node\n", __func__, spk_ext_pa);
+	} else {
+		if (!gpio_is_valid(pdata->spk_ext_pa_r_gpio)) {
+			pr_err("%s: Invalid external speaker gpio: %d",
+				__func__, pdata->spk_ext_pa_r_gpio);
+			return -EINVAL;
+		}
+	}
+#endif
+	pdata->spk_boost_en_gpio = of_get_named_gpio(pdev->dev.of_node,
+				spk_boost_en, 0);
+	if (pdata->spk_boost_en_gpio < 0) {
+		dev_dbg(&pdev->dev,
+			"%s: missing %s in dt node\n", __func__, spk_boost_en);
+	} else {
+		if (!gpio_is_valid(pdata->spk_boost_en_gpio)) {
+			pr_err("%s: Invalid external speaker gpio: %d",
+				__func__, pdata->spk_boost_en_gpio);
+			return -EINVAL;
+		}
+	}
+	gpio_request(pdata->spk_ext_pa_gpio, "spk_ext_pa");
+	gpio_request(pdata->spk_boost_en_gpio, "spk_boost_en");
+	gpio_direction_output(pdata->spk_boost_en_gpio, 1);
+	//gpio_direction_output(pdata->spk_ext_pa_gpio, 1);
+	speaker_control = pdata->spk_ext_pa_gpio;
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	gpio_request(pdata->spk_ext_pa_r_gpio, "spk_ext_pa_r");
+	speaker_r_control = pdata->spk_ext_pa_r_gpio;
+#endif
+#endif
+
 	return 0;
 }
 
@@ -961,6 +1058,64 @@ static int msm_vi_feed_tx_ch_put(struct snd_kcontrol *kcontrol,
 	return 1;
 }
 
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+static const char *stereo_spk_mode[] = {
+	"SPK_DIR_0", "SPK_DIR_180"
+};
+
+static const struct soc_enum msm_stereo_spk_dir_enum[] = {
+	SOC_ENUM_SINGLE_EXT(2, stereo_spk_mode),
+};
+
+static int msm_stereo_spk_dir_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = spk_direction;
+	return 0;
+}
+
+static int msm_stereo_spk_dir_put(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	if (spk_direction != ucontrol->value.integer.value[0]) {
+		spk_direction = ucontrol->value.integer.value[0];
+		pr_debug ("%s: SPK Direction = %d \n", __func__, spk_direction);
+	}
+
+	return 0;
+}
+
+int is_reverse_speaker(void) {
+	return spk_direction;
+}
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+static const char *spk_lr_mode_mix[] = {
+	"SPK_STEREO", "SPK_L_ONLY", "SPK_R_ONLY"
+};
+
+static const struct soc_enum msm_spk_lr_mode_enum[] = {
+	SOC_ENUM_SINGLE_EXT(3, spk_lr_mode_mix),
+};
+
+static int msm_spk_lr_mode_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = spk_lr_mode;
+	return 0;
+}
+
+static int msm_spk_lr_mode_put(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	if (spk_lr_mode != ucontrol->value.integer.value[0]) {
+		spk_lr_mode = ucontrol->value.integer.value[0];
+		pr_debug ("%s: SPK Direction = %d \n", __func__, spk_lr_mode);
+	}
+
+	return 0;
+}
+#endif
+#endif
 
 static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, rx_bit_format_text),
@@ -991,7 +1146,14 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_proxy_rx_ch_get, msm_proxy_rx_ch_put),
 	SOC_ENUM_EXT("VI_FEED_TX Channels", msm_snd_enum[4],
 			msm_vi_feed_tx_ch_get, msm_vi_feed_tx_ch_put),
-
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+	SOC_ENUM_EXT("SPK Rotation", msm_stereo_spk_dir_enum[0],
+			msm_stereo_spk_dir_get, msm_stereo_spk_dir_put),
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+	SOC_ENUM_EXT("SPK LR Mode", msm_spk_lr_mode_enum[0],
+			msm_spk_lr_mode_get, msm_spk_lr_mode_put),
+#endif
+#endif
 };
 
 static int msm8952_mclk_event(struct snd_soc_dapm_widget *w,
@@ -1445,6 +1607,15 @@ static void msm_quat_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 	pr_debug("%s(): substream = %s  stream = %d\n", __func__,
 				substream->name, substream->stream);
 	if ((pdata->ext_pa & QUAT_MI2S_ID) == QUAT_MI2S_ID) {
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+		// set spk dir as default not to swap for other devs(headset & etcs)
+		if (is_reverse_speaker())
+			spk_direction = STEREO_SPK_DIR_0;
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER_SEPERATE
+		if (!spk_lr_mode)
+			spk_lr_mode = SPK_STEREO;
+#endif
+#endif
 		ret = quat_mi2s_sclk_ctl(substream, false);
 		if (ret < 0)
 			pr_err("%s:clock disable failed\n", __func__);
@@ -1544,7 +1715,7 @@ static void *def_msm8952_wcd_mbhc_cal(void)
 	}
 
 #define S(X, Y) ((WCD_MBHC_CAL_PLUG_TYPE_PTR(msm8952_wcd_cal)->X) = (Y))
-	S(v_hs_max, 1500);
+	S(v_hs_max, 1600);
 #undef S
 #define S(X, Y) ((WCD_MBHC_CAL_BTN_DET_PTR(msm8952_wcd_cal)->X) = (Y))
 	S(num_btn, WCD_MBHC_DEF_BUTTONS);
@@ -1567,16 +1738,30 @@ static void *def_msm8952_wcd_mbhc_cal(void)
 	 * 210-290 == Button 2
 	 * 360-680 == Button 3
 	 */
-	btn_low[0] = 75;
-	btn_high[0] = 75;
-	btn_low[1] = 150;
-	btn_high[1] = 150;
-	btn_low[2] = 225;
-	btn_high[2] = 225;
-	btn_low[3] = 450;
-	btn_high[3] = 450;
-	btn_low[4] = 500;
-	btn_high[4] = 500;
+
+#ifdef CONFIG_MACH_LGE
+		btn_low[0] = 75; /* hook */
+		btn_high[0] = 75;
+		btn_low[1] = 125; /* voice command */
+		btn_high[1] = 125;
+		btn_low[2] = 212; /* vol up */
+		btn_high[2] = 212;
+		btn_low[3] = 450; /* vol dn */
+		btn_high[3] = 450;
+		btn_low[4] = 500; /* none */
+		btn_high[4] = 500;
+#else
+		btn_low[0] = 75; /* hook */
+		btn_high[0] = 75;
+		btn_low[1] = 150; /* voice command */
+		btn_high[1] = 150;
+		btn_low[2] = 225; /* vol up */
+		btn_high[2] = 225;
+		btn_low[3] = 450; /* vol dn */
+		btn_high[3] = 450;
+		btn_low[4] = 500; /* none */
+		btn_high[4] = 500;
+#endif
 
 	return msm8952_wcd_cal;
 }
@@ -1625,7 +1810,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 			return ret;
 		}
 	}
-	return msm8x16_wcd_hs_detect(codec, &mbhc_cfg);
+	return 0;
 }
 
 static struct snd_soc_ops msm8952_quat_mi2s_be_ops = {
@@ -2037,8 +2222,13 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA7,
 	},
 	{ /* hw:x,25 */
+	#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+		.name = "Quaternary MI2S_RX Hostless",
+		.stream_name = "Quaternary MI2S_RX Hostless",
+	#else
 		.name = "QUAT_MI2S Hostless",
 		.stream_name = "QUAT_MI2S Hostless",
+	#endif
 		.cpu_dai_name = "QUAT_MI2S_RX_HOSTLESS",
 		.platform_name = "msm-pcm-hostless",
 		.dynamic = 1,
@@ -2456,6 +2646,23 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.ops = &msm8952_quin_mi2s_be_ops,
 		.ignore_suspend = 1,
 	},
+#ifdef CONFIG_SND_LGE_DSDP_DUAL_AUDIO
+	{
+		.name = "Dual Audio",
+		.stream_name = "Dual audio",
+		.cpu_dai_name	= "MultiMedia2",
+		.platform_name  = "msm-pcm-dsp.0",
+		.dynamic = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA2,
+	},
+#endif
 };
 
 static int msm8952_wsa881x_init(struct snd_soc_dapm_context *dapm)

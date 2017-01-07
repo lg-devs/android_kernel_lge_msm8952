@@ -1,0 +1,108 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#ifdef CONFIG_INPUT_SENSOR
+/ {
+	aliases {
+		i2c4 = &i2c_4;
+	};
+};
+
+ &soc {
+	i2c_4: i2c@78b8000 { /* BLSP1 QUP4 */
+		compatible = "qcom,i2c-msm-v2";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg-names = "qup_phys_addr";
+		reg = <0x78b8000 0x600>;
+		interrupt-names = "qup_irq";
+		interrupts = <0 98 0>;
+		qcom,clk-freq-out = <400000>;
+		qcom,clk-freq-in  = <19200000>;
+		clock-names = "iface_clk", "core_clk";
+		clocks = <&clock_gcc clk_gcc_blsp1_ahb_clk>,
+			<&clock_gcc clk_gcc_blsp1_qup4_i2c_apps_clk>;
+
+		pinctrl-names = "i2c_active", "i2c_sleep";
+		pinctrl-0 = <&i2c_4_active>;
+		pinctrl-1 = <&i2c_4_sleep>;
+		qcom,noise-rjct-scl = <0>;
+		qcom,noise-rjct-sda = <0>;
+		qcom,master-id = <86>;
+		dmas = <&dma_blsp1 14 64 0x20000020 0x20>,
+			<&dma_blsp1 15 32 0x20000020 0x20>;
+		dma-names = "tx", "rx";
+	};
+
+	i2c@78b8000 { /* BLSP1 QUP4 */
+		/* Acceleration Sensor Driver */
+		st_k303c_acc@1d {
+			compatible = "st,k303c_acc";
+			reg = <0x1d>;
+			interrupt-parent = <&msm_gpio>;
+			interrupts = <42 0x2>;
+			st,vdd_ana-supply = <&pm8950_l10>;
+			st,vddio_i2c-supply = <&pm8950_l6>;
+			pinctrl-names = "default", "sleep";
+			pinctrl-0 = <&st_k303c_acc_int_active>;
+			pinctrl-1 = <&st_k303c_acc_int_suspend>;
+			st,irq-gpio = <&msm_gpio 42 0x00>;
+			st,i2c-pull-up = <1>;
+		};
+
+		/* Magnetic Sensor Driver */
+		st_k303c_mag@1e {
+			compatible = "st,k303c_mag";
+			reg = <0x1e>;
+			interrupt-parent = <&msm_gpio>;
+			interrupts = <44 0x2>;
+			st,vdd_ana-supply = <&pm8950_l10>;
+			st,vddio_i2c-supply = <&pm8950_l6>;
+			pinctrl-names = "default", "sleep";
+			pinctrl-0 = <&st_k303c_mag_active>;
+			pinctrl-1 = <&st_k303c_mag_suspend>;
+			st,irq-gpio = <&msm_gpio 44 0x00>;
+			st,i2c-pull-up = <1>;
+		};
+
+		/* Ambient Light and Proximity Sensor Driver */
+		rpr05210@38 {
+			status = "ok";
+			reg = <0x38>;
+			compatible = "rohm,rpr0521";
+			interrupt-parent = <&msm_gpio>;
+			interrupts = <43 0x2>;
+			Rohm,vdd-supply = <&pm8950_l10>;
+			Rohm,vcc_i2c-supply = <&pm8950_l6>;
+			pinctrl-names = "default", "sleep";
+			pinctrl-0 = <&rpr0521_int_active>;
+			pinctrl-1 = <&rpr0521_int_suspend>;
+			Rohm,i2c-pull-up;
+			Rohm,irq-gpio = <&msm_gpio 43 0x0>;
+			Rohm,pulse = <0>;
+			Rohm,mode = <0>;
+			Rohm,measure_time = <6>;
+			Rohm,led_current = <2>;
+			Rohm,als_gain = <0>;
+			Rohm,infrared_level = <0>;
+			Rohm,ps_gain = <1>;
+			Rohm,persistence = <2>;
+			Rohm,near_offset = <14>;
+			Rohm,far_offset = <11>;
+			Rohm,bright_threshold = <10>;
+			Rohm,dark_threshold = <5>;
+			Rohm,default_cross_talk = <50>;
+		};
+	};
+};
+#endif/*CONFIG_INPUT_SENSOR*/

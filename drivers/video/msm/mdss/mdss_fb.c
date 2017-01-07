@@ -56,6 +56,14 @@
 #define CREATE_TRACE_POINTS
 #include "mdss_debug.h"
 
+#ifdef CONFIG_LGE_DISPLAY_PANEL_CHECK
+#include <soc/qcom/lge/lge_display_panel_check.h>
+#endif
+
+#ifdef CONFIG_LGE_READER_MODE
+#include "mdss_mdp.h"
+#endif
+
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
 #else
@@ -80,6 +88,11 @@ static u32 mdss_fb_pseudo_palette[16] = {
 	0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
 	0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
+
+#if defined(CONFIG_LGE_BROADCAST_TDMB) || defined(CONFIG_LGE_BROADCAST_ISDBT_JAPAN)
+extern struct mdp_csc_cfg dmb_csc_convert;
+extern int pp_set_dmb_status(int flag);
+#endif /* LGE_BROADCAST */
 
 static struct msm_mdp_interface *mdp_instance;
 
@@ -114,6 +127,10 @@ static void mdss_fb_set_mdp_sync_pt_threshold(struct msm_fb_data_type *mfd,
 static void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 					struct fb_var_screeninfo *var);
 
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+extern int brightness_to_blmap(enum led_brightness value);
+#endif
+
 static int lcd_backlight_registered;
 
 static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
@@ -132,9 +149,17 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 
 	/* This maps android backlight level 0 to 255 into
 	   driver backlight level 0 to bl_max with rounding */
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+	bl_lvl = brightness_to_blmap(value);
+#elif defined(CONFIG_SHARP_NT35596_FHD_VIDEO_LCD_PANEL) || defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) \
+      || defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+	if (mfd->panel_info->blmap)
+		bl_lvl = mfd->panel_info->blmap[value];
+	//pr_info("value(%d) -> bl_lvl(%d)\n", value, bl_lvl);
+#else
 	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
 				mfd->panel_info->brightness_max);
-
+#endif
 	if (!bl_lvl && value)
 		bl_lvl = 1;
 
@@ -775,6 +800,25 @@ static ssize_t mdss_fb_get_dfps_mode(struct device *dev,
 	return ret;
 }
 
+#ifdef CONFIG_LGE_DISPLAY_PANEL_CHECK
+static ssize_t mdss_fb_get_panel_type(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int ret = 0;
+	int panel_type = lge_get_panel();
+
+	if (panel_type == TOVIS_FHD_VIDEO_PANEL)
+		ret = snprintf(buf, PAGE_SIZE, "TOVIS - ILITEK\n");
+	else if(panel_type == INNOLUX_WUXGA_VIDEO_PANEL)
+		ret = snprintf(buf, PAGE_SIZE, "INNOLUX - NOVATEK\n");
+	else if(panel_type == TOVIS_WUXGA_VIDEO_PANEL)
+		ret = snprintf(buf, PAGE_SIZE, "TOVIS - NOVATEK\n");
+
+	return ret;
+}
+static DEVICE_ATTR(panel_type, S_IRUGO, mdss_fb_get_panel_type, NULL);
+#endif
+
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
 static DEVICE_ATTR(msm_fb_split, S_IRUGO | S_IWUSR, mdss_fb_show_split,
 					mdss_fb_store_split);
@@ -802,6 +846,9 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_thermal_level.attr,
 	&dev_attr_msm_fb_panel_status.attr,
 	&dev_attr_msm_fb_dfps_mode.attr,
+#ifdef CONFIG_LGE_DISPLAY_PANEL_CHECK
+	&dev_attr_panel_type.attr,
+#endif
 	NULL,
 };
 
@@ -840,6 +887,9 @@ static void mdss_fb_shutdown(struct platform_device *pdev)
 	unlock_fb_info(mfd->fbi);
 }
 
+#ifdef CONFIG_LGE_READER_MODE
+struct msm_fb_data_type *mfd_base;
+#endif
 static int mdss_fb_probe(struct platform_device *pdev)
 {
 	struct msm_fb_data_type *mfd = NULL;
@@ -893,6 +943,9 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	mfd->ad_bl_level = 0;
 	mfd->calib_mode_bl = 0;
 	mfd->fb_imgType = MDP_RGBA_8888;
+#ifdef CONFIG_MACH_LGE
+	mfd->bl_level_scaled = -1;
+#endif
 
 	if (mfd->panel.type == MIPI_VIDEO_PANEL ||
 				mfd->panel.type == MIPI_CMD_PANEL) {
@@ -990,6 +1043,10 @@ static int mdss_fb_probe(struct platform_device *pdev)
 			pr_err("failed to register input handler\n");
 
 	INIT_DELAYED_WORK(&mfd->idle_notify_work, __mdss_fb_idle_notify_work);
+#ifdef CONFIG_LGE_READER_MODE
+	if (mfd_base == NULL)
+		mfd_base = mfd;
+#endif
 
 	return rc;
 }
@@ -1322,7 +1379,7 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 		} else {
 			if (mfd->bl_level != bkl_lvl)
 				bl_notify_needed = true;
-			pr_debug("backlight sent to panel :%d\n", temp);
+			pr_info("backlight sent to panel :%d\n", temp);
 			pdata->set_backlight(pdata, temp);
 			mfd->bl_level = bkl_lvl;
 			mfd->bl_level_scaled = temp;
@@ -2559,7 +2616,7 @@ static int mdss_fb_release_all(struct fb_info *info, bool release_all)
 
 		/* reset backlight scale variables */
 		mfd->bl_scale = 1024;
-		mfd->bl_level_scaled = 0;
+		mfd->bl_level_scaled = -1;
 
 		atomic_set(&mfd->ioctl_ref_cnt, 0);
 	} else if (release_needed) {
@@ -3781,6 +3838,11 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	unsigned int dsi_mode = 0;
 	struct mdss_panel_data *pdata = NULL;
 
+#if defined(CONFIG_LGE_BROADCAST_TDMB) || defined(CONFIG_LGE_BROADCAST_ISDBT_JAPAN)
+    int dmb_flag = 0;
+    struct mdp_csc_cfg dmb_csc_cfg;
+#endif /* LGE_BROADCAST */	
+
 	if (!info || !info->par)
 		return -EINVAL;
 
@@ -3847,6 +3909,24 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	case MSMFB_DISPLAY_COMMIT:
 		ret = mdss_fb_display_commit(info, argp);
 		break;
+
+#if defined(CONFIG_LGE_BROADCAST_TDMB) || defined(CONFIG_LGE_BROADCAST_ISDBT_JAPAN)
+    case MSMFB_DMB_SET_FLAG:
+        ret = copy_from_user(&dmb_flag, argp, sizeof(int));
+        if (ret)
+            return ret;
+        ret = pp_set_dmb_status(dmb_flag);
+		/* pr_debug("[MDP] MSMFB_DMB_SET_FLAG : dmb_flag = %d\n", dmb_flag); */
+		break;
+
+    case MSMFB_DMB_SET_CSC_MATRIX:
+        ret = copy_from_user(&dmb_csc_cfg, argp, sizeof(dmb_csc_cfg));
+        if (ret)
+            return ret;
+        memcpy(dmb_csc_convert.csc_mv, dmb_csc_cfg.csc_mv, sizeof(dmb_csc_cfg.csc_mv));
+		/* pr_debug("[MDP] MSMFB_DMB_SET_CSC_MATRIX : dmc_csc_cfg.flag = %d\n", dmb_csc_cfg.flags); */
+        break;
+#endif /* LGE_BROADCAST */
 
 	case MSMFB_LPM_ENABLE:
 		ret = copy_from_user(&dsi_mode, argp, sizeof(dsi_mode));

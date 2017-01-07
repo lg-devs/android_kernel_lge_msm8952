@@ -37,6 +37,10 @@
 #include "mdss_mdp.h"
 #include "mdss_mdp_rotator.h"
 
+#if defined(CONFIG_TOUCHSCREEN_UNIFIED_DRIVER_3) && defined(CONFIG_LGE_DYNAMIC_FPS)
+#include <linux/input/unified_driver_3/lgtp_common_notify.h>
+#endif
+
 #define VSYNC_PERIOD 16
 #define BORDERFILL_NDX	0x0BF000BF
 #define CHECK_BOUNDS(offset, size, max_size) \
@@ -51,6 +55,9 @@
 
 #define BUF_POOL_SIZE 32
 #define PIPE_CLEANUP_TIMEOUT_US 100000
+#define MAX_CURSOR_IMG_WIDTH 512
+#define MAX_CURSOR_IMG_HEIGHT 512
+
 #define MAX_CURSOR_IMG_WIDTH 512
 #define MAX_CURSOR_IMG_HEIGHT 512
 
@@ -2794,12 +2801,17 @@ static ssize_t dynamic_fps_sysfs_wta_dfps(struct device *dev,
 				pdata->panel_info.max_fps);
 		dfps = pdata->panel_info.max_fps;
 	}
+
 	pdata->panel_info.new_fps = dfps;
 
 	mutex_unlock(&mdp5_data->dfps_lock);
+
+#if defined(CONFIG_TOUCHSCREEN_UNIFIED_DRIVER_3) && defined(CONFIG_LGE_DYNAMIC_FPS)
+		touch_notifier_call_chain(LCD_EVENT_FPS_CHANGED,NULL);
+#endif
+
 	return count;
 } /* dynamic_fps_sysfs_wta_dfps */
-
 
 static DEVICE_ATTR(dynamic_fps, S_IRUGO | S_IWUSR, dynamic_fps_sysfs_rda_dfps,
 	dynamic_fps_sysfs_wta_dfps);

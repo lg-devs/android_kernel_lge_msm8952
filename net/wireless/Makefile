@@ -19,7 +19,12 @@ CFLAGS_trace.o := -I$(src)
 
 ccflags-y += -D__CHECK_ENDIAN__
 
+ifeq ($(CONFIG_MACH_MSM8952_B5_JP_KDI),y)
+$(obj)/regdb.c: $(src)/db_kddi.txt $(src)/genregdb.awk
+	@$(AWK) -f $(srctree)/$(src)/genregdb.awk < $< > $@
+else
 $(obj)/regdb.c: $(src)/db.txt $(src)/genregdb.awk
 	@$(AWK) -f $(srctree)/$(src)/genregdb.awk < $< > $@
+endif
 
 clean-files := regdb.c

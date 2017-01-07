@@ -359,6 +359,9 @@ int ehci_bus_suspend(struct usb_hcd *hcd)
 }
 EXPORT_SYMBOL(ehci_bus_suspend);
 
+#if defined(CONFIG_LGE_USB_TYPE_A)
+int is_port_wrong;
+#endif
 /* caller has locked the root hub, and should reset/reinit on error */
 int __maybe_unused ehci_bus_resume(struct usb_hcd *hcd)
 {
@@ -420,6 +423,9 @@ int __maybe_unused ehci_bus_resume(struct usb_hcd *hcd)
 		if ((temp & PORT_PE) &&
 				!(temp & (PORT_SUSPEND | PORT_RESUME))) {
 			ehci_dbg(ehci, "Port status(0x%x) is wrong\n", temp);
+#if defined(CONFIG_LGE_USB_TYPE_A)
+			is_port_wrong = 1;
+#endif
 			spin_unlock_irq(&ehci->lock);
 			msleep(8);
 			spin_lock_irq(&ehci->lock);

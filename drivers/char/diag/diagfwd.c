@@ -51,6 +51,9 @@
 static int timestamp_switch;
 module_param(timestamp_switch, int, 0644);
 
+#ifdef CONFIG_LGE_DM_APP
+#include "lg_dm_tty.h"
+#endif
 int wrap_enabled;
 uint16_t wrap_count;
 static struct diag_hdlc_decode_type *hdlc_decode;
@@ -272,6 +275,11 @@ static void pack_rsp_and_send(unsigned char *buf, int len)
 		 */
 		if (driver->logging_mode == MEMORY_DEVICE_MODE)
 			chk_logging_wakeup();
+
+#ifdef CONFIG_LGE_DM_APP
+		if (driver->logging_mode == DM_APP_MODE)
+			chk_logging_wakeup();
+#endif
 	}
 	if (driver->rsp_buf_busy) {
 		pr_err("diag: unable to get hold of response buffer\n");
@@ -340,6 +348,11 @@ static void encode_rsp_and_send(unsigned char *buf, int len)
 		 */
 		if (driver->logging_mode == MEMORY_DEVICE_MODE)
 			chk_logging_wakeup();
+
+#ifdef CONFIG_LGE_DM_APP
+		if (driver->logging_mode == DM_APP_MODE)
+			chk_logging_wakeup();
+#endif
 	}
 
 	if (driver->rsp_buf_busy) {
@@ -451,16 +464,27 @@ void diag_update_sleeping_process(int process_id, int data_type)
 static int diag_send_data(struct diag_cmd_reg_t *entry, unsigned char *buf,
 			  int len)
 {
+	uint8_t proc;
+
 	if (!entry)
 		return -EIO;
 
-	if (entry->proc == APPS_DATA) {
+	proc = entry->proc;
+
+	/*LGE_Change_S jaseseung.noh W/A for qcn download fail via QPST tool*/
+	if((((uint8_t *)buf)[0] == 41)&&(((uint8_t *)buf)[1] != 2))
+	{
+		proc = PERIPHERAL_MODEM;
+	}
+	/*LGE_Change_E jaseseung.noh W/A for qcn download fail via QPST tool*/
+
+	if (proc == APPS_DATA) {
 		diag_update_pkt_buffer(buf, len, PKT_TYPE);
 		diag_update_sleeping_process(entry->pid, PKT_TYPE);
 		return 0;
 	}
 
-	return diagfwd_write(entry->proc, TYPE_CMD, buf, len);
+	return diagfwd_write(proc, TYPE_CMD, buf, len);
 }
 
 void diag_process_stm_mask(uint8_t cmd, uint8_t data_mask, int data_type)
@@ -732,6 +756,46 @@ int diag_check_common_cmd(struct diag_pkt_header_t *header)
 	return 0;
 }
 
+#if defined(CONFIG_LGE_USB_DIAG_LOCK)
+extern int get_diag_enable(void);
+#define DIAG_ENABLE			1
+#define DIAG_DISABLE			0
+#define COMMAND_PORT_LOCK		0xA1
+#define COMMAND_WEB_DOWNLOAD		0xEF
+#define COMMAND_ASYNC_HDLC_FLAG		0x7E
+#define COMMAND_DLOAD_RESET		0x3A
+#define COMMAND_TEST_MODE		0xFA
+#define COMMAND_TEST_MODE_RESET		0x29
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_VZW
+#define COMMAND_VZW_AT_LOCK		0xF8
+#endif
+
+int is_filtering_command(char *buf)
+{
+	if (buf == NULL)
+		return 0;
+
+	switch(buf[0]) {
+		case COMMAND_PORT_LOCK :
+#ifndef CONFIG_LGE_USB_DIAG_LOCK_SPR
+		case COMMAND_WEB_DOWNLOAD :
+		case COMMAND_ASYNC_HDLC_FLAG :
+		case COMMAND_DLOAD_RESET :
+		case COMMAND_TEST_MODE :
+		case COMMAND_TEST_MODE_RESET :
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_VZW
+		case COMMAND_VZW_AT_LOCK :
+#endif
+#endif
+			return 1;
+		default:
+			break;
+	}
+
+	return 0;
+}
+#endif
+
 static int diag_cmd_chk_stats(unsigned char *src_buf, int src_len,
 			      unsigned char *dest_buf, int dest_len)
 {
@@ -843,6 +907,19 @@ int diag_process_apps_pkt(unsigned char *buf, int len)
 
 	if (!buf)
 		return -EIO;
+#if defined(CONFIG_LGE_USB_DIAG_LOCK)
+	/* buf[0] : 0xA1(161) is a diag command for mdm port lock */
+	if (!is_filtering_command(buf) && (get_diag_enable() == DIAG_DISABLE))
+#if defined(CONFIG_LGE_USB_DIAG_LOCK_SPR) || defined(CONFIG_LGE_USB_DIAG_LOCK_TRF)
+	{
+		driver->apps_rsp_buf[0] = 24;
+		encode_rsp_and_send(0);
+		return 0;
+	}
+#else
+		return 0;
+#endif //defined(CONFIG_LGE_USB_DIAG_LOCK_SPR) || defined(CONFIG_LGE_USB_DIAG_LOCK_TRF)
+#endif
 
 	/* Check if the command is a supported mask command */
 	mask_ret = diag_process_apps_masks(buf, len);
@@ -859,7 +936,6 @@ int diag_process_apps_pkt(unsigned char *buf, int len)
 	entry.cmd_code_hi = (uint16_t)(*(uint16_t *)temp);
 	entry.cmd_code_lo = (uint16_t)(*(uint16_t *)temp);
 	temp += sizeof(uint16_t);
-
 	pr_debug("diag: In %s, received cmd %02x %02x %02x\n",
 		 __func__, entry.cmd_code, entry.subsys_id, entry.cmd_code_hi);
 
@@ -875,6 +951,7 @@ int diag_process_apps_pkt(unsigned char *buf, int len)
 
 	mutex_lock(&driver->cmd_reg_mutex);
 	temp_entry = diag_cmd_search(&entry, ALL_PROC);
+
 	if (temp_entry) {
 		reg_item = container_of(temp_entry, struct diag_cmd_reg_t,
 								entry);
@@ -1115,6 +1192,7 @@ void diag_process_hdlc_pkt(void *data, unsigned len)
 		if (err < 0)
 			goto fail;
 	} else {
+		driver->hdlc_buf_len = 0;
 		goto end;
 	}
 
@@ -1183,7 +1261,12 @@ static int diagfwd_mux_close(int id, int mode)
 	}
 
 	if ((mode == DIAG_USB_MODE &&
+#ifndef CONFIG_LGE_DM_APP
 	     driver->logging_mode == MEMORY_DEVICE_MODE) ||
+#else
+		(driver->logging_mode == MEMORY_DEVICE_MODE ||
+		driver->logging_mode == DM_APP_MODE)) ||
+#endif
 	    (mode == DIAG_MEMORY_DEVICE_MODE &&
 	     driver->logging_mode == USB_MODE)) {
 		/*

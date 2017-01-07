@@ -123,6 +123,78 @@ struct mdp_csc_cfg mdp_csc_convert[MDSS_MDP_MAX_CSC] = {
 	},
 };
 
+#if defined(CONFIG_LGE_BROADCAST_TDMB) || defined(CONFIG_LGE_BROADCAST_ISDBT_JAPAN)
+struct mdp_csc_cfg dmb_csc_convert = {
+#if defined(CONFIG_MACH_MSM8952_B5_JP_KDI)
+	0,
+	{
+		0x0254, 0x0000, 0x0331,    // 298
+		0x0230, 0xff37, 0xfe60,    // 280
+		0x026e, 0x0409, 0x0000,    // 311
+	},
+	{ 0xfff0, 0xff80, 0xff80,},
+	{ 0x0, 0x0, 0x0,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+#elif defined(CONFIG_MACH_MSM8937_L5_DCM_JP)
+	0,
+	{
+		0x0254, 0x0000, 0x0331,    // 298
+		0x0230, 0xff37, 0xfe60,    // 280
+		0x026e, 0x0409, 0x0000,    // 311
+	},
+	{ 0xfff0, 0xff80, 0xff80,},
+	{ 0x0, 0x0, 0x0,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+#elif defined(CONFIG_MACH_MSM8992_P1_KDDI_JP)
+	0,
+	{
+		0x0252, 0x0000, 0x0331,    // 297
+		0x0234, 0xff37, 0xfe60,    // 282
+		0x0272, 0x0409, 0x0000,    // 313
+	},
+	{ 0xfff0, 0xff80, 0xff80,},
+	{ 0x0, 0x0, 0x0,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+#elif defined(CONFIG_MACH_MSM8974_G3_KDDI)
+    0,
+    {
+        0x023e, 0x0000, 0x0331,    // 287
+        0x0244, 0xff38, 0xfe61,    // 290
+        0x026c, 0x0409, 0x0000,    // 310
+    },
+    { 0xfff0, 0xff80, 0xff80,},
+    { 0x0, 0x0, 0x0,},
+    { 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+    { 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+#elif defined(CONFIG_MACH_MSM8974_DZNY_DCM)
+    0,
+    {
+        0x0218, 0x0000, 0x0331,    // 268
+        0x0238, 0xff38, 0xfe61,    // 284
+        0x026c, 0x0409, 0x0000,    // 310
+    },
+    { 0xfff0, 0xff80, 0xff80,},
+    { 0x0, 0x0, 0x0,},
+    { 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+    { 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+#else
+	0,
+	{
+		0x0254, 0x0000, 0x0331,
+		0x0254, 0xff37, 0xfe60,
+		0x0254, 0x0409, 0x0000,
+	},
+	{ 0xfff0, 0xff80, 0xff80,},
+	{ 0x0, 0x0, 0x0,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+#endif
+};
+#endif /* LGE_BROADCAST */
+
 /*
  * To program a linear LUT we need to make the slope to be 1/16 to enable
  * conversion from 12bit to 8bit. Also in cases where post blend values might
@@ -441,6 +513,16 @@ struct mdss_pp_res_type {
 
 static DEFINE_MUTEX(mdss_pp_mutex);
 static struct mdss_pp_res_type *mdss_pp_res;
+
+#if defined(CONFIG_LGE_BROADCAST_TDMB) || defined(CONFIG_LGE_BROADCAST_ISDBT_JAPAN)
+static int dmb_status; // on - 1, off - 0
+
+int pp_set_dmb_status(int flag) {
+    dmb_status = flag;
+
+    return 0;
+}
+#endif /* LGE_BROADCAST */
 
 static u32 pp_hist_read(char __iomem *addr,
 				struct pp_hist_col_info *hist_info);
@@ -1046,8 +1128,15 @@ static int pp_vig_pipe_setup(struct mdss_mdp_pipe *pipe, u32 *op)
 				  (1 << 18) |	/* SRC_DATA=YCBCR */
 				  (1 << 17);	/* CSC_1_EN */
 
-			mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num,
-					   pp_vig_csc_pipe_val(pipe));
+#if !defined(CONFIG_LGE_BROADCAST_TDMB) && !defined(CONFIG_LGE_BROADCAST_ISDBT_JAPAN)
+            mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num, pp_vig_csc_pipe_val(pipe));
+#else
+            if(dmb_status == 1) {
+                mdss_mdp_csc_setup_data(MDSS_MDP_BLOCK_SSPP, pipe->num, &dmb_csc_convert);
+            } else {
+                mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num, pp_vig_csc_pipe_val(pipe));
+            }
+#endif /* LGE_BROADCAST */
 		}
 	}
 

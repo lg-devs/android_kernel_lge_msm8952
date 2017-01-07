@@ -308,6 +308,15 @@ struct mdss_data_type {
 	bool allow_cx_vddmin;
 	bool vdd_cx_en;
 	struct mdss_perf_tune perf_tune;
+#ifdef CONFIG_LGE_VSYNC_SKIP
+	char enable_skip_vsync;
+	ulong skip_value;
+	ulong weight;
+	ulong bucket;
+	ulong skip_count;
+	int skip_ratio;
+	bool skip_first;
+#endif
 	bool traffic_shaper_en;
 	int iommu_ref_cnt;
 	u32 latency_buff_per;

@@ -23,9 +23,20 @@
 #include <linux/delay.h>
 #include <linux/leds-qpnp-wled.h>
 
+#ifdef CONFIG_LGE_PM
+#include <soc/qcom/smem.h>
+#include <soc/qcom/lge/lge_boot_mode.h>
+#include <soc/qcom/lge/lge_battery_id.h>
+extern int chg_done;
+extern int key_power_flag;
+#endif
+
 #define QPNP_IRQ_FLAGS	(IRQF_TRIGGER_RISING | \
 			IRQF_TRIGGER_FALLING | \
 			IRQF_ONESHOT)
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+#include <linux/ctype.h>
+#endif
 
 /* base addresses */
 #define QPNP_WLED_CTRL_BASE		"qpnp-wled-ctrl-base"
@@ -195,6 +206,11 @@
 #define QPNP_WLED_MIN_MSLEEP		20
 #define QPNP_WLED_SC_DLY_MS		20
 
+#ifdef CONFIG_MACH_LGE
+extern int sched_set_boost(int enable);
+extern bool is_boost_en;
+#endif
+
 /* output feedback mode */
 enum qpnp_wled_fdbk_op {
 	QPNP_WLED_FDBK_AUTO,
@@ -306,8 +322,14 @@ struct qpnp_wled {
 	bool disp_type_amoled;
 	bool en_ext_pfet_sc_pro;
 	bool prev_state;
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+	int blmap_size;
+	u32 *blmap;
+#endif
 };
-
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+static struct qpnp_wled *gwled;
+#endif
 /* helper to read a pmic register */
 static int qpnp_wled_read_reg(struct qpnp_wled *wled, u8 *data, u16 addr)
 {
@@ -414,6 +436,36 @@ static int qpnp_wled_module_en(struct qpnp_wled *wled,
 {
 	int rc;
 	u8 reg;
+	static bool cur_state = true;
+
+#ifdef CONFIG_LGE_PM_USE_SIDE_PWR_KEY
+	pr_info("[DEBUG] skip if use side pwr key\n");
+#else
+#ifdef CONFIG_LGE_PM
+	if (lge_get_boot_mode() == LGE_BOOT_MODE_CHARGERLOGO) {
+		if (key_power_flag) {
+			key_power_flag = false;
+			pr_info("[DEBUG] Chargerlogo resume key_power pressed\n");
+		} else {
+			if (chg_done) {
+				if (state == false) {
+					pr_info("[DEBUG] First Boot Check backlight off\n");
+				} else {
+					pr_info("[DEBUG] Charging DONE! Don't turn on backlight\n");
+					if (is_boost_en) {
+						sched_set_boost(0);
+						is_boost_en = false;
+						pr_info("display:set_boost--\n");
+					}
+					return 0;
+				}
+			} else {
+				pr_info("[DEBUG] Chargerlogo resume backlight\n");
+			}
+		}
+	}
+#endif
+#endif
 
 	/* disable OVP fault interrupt */
 	if (state) {
@@ -424,6 +476,10 @@ static int qpnp_wled_module_en(struct qpnp_wled *wled,
 			return rc;
 	}
 
+#if defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) || defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+if(state)
+	msleep(100);
+#endif
 	rc = qpnp_wled_read_reg(wled, &reg,
 			QPNP_WLED_MODULE_EN_REG(base_addr));
 	if (rc < 0)
@@ -445,6 +501,22 @@ static int qpnp_wled_module_en(struct qpnp_wled *wled,
 			return rc;
 	}
 
+	if (cur_state != state) {
+		cur_state = state;
+#ifdef CONFIG_MACH_LGE
+		if (cur_state && is_boost_en) {
+			sched_set_boost(0);
+			is_boost_en = false;
+			pr_info("display:set_boost--\n");
+		}
+#endif
+		pr_info("[Backlight] %s[%d]\n", __func__, state);
+	}
+
+#if defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) || defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+if(!state)
+	msleep(50);
+#endif
 	return 0;
 }
 
@@ -737,6 +809,75 @@ static ssize_t qpnp_wled_fs_curr_ua_store(struct device *dev,
 	return count;
 }
 
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+int brightness_to_blmap(enum led_brightness value)
+{
+	return gwled->blmap[value];
+}
+
+static ssize_t lcd_backlight_blmap_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int i, j;
+
+	if (!gwled->blmap_size)
+		return 0;
+
+	buf[0] = '{';
+
+	for (i = 0, j = 2; i < gwled->blmap_size && j < PAGE_SIZE; ++i) {
+		if (!(i % 10)) {
+			buf[j] = '\n';
+			++j;
+		}
+
+		sprintf(&buf[j], "%d, ", gwled->blmap[i]);
+
+		if (gwled->blmap[i] < 10)
+			j += 3;
+		else if (gwled->blmap[i] < 100)
+			j += 4;
+		else if (gwled->blmap[i] < 1000)
+			j += 5;
+		else if (gwled->blmap[i] < 10000)
+			j += 6;
+	}
+
+	buf[j] = '\n';
+	++j;
+	buf[j] = '}';
+	++j;
+
+	return j;
+}
+
+static ssize_t lcd_backlight_blmap_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	int i;
+	int j, ret;
+
+	if (count < 1)
+		return count;
+
+	if (buf[0] != '{')
+		return -EINVAL;
+
+	for (i = 1, j = 0; i < count && j < gwled->blmap_size; ++i) {
+		if (!isdigit(buf[i]))
+			continue;
+
+		ret = sscanf(&buf[i], "%d", &gwled->blmap[j]);
+
+		while (isdigit(buf[i]))
+			++i;
+		++j;
+	}
+
+	return count;
+}
+#endif
+
 /* sysfs attributes exported by wled */
 static struct device_attribute qpnp_wled_attrs[] = {
 	__ATTR(dump_regs, (S_IRUGO | S_IWUSR | S_IWGRP),
@@ -757,6 +898,11 @@ static struct device_attribute qpnp_wled_attrs[] = {
 	__ATTR(ramp_step, (S_IRUGO | S_IWUSR | S_IWGRP),
 			qpnp_wled_ramp_step_show,
 			qpnp_wled_ramp_step_store),
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+	__ATTR(bl_blmap, 0644,
+			lcd_backlight_blmap_show,
+			lcd_backlight_blmap_store),
+#endif
 };
 
 /* worker for setting wled brightness */
@@ -771,6 +917,23 @@ static void qpnp_wled_work(struct work_struct *work)
 
 	mutex_lock(&wled->lock);
 
+#ifdef CONFIG_LGE_PM
+	if (lge_get_boot_mode() == LGE_BOOT_MODE_CHARGERLOGO) {
+		rc = qpnp_wled_set_level(wled, level);
+		if (rc) {
+			dev_err(&wled->spmi->dev, "wled set level failed\n");
+			goto unlock_mutex;
+		}
+	} else {
+		if (level) {
+			rc = qpnp_wled_set_level(wled, level);
+			if (rc) {
+				dev_err(&wled->spmi->dev, "wled set level failed\n");
+				goto unlock_mutex;
+			}
+		}
+	}
+#else
 	if (level) {
 		rc = qpnp_wled_set_level(wled, level);
 		if (rc) {
@@ -778,6 +941,7 @@ static void qpnp_wled_work(struct work_struct *work)
 			goto unlock_mutex;
 		}
 	}
+#endif
 
 	if (!!level != wled->prev_state) {
 		rc = qpnp_wled_module_en(wled, wled->ctrl_base, !!level);
@@ -1605,6 +1769,7 @@ static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 
 	prop = of_find_property(spmi->dev.of_node,
 			"qcom,led-strings-list", &temp_val);
+
 	if (!prop || !temp_val || temp_val > QPNP_WLED_MAX_STRINGS) {
 		dev_err(&spmi->dev, "Invalid strings info, use default");
 		wled->num_strings = QPNP_WLED_MAX_STRINGS;
@@ -1616,7 +1781,6 @@ static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 		for (i = 0; i < wled->num_strings; ++i)
 			wled->strings[i] = strings[i];
 	}
-
 	wled->ovp_irq = spmi_get_irq_byname(spmi, NULL, "ovp-irq");
 	if (wled->ovp_irq < 0)
 		dev_dbg(&spmi->dev, "ovp irq is not used\n");
@@ -1628,6 +1792,37 @@ static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 	wled->en_ext_pfet_sc_pro = of_property_read_bool(spmi->dev.of_node,
 					"qcom,en-ext-pfet-sc-pro");
 
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+	rc = of_property_read_u32(spmi->dev.of_node,
+				"lge,blmap_size", &wled->blmap_size);
+
+	if (wled->blmap_size) {
+		wled->blmap =
+			kzalloc(sizeof(u32) * wled->blmap_size, GFP_KERNEL);
+		if (!wled->blmap)
+			return -ENOMEM;
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+		rc = of_property_read_u32_array(spmi->dev.of_node,
+				"lge,dev_blmap", wled->blmap, wled->blmap_size);
+#else
+		if(!is_battery_present) {
+			rc = of_property_read_u32_array(spmi->dev.of_node,
+				"lge,dev_blmap_no_batt", wled->blmap, wled->blmap_size);
+		} else {
+			rc = of_property_read_u32_array(spmi->dev.of_node,
+				"lge,dev_blmap", wled->blmap, wled->blmap_size);
+		}
+#endif
+		if (rc) {
+			pr_err("%s:%d, uable to read backlight map\n",
+				__func__,  rc);
+			return -EINVAL;
+		}
+
+	} else {
+		wled->blmap = NULL;
+	}
+#endif
 	return 0;
 }
 
@@ -1700,6 +1895,9 @@ static int qpnp_wled_probe(struct spmi_device *spmi)
 		}
 	}
 
+#if defined(CONFIG_LGE_DISPLAY_BACKLIGHT_CURVE_ALGO)
+	gwled = wled;
+#endif
 	return 0;
 
 sysfs_fail:

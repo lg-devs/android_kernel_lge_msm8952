@@ -1,6 +1,5 @@
 *.gen.S
-*.fw
-*.bin
 *.csp
 *.dsp
+ateml/b3n/*.ihex
 ihex2fw

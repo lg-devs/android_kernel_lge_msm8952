@@ -93,7 +93,7 @@ int __ref psci_cpu_kill(unsigned int cpu)
 	for (i = 0; i < 10; i++) {
 		err = psci_ops.affinity_info(cpu_logical_map(cpu), 0);
 		if (err == PSCI_0_2_AFFINITY_LEVEL_OFF) {
-			pr_info("CPU%d killed.\n", cpu);
+			pr_info("CPU%d killed. (cpu_online_mask:0x%x)\n", cpu, (int)*cpu_online_mask->bits);
 			return 1;
 		}
 

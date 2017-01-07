@@ -5,6 +5,7 @@ targets += dtbs
 
 #used for cleaning - not building
 subdir- := dts/qcom
+subdir- := dts/lge
 
 
 dtbs: $(addprefix $(obj)/, $(DTB_LIST))

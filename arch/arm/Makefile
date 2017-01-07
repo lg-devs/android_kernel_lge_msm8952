@@ -280,7 +280,11 @@ ifeq ($(CONFIG_USE_OF),y)
 KBUILD_DTBS := dtbs
 endif
 
+ifdef CONFIG_MACH_LGE
+DTSSUBDIR := lge
+else
 DTSSUBDIR := qcom
+endif
 
 all:	$(KBUILD_IMAGE) $(KBUILD_DTBS)
 

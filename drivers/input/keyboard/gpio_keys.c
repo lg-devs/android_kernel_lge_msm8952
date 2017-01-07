@@ -30,6 +30,30 @@
 #include <linux/of_gpio.h>
 #include <linux/spinlock.h>
 #include <linux/pinctrl/consumer.h>
+#include <linux/switch.h>
+
+struct switch_dev hallic_sdev = {
+	.name = "smartcover",
+};
+
+#ifdef CONFIG_STYLUS_PEN
+struct switch_dev stylus_pen_sdev = {
+	.name = "pen_state",
+};
+#endif
+
+#ifdef CONFIG_LGE_USE_KICKSTAND
+struct switch_dev kickstand_sdev = {
+	.name = "kickstand",
+};
+#endif
+
+#ifdef CONFIG_LGE_PM
+#include <soc/qcom/smem.h>
+#include <soc/qcom/lge/lge_boot_mode.h>
+int key_up_flag = false;
+#endif
+static int prev_state = 0;
 
 struct gpio_button_data {
 	const struct gpio_keys_button *button;
@@ -335,9 +359,65 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		if (state)
 			input_event(input, type, button->code, button->value);
 	} else {
+		/*
+		* VOLUMEUP button is reported several times.
+		* Check state and discard Same state of KEY_VOLUMEUP
+		* State 0 - VOLUMEUP Release,
+		* State 1 - VOLUMEUP Press
+		*/
+		if (button->code == KEY_VOLUMEUP && prev_state == state) {
+			printk(KERN_ERR "gpio_keys: Discard Wrong key\n");
+			return;
+		}
+		if (button->code == KEY_VOLUMEUP) {
+		prev_state = state;
+		}
+
+/*Don't send input event for HALL_IC to upper layer.*/
+#ifdef CONFIG_MACH_LGE
+		if(button->code != SW_LID)
+			input_event(input, type, button->code, !!state);
+#else
 		input_event(input, type, button->code, !!state);
+#endif
+
+#ifdef CONFIG_MACH_LGE
+		 printk(KERN_ERR "gpio_keys: code=%d%s, state=%d\n", 
+					button->code,
+					(button->code == KEY_VOLUMEUP) ? "(KEY_VOLUMEUP)" : "",
+					state);
+#endif
+		if (!strncmp(bdata->button->desc, "hall_ic", 7)) {
+			if (hallic_sdev.state != state) {
+				switch_set_state(&hallic_sdev, state);
+				pr_info("hall_ic state switched to %d\n", state);
+			}
+		}
+#ifdef CONFIG_STYLUS_PEN
+		if (!strncmp(bdata->button->desc, "stylus_pen", 10)) {
+			if (stylus_pen_sdev.state != state) {
+				switch_set_state(&stylus_pen_sdev, state);
+				pr_info("stylus_pen state switched to %d\n", state);
+			}
+		}
+#endif
+
+#ifdef CONFIG_LGE_USE_KICKSTAND
+		if (!strncmp(bdata->button->desc, "kickstand", 9)) {
+			if (kickstand_sdev.state != state) {
+				switch_set_state(&kickstand_sdev, state);
+				pr_info("kickstand state switched to %d\n", state);
+			}
+		}
+#endif
+
 	}
+#ifdef CONFIG_MACH_LGE
+	if(button->code != SW_LID)
+		input_sync(input);
+#else
 	input_sync(input);
+#endif
 }
 
 static void gpio_keys_gpio_work_func(struct work_struct *work)
@@ -458,6 +538,37 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 						button->debounce_interval;
 		}
 
+		if (bdata->button->desc == NULL) {
+			return error;
+		}
+
+		if (!strncmp(bdata->button->desc, "hall_ic", 7)) {
+			if (switch_dev_register(&hallic_sdev) < 0) {
+				pr_info("hallic_dev switch registration failed\n");
+				switch_dev_unregister(&hallic_sdev);
+			}
+			pr_info("hallic_dev switch registration success\n");
+		}
+
+#ifdef CONFIG_STYLUS_PEN
+		if (!strncmp(bdata->button->desc, "stylus_pen", 10)) {
+			if (switch_dev_register(&stylus_pen_sdev) < 0) {
+				pr_info("stylus_pen_dev switch registration failed\n");
+				switch_dev_unregister(&stylus_pen_sdev);
+			}
+			pr_info("stylus_pen_dev switch registration success\n");
+		}
+#endif
+
+#ifdef CONFIG_LGE_USE_KICKSTAND
+		if (!strncmp(bdata->button->desc, "kickstand", 9)) {
+			if (switch_dev_register(&kickstand_sdev) < 0) {
+				pr_info("kickstand_dev switch registration failed\n");
+				switch_dev_unregister(&kickstand_sdev);
+			}
+			pr_info("kickstand_dev switch registration success\n");
+		}
+#endif
 		irq = gpio_to_irq(button->gpio);
 		if (irq < 0) {
 			error = irq;

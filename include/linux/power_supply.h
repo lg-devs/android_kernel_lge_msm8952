@@ -181,6 +181,9 @@ enum power_supply_property {
 	/* unit is in ohms due to ID being typically in kohm range */
 	POWER_SUPPLY_PROP_RESISTANCE_ID,
 	POWER_SUPPLY_PROP_RESISTANCE_NOW,
+#ifdef CONFIG_LGE_PM_PSEUDO_BATTERY
+	POWER_SUPPLY_PROP_PSEUDO_BATT,
+#endif
 	/* Local extensions */
 	POWER_SUPPLY_PROP_USB_HC,
 	POWER_SUPPLY_PROP_USB_OTG,
@@ -188,7 +191,7 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_FLASH_CURRENT_MAX,
 	POWER_SUPPLY_PROP_UPDATE_NOW,
 	POWER_SUPPLY_PROP_ESR_COUNT,
-	POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE,
+	POWER_SUPPLY_PROP_SAFETY_TIMER,
 	POWER_SUPPLY_PROP_CHARGE_DONE,
 	POWER_SUPPLY_PROP_FLASH_ACTIVE,
 	POWER_SUPPLY_PROP_FLASH_TRIGGER,
@@ -204,10 +207,30 @@ enum power_supply_property {
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT,
 	/* Properties of type `const char *' */
+#ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
+	POWER_SUPPLY_PROP_BATTERY_ID,
+	POWER_SUPPLY_PROP_BATTERY_ID_CHECKER,
+#elif defined (CONFIG_LGE_PM_OLD_PSY_NODE)
+	POWER_SUPPLY_PROP_VALID_BATT,
+#endif
+#if defined (CONFIG_LGE_PM_OLD_PSY_NODE)
+	POWER_SUPPLY_PROP_VZW_CHG,
+#endif
+#ifdef CONFIG_LGE_PM_WA_FG_WRONG_SOC
+	POWER_SUPPLY_PROP_RESTART,
+#endif
+#ifdef CONFIG_LGE_PM_QC20_DETECT
+	POWER_SUPPLY_PROP_IS_QC20_TA,
+	POWER_SUPPLY_PROP_IS_EVP_TA,
+#endif
+#ifdef CONFIG_LGE_PM_FG_AGE
+	POWER_SUPPLY_PROP_BATTERY_CONDITION,
+#endif
 	POWER_SUPPLY_PROP_MODEL_NAME,
 	POWER_SUPPLY_PROP_MANUFACTURER,
 	POWER_SUPPLY_PROP_SERIAL_NUMBER,
 	POWER_SUPPLY_PROP_BATTERY_TYPE,
+	POWER_SUPPLY_PROP_HW_REV,
 };
 
 enum power_supply_type {
@@ -225,6 +248,9 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_BMS,		/* Battery Monitor System */
 	POWER_SUPPLY_TYPE_USB_PARALLEL,		/* USB Parallel Path */
 	POWER_SUPPLY_TYPE_WIPOWER,		/* Wipower */
+#ifdef CONFIG_LGE_PM_FLOATED_CHARGER
+	POWER_SUPPLY_TYPE_USB_FLOATED,
+#endif
 };
 
 union power_supply_propval {
@@ -254,6 +280,11 @@ struct power_supply {
 	int (*set_property)(struct power_supply *psy,
 			    enum power_supply_property psp,
 			    const union power_supply_propval *val);
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+	int (*get_internal_property)(struct power_supply *psy,
+			    enum power_supply_property psp,
+			    union power_supply_propval *val);
+#endif
 	int (*property_is_writeable)(struct power_supply *psy,
 				     enum power_supply_property psp);
 	void (*external_power_changed)(struct power_supply *psy);
@@ -283,6 +314,19 @@ struct power_supply {
 	char *online_trig_name;
 	struct led_trigger *charging_blink_full_solid_trig;
 	char *charging_blink_full_solid_trig_name;
+#endif
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+	char **lge_power_supplied_to;
+	size_t num_lge_power_supplicants;
+	char **lge_power_supplied_from;
+	size_t num_lge_power_supplies;
+	void (*external_lge_power_changed)(struct power_supply *psy);
+	char **lge_psy_power_supplied_from;
+	size_t num_lge_psy_power_supplies;
+#endif
+#ifdef CONFIG_LGE_PM_LGE_POWER_CLASS_UEVENT
+	int *property_data;
+	int update_uevent;
 #endif
 };
 
@@ -330,6 +374,10 @@ extern int power_supply_register(struct device *parent,
 				 struct power_supply *psy);
 extern void power_supply_unregister(struct power_supply *psy);
 extern int power_supply_powers(struct power_supply *psy, struct device *dev);
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+extern int power_supply_do_i_have_property(struct power_supply *psy,
+				enum power_supply_property psp);
+#endif
 #else
 static inline struct power_supply *power_supply_get_by_name(char *name)
 							{ return NULL; }

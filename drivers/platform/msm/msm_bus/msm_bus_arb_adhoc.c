@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
  *
  * This program is Mree software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -893,6 +893,7 @@ static void unregister_client_adhoc(uint32_t cl)
 	commit_data();
 	msm_bus_dbg_client_data(client->pdata, MSM_BUS_DBG_UNREGISTER, cl);
 	kfree(client->src_pnode);
+	kfree(client->src_devs);
 	kfree(client);
 	handle_list.cl_list[cl] = NULL;
 exit_unregister_client:
@@ -919,7 +920,7 @@ static int alloc_handle_lst(int size)
 	} else {
 		t_cl_list = krealloc(handle_list.cl_list,
 				sizeof(struct msm_bus_client *) *
-				handle_list.num_entries + NUM_CL_HANDLES,
+				(handle_list.num_entries + NUM_CL_HANDLES),
 				GFP_KERNEL);
 		if (ZERO_OR_NULL_PTR(t_cl_list)) {
 			ret = -ENOMEM;
@@ -928,10 +929,10 @@ static int alloc_handle_lst(int size)
 			goto exit_alloc_handle_lst;
 		}
 
+		handle_list.cl_list = t_cl_list;
 		memset(&handle_list.cl_list[handle_list.num_entries], 0,
 			NUM_CL_HANDLES * sizeof(struct msm_bus_client *));
 		handle_list.num_entries += NUM_CL_HANDLES;
-		handle_list.cl_list = t_cl_list;
 	}
 exit_alloc_handle_lst:
 	return ret;
@@ -1351,6 +1352,7 @@ static void unregister_adhoc(struct msm_bus_client_handle *cl)
 				cl->first_hop, cl->active_only);
 	commit_data();
 	msm_bus_dbg_remove_client(cl);
+	kfree(cl->name);
 	kfree(cl);
 exit_unregister_client:
 	rt_mutex_unlock(&msm_bus_adhoc_lock);

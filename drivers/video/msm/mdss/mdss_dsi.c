@@ -33,7 +33,26 @@
 #include "mdss_dba_utils.h"
 #include "mdss_dsi_phy.h"
 
+#if defined(CONFIG_TOUCHSCREEN_UNIFIED_DRIVER_3)
+#include <linux/input/unified_driver_3/lgtp_common_notify.h>
+#endif
+
 #define XO_CLK_RATE	19200000
+
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+#include "lge/panel/oem_mdss_dsi_common.h"
+struct lge_mdss_dsi_interface lge_mdss_dsi;
+#endif
+
+#ifdef CONFIG_MACH_LGE
+extern int sched_set_boost(int enable);
+static bool is_panel_off = false;
+bool is_boost_en = false;
+#endif
+
+#ifdef CONFIG_LGE_READER_MODE
+extern struct mdss_panel_data *pdata_base;
+#endif
 
 /* Master structure to hold all the information about the DSI/panel */
 static struct mdss_dsi_data *mdss_dsi_res;
@@ -275,14 +294,25 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	ret = mdss_dsi_panel_reset(pdata, 0);
-	if (ret) {
-		pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-		ret = 0;
+	//skip reset if using INX+NT51021 panel
+	if ((!IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL)) &&
+		(!IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL)) &&
+		(!IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL))) {
+		ret = mdss_dsi_panel_reset(pdata, 0);
+		if (ret) {
+			pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
+			ret = 0;
+		}
+		if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
+			pr_debug("reset disable: pinctrl not enabled\n");
 	}
 
-	if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
-		pr_debug("reset disable: pinctrl not enabled\n");
+	if ((IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL))
+		|| (IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL))) {
+		if (gpio_is_valid(ctrl_pdata->disp_vio_gpio))
+			gpio_set_value(ctrl_pdata->disp_vio_gpio, 0);
+		usleep(5000);
+	}
 
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
@@ -291,6 +321,20 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 		pr_err("%s: failed to disable vregs for %s\n",
 			__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
 
+	if (IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL)) {
+		mdelay(5);
+		if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
+			pr_debug("reset disable: pinctrl not enabled\n");
+		ret = mdss_dsi_panel_reset(pdata, 0);
+		if (ret) {
+			pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
+			ret = 0;
+		}
+	}
+
+#ifdef CONFIG_MACH_LGE
+	is_panel_off = true;
+#endif
 end:
 	return ret;
 }
@@ -299,14 +343,37 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 {
 	int ret = 0;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+#ifdef CONFIG_MACH_LGE
+	static int is_first_time = 1;
+#endif
+
+	pr_info("%s ++ \n", __func__);
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
 		return -EINVAL;
 	}
+#ifdef CONFIG_MACH_LGE
+	if (!is_first_time && is_panel_off) {
+		sched_set_boost(1);
+		is_boost_en = true;
+		pr_info("display:set_boost++\n");
+	} else
+		is_first_time = 0;
+#endif
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
+
+	if (IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL)) {
+		if (gpio_is_valid(ctrl_pdata->disp_vio_gpio))
+			gpio_set_value(ctrl_pdata->disp_vio_gpio, 1);
+		usleep(100);
+	} else if ((IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL)) || (IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)) ) {
+		if (gpio_is_valid(ctrl_pdata->disp_vio_gpio))
+			gpio_set_value(ctrl_pdata->disp_vio_gpio, 1);
+		usleep(5000);
+	}
 
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
@@ -323,6 +390,9 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 	 * bootloader. This needs to be done irresepective of whether
 	 * the lp11_init flag is set or not.
 	 */
+	// skip reset if using INX+NT panel
+	if ((!IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL))
+		&& (!IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL))) {
 	if (pdata->panel_info.cont_splash_enabled ||
 		!pdata->panel_info.mipi.lp11_init) {
 		if (mdss_dsi_pinctrl_set_state(ctrl_pdata, true))
@@ -332,8 +402,14 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 		if (ret)
 			pr_err("%s: Panel reset failed. rc=%d\n",
 					__func__, ret);
+		}
 	}
 
+#ifdef CONFIG_MACH_LGE
+	is_panel_off = false;
+#endif
+
+	pr_info("%s -- \n", __func__);
 	return ret;
 }
 
@@ -355,7 +431,7 @@ static int mdss_dsi_panel_power_ctrl(struct mdss_panel_data *pdata,
 	}
 
 	pinfo = &pdata->panel_info;
-	pr_debug("%s: cur_power_state=%d req_power_state=%d\n", __func__,
+	pr_info("%s: cur_power_state=%d req_power_state=%d\n", __func__,
 		pinfo->panel_power_state, power_state);
 
 	if (pinfo->panel_power_state == power_state) {
@@ -393,6 +469,7 @@ static int mdss_dsi_panel_power_ctrl(struct mdss_panel_data *pdata,
 	if (!ret)
 		pinfo->panel_power_state = power_state;
 
+	pr_info("%s -- \n", __func__);
 	return ret;
 }
 
@@ -1262,7 +1339,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		 * sent to panel
 		 */
 		mdss_dsi_restore_intr_mask(ctrl_pdata);
-		pr_debug("%s: panel already on\n", __func__);
+		pr_info("%s: panel already on\n", __func__);
 		goto end;
 	}
 
@@ -1312,10 +1389,15 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	 * Issue hardware reset line after enabling the DSI clocks and data
 	 * data lanes for LP11 init
 	 */
-	if (mipi->lp11_init) {
-		if (mdss_dsi_pinctrl_set_state(ctrl_pdata, true))
-			pr_debug("reset enable: pinctrl not enabled\n");
-		mdss_dsi_panel_reset(pdata, 1);
+	//skip reset if INX + NT panel
+	if ((!IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL))
+	    && (!IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)) ) {
+		if (mipi->lp11_init) {
+			pr_err("%s : mipi->lp11_init \n", __func__);
+			if (mdss_dsi_pinctrl_set_state(ctrl_pdata, true))
+				pr_info("reset enable: pinctrl not enabled\n");
+				mdss_dsi_panel_reset(pdata, 1);
+		}
 	}
 
 	if (mipi->init_delay)
@@ -1334,7 +1416,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		mdss_dsi_clk_ctrl(ctrl_pdata, DSI_ALL_CLKS, 0);
 
 end:
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 	return ret;
 }
 
@@ -1425,7 +1507,7 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 	mdss_dsi_clk_ctrl(ctrl_pdata, DSI_ALL_CLKS, 1);
 
 	if (mdss_dsi_is_panel_on_lp(pdata)) {
-		pr_debug("%s: dsi_unblank with panel always on\n", __func__);
+		pr_info("%s: dsi_unblank with panel always on\n", __func__);
 		if (ctrl_pdata->low_power_config)
 			ret = ctrl_pdata->low_power_config(pdata, false);
 		goto error;
@@ -1455,7 +1537,7 @@ error:
 
 	mdss_dsi_pm_qos_update_request(DSI_ENABLE_PC_LATENCY);
 
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 
 	return ret;
 }
@@ -1529,7 +1611,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 
 error:
 	mdss_dsi_clk_ctrl(ctrl_pdata, DSI_ALL_CLKS, 0);
-	pr_debug("%s-:End\n", __func__);
+	pr_info("%s-:End\n", __func__);
 	return ret;
 }
 
@@ -1554,7 +1636,7 @@ static int mdss_dsi_post_panel_on(struct mdss_panel_data *pdata)
 		ctrl_pdata->post_panel_on(pdata);
 
 	mdss_dsi_clk_ctrl(ctrl_pdata, DSI_ALL_CLKS, 0);
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 
 	return 0;
 }
@@ -1585,7 +1667,7 @@ int mdss_dsi_cont_splash_on(struct mdss_panel_data *pdata)
 
 	mdss_dsi_ctrl_setup(ctrl_pdata);
 	mdss_dsi_sw_reset(ctrl_pdata, true);
-	pr_debug("%s-:End\n", __func__);
+	pr_info("%s-:End\n", __func__);
 	return ret;
 }
 
@@ -2183,9 +2265,20 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	}
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-	pr_debug("%s+: ctrl=%d event=%d\n", __func__, ctrl_pdata->ndx, event);
+
+	if(event != MDSS_EVENT_PANEL_UPDATE_FPS)
+	{
+		pr_info("%s+: ctrl=%d event=%d\n", __func__, ctrl_pdata->ndx, event);
+	}
 
 	MDSS_XLOG(event, arg, ctrl_pdata->ndx, 0x3333);
+
+#ifdef CONFIG_LGE_READER_MODE
+		if (pdata_base == NULL) {
+			pr_err("%s : pdata_base =%p\n", __func__, pdata);
+			pdata_base = pdata;
+		}
+#endif
 
 	switch (event) {
 	case MDSS_EVENT_CHECK_PARAMS:
@@ -2196,6 +2289,9 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		}
 		break;
 	case MDSS_EVENT_LINK_READY:
+//#if defined(CONFIG_TOUCHSCREEN_UNIFIED_DRIVER_3)
+//		touch_notifier_call_chain(LCD_EVENT_TOUCH_LPWG_OFF,NULL);
+//#endif
 		if (ctrl_pdata->refresh_clk_rate)
 			rc = mdss_dsi_clk_refresh(pdata);
 
@@ -2217,6 +2313,9 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		if (ctrl_pdata->on_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_unblank(pdata);
 		pdata->panel_info.esd_rdy = true;
+#if defined(CONFIG_TOUCHSCREEN_UNIFIED_DRIVER_3)
+		touch_notifier_call_chain(LCD_EVENT_TOUCH_LPWG_OFF,NULL);
+#endif
 		break;
 	case MDSS_EVENT_BLANK:
 		power_state = (int) (unsigned long) arg;
@@ -2229,6 +2328,9 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
 		rc = mdss_dsi_off(pdata, power_state);
+#if defined(CONFIG_TOUCHSCREEN_UNIFIED_DRIVER_3)
+		touch_notifier_call_chain(LCD_EVENT_TOUCH_LPWG_ON,NULL);
+#endif
 		break;
 	case MDSS_EVENT_CONT_SPLASH_FINISH:
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
@@ -2306,10 +2408,13 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		}
 		break;
 	default:
-		pr_debug("%s: unhandled event=%d\n", __func__, event);
+		pr_info("%s: unhandled event=%d\n", __func__, event);
 		break;
 	}
-	pr_debug("%s-:event=%d, rc=%d\n", __func__, event, rc);
+	if(event != MDSS_EVENT_PANEL_UPDATE_FPS)
+	{
+		pr_info("%s-:event=%d, rc=%d\n", __func__, event, rc);
+	}
 	return rc;
 }
 
@@ -2431,6 +2536,12 @@ static struct device_node *mdss_dsi_config_panel(struct platform_device *pdev)
 		of_node_put(dsi_pan_node);
 		return NULL;
 	}
+
+
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+	memset(&lge_mdss_dsi, 0, sizeof(lge_mdss_dsi));
+	lge_mdss_dsi_seperate_panel_api_init(&lge_mdss_dsi, dsi_pan_node);
+#endif
 
 	rc = mdss_dsi_panel_init(dsi_pan_node, ctrl_pdata);
 	if (rc) {
@@ -2604,6 +2715,10 @@ static void mdss_dsi_res_deinit(struct platform_device *pdev)
 	}
 
 	for (i = 0; i < DSI_CTRL_MAX; i++) {
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+		if (dsi_res->ctrl_pdata[i] && dsi_res->ctrl_pdata[i]->lge_pan_data)
+			devm_kfree(&pdev->dev, dsi_res->ctrl_pdata[i]->lge_pan_data);
+#endif
 		if (dsi_res->ctrl_pdata[i]) {
 			if (dsi_res->ctrl_pdata[i]->ds_registered) {
 				struct mdss_panel_info *pinfo =
@@ -2723,6 +2838,20 @@ static int mdss_dsi_res_init(struct platform_device *pdev)
 				rc = -ENOMEM;
 				goto mem_fail;
 			}
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+			if (!mdss_dsi_res->ctrl_pdata[i]->lge_pan_data \
+					&& sizeof(struct lge_pan_data)) {
+				mdss_dsi_res->ctrl_pdata[i]->lge_pan_data = devm_kzalloc(&pdev->dev,
+						sizeof(struct lge_pan_data),
+						GFP_KERNEL);
+				if (!mdss_dsi_res->ctrl_pdata[i]->lge_pan_data) {
+					pr_err("%s FAILED: cannot alloc lge_pan_data ctrl\n",
+							__func__);
+					rc = -ENOMEM;
+					goto mem_fail;
+				}
+			}
+#endif
 			pr_debug("%s Allocated ctrl_pdata[%d]=%pK\n",
 				__func__, i, mdss_dsi_res->ctrl_pdata[i]);
 			mdss_dsi_res->ctrl_pdata[i]->shared_data =
@@ -3203,6 +3332,7 @@ static int mdss_dsi_parse_ctrl_params(struct platform_device *ctrl_pdev,
 static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
+	int rc;
 	/*
 	 * If disp_en_gpio has been set previously (disp_en_gpio > 0)
 	 *  while parsing the panel node, then do not override it
@@ -3234,6 +3364,23 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 	if (!gpio_is_valid(ctrl_pdata->rst_gpio))
 		pr_err("%s:%d, reset gpio not specified\n",
 						__func__, __LINE__);
+
+	if ((IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL))
+		|| (IS_ENABLED(CONFIG_SHARP_NT35596_FHD_VIDEO_LCD_PANEL))
+		|| (IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL))
+		|| (IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL))) {
+		ctrl_pdata->disp_vio_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+				"lge,platform-disp-vio-gpio", 0);
+		if (gpio_is_valid(ctrl_pdata->disp_vio_gpio)) {
+			rc = gpio_request_one(ctrl_pdata->disp_vio_gpio,
+					GPIOF_OUT_INIT_HIGH, "disp_vio_enable");
+			if (rc)
+				pr_err("request disp_vio_enable gpio failed, rc=%d\n", rc);
+		} else {
+			pr_err("%s:%d, vio_en gpio not specified\n",
+							__func__, __LINE__);
+		}
+	}
 
 	ctrl_pdata->lcd_mode_sel_gpio = of_get_named_gpio(
 			ctrl_pdev->dev.of_node, "qcom,panel-mode-gpio", 0);

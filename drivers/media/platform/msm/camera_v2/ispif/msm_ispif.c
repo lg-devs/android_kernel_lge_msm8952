@@ -1382,7 +1382,15 @@ static void msm_ispif_release(struct ispif_device *ispif)
 	}
 
 	/* make sure no streaming going on */
+
+/* LGE_CHANGE_S, fixed fatal issue, 2015-11-03, youngil.yun@lge.com */
+	if ((ispif->fs_vfe0 && regulator_is_enabled(ispif->fs_vfe0))||
+		(ispif->fs_vfe1 && regulator_is_enabled(ispif->fs_vfe1)))
+/* LGE_CHANGE_E, fixed fatal issue, 2015-11-03, youngil.yun@lge.com */
+	{
 	msm_ispif_reset_hw(ispif, 1);
+	}
+
 	msm_ispif_clk_ahb_enable(ispif, 0);
 
 	free_irq(ispif->irq->start, ispif);

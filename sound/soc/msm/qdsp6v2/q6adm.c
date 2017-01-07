@@ -45,6 +45,15 @@ enum adm_cal_status {
 	ADM_STATUS_MAX,
 };
 
+#ifdef CONFIG_SND_NXP_LVVE
+#define VOICE_TOPOLOGY_LVVEFQ_TX_SM    (0x1000BFF0)
+#define VOICE_TOPOLOGY_LVVEFQ_TX_DM    (0x1000BFF1)
+#endif // CONFIG_SND_NXP_LVVE
+
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+extern int is_reverse_speaker(void);
+#endif
+
 struct adm_copp {
 
 	atomic_t id[AFE_MAX_PORTS][MAX_COPPS_PER_PORT];
@@ -2181,8 +2190,19 @@ int adm_arrange_mch_map(struct adm_cmd_device_open_v5 *open, int path,
 	if (channel_mode == 1)	{
 		open->dev_channel_mapping[0] = PCM_CHANNEL_FC;
 	} else if (channel_mode == 2) {
+#ifdef CONFIG_MSM8952_MI2S_EXTERNAL_SPEAKER
+		if (is_reverse_speaker()) {
+			pr_debug("%s: It's Reverse Speakers ! ! !\n", __func__);
+			open->dev_channel_mapping[0] = PCM_CHANNEL_FR;
+			open->dev_channel_mapping[1] = PCM_CHANNEL_FL;
+		} else {
+			open->dev_channel_mapping[0] = PCM_CHANNEL_FL;
+			open->dev_channel_mapping[1] = PCM_CHANNEL_FR;
+		}
+#else
 		open->dev_channel_mapping[0] = PCM_CHANNEL_FL;
 		open->dev_channel_mapping[1] = PCM_CHANNEL_FR;
+#endif
 	} else if (channel_mode == 3)	{
 		open->dev_channel_mapping[0] = PCM_CHANNEL_FL;
 		open->dev_channel_mapping[1] = PCM_CHANNEL_FR;
@@ -2300,7 +2320,12 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 
 	if ((topology == VPM_TX_SM_ECNS_COPP_TOPOLOGY) ||
 	    (topology == VPM_TX_DM_FLUENCE_COPP_TOPOLOGY) ||
-	    (topology == VPM_TX_DM_RFECNS_COPP_TOPOLOGY))
+	    (topology == VPM_TX_DM_RFECNS_COPP_TOPOLOGY)
+#ifdef CONFIG_SND_NXP_LVVE
+	 || (topology == VOICE_TOPOLOGY_LVVEFQ_TX_SM)
+	 || (topology == VOICE_TOPOLOGY_LVVEFQ_TX_DM)
+#endif
+	)
 		rate = 16000;
 
 	copp_idx = adm_get_idx_if_copp_exists(port_idx, topology, perf_mode,

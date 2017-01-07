@@ -194,11 +194,14 @@ static bool msm_pm_pc_hotplug(void)
 	msm_pc_inc_debug_count(cpu, MSM_PC_ENTRY_COUNTER);
 
 	if (is_scm_armv8()) {
+		int ret = 0;
 		desc.args[0] = SCM_CMD_CORE_HOTPLUGGED |
 			       (flag & SCM_FLUSH_FLAG_MASK);
 		desc.arginfo = SCM_ARGS(1);
-		scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_BOOT,
+		trace_printk("cpu : %d, id : %x\n", cpu, SCM_SIP_FNID(SCM_SVC_BOOT, SCM_CMD_TERMINATE_PC));
+		ret = scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_BOOT,
 				 SCM_CMD_TERMINATE_PC), &desc);
+		trace_printk("cpu : %d, ret : %d\n", cpu, ret);
 	} else {
 		scm_call_atomic1(SCM_SVC_BOOT, SCM_CMD_TERMINATE_PC,
 		SCM_CMD_CORE_HOTPLUGGED | (flag & SCM_FLUSH_FLAG_MASK));

@@ -358,6 +358,120 @@ static void l2x0_unlock(u32 cache_id)
 		lockregs = 1;
 		break;
 	}
+	return NOTIFY_OK;
+}
+
+static void __init l2c310_enable(void __iomem *base, u32 aux, unsigned num_lock)
+{
+	unsigned rev = readl_relaxed(base + L2X0_CACHE_ID) & L2X0_CACHE_ID_PART_MASK;
+	bool cortex_a9 = read_cpuid_part() == ARM_CPU_PART_CORTEX_A9;
+
+	if (rev >= L310_CACHE_ID_RTL_R2P0) {
+		if (cortex_a9) {
+			aux |= L310_AUX_CTRL_EARLY_BRESP;
+			pr_info("L2C-310 enabling early BRESP for Cortex-A9\n");
+		} else if (aux & L310_AUX_CTRL_EARLY_BRESP) {
+			pr_warn("L2C-310 early BRESP only supported with Cortex-A9\n");
+			aux &= ~L310_AUX_CTRL_EARLY_BRESP;
+		}
+	}
+
+	if (cortex_a9) {
+		u32 aux_cur = readl_relaxed(base + L2X0_AUX_CTRL);
+		u32 acr = get_auxcr();
+
+		pr_debug("Cortex-A9 ACR=0x%08x\n", acr);
+
+		if (acr & BIT(3) && !(aux_cur & L310_AUX_CTRL_FULL_LINE_ZERO))
+			pr_err("L2C-310: full line of zeros enabled in Cortex-A9 but not L2C-310 - invalid\n");
+
+		if (aux & L310_AUX_CTRL_FULL_LINE_ZERO && !(acr & BIT(3)))
+			pr_err("L2C-310: enabling full line of zeros but not enabled in Cortex-A9\n");
+
+		if (!(aux & L310_AUX_CTRL_FULL_LINE_ZERO) && !outer_cache.write_sec) {
+			aux |= L310_AUX_CTRL_FULL_LINE_ZERO;
+			pr_info("L2C-310 full line of zeros enabled for Cortex-A9\n");
+		}
+	} else if (aux & (L310_AUX_CTRL_FULL_LINE_ZERO | L310_AUX_CTRL_EARLY_BRESP)) {
+		pr_err("L2C-310: disabling Cortex-A9 specific feature bits\n");
+		aux &= ~(L310_AUX_CTRL_FULL_LINE_ZERO | L310_AUX_CTRL_EARLY_BRESP);
+	}
+
+	if (aux & (L310_AUX_CTRL_DATA_PREFETCH | L310_AUX_CTRL_INSTR_PREFETCH)) {
+		u32 prefetch = readl_relaxed(base + L310_PREFETCH_CTRL);
+
+		pr_info("L2C-310 %s%s prefetch enabled, offset %u lines\n",
+			aux & L310_AUX_CTRL_INSTR_PREFETCH ? "I" : "",
+			aux & L310_AUX_CTRL_DATA_PREFETCH ? "D" : "",
+			1 + (prefetch & L310_PREFETCH_CTRL_OFFSET_MASK));
+	}
+
+	/* r3p0 or later has power control register */
+	if (rev >= L310_CACHE_ID_RTL_R3P0) {
+		u32 power_ctrl;
+
+		l2c_write_sec(L310_DYNAMIC_CLK_GATING_EN | L310_STNDBY_MODE_EN,
+			      base, L310_POWER_CTRL);
+		power_ctrl = readl_relaxed(base + L310_POWER_CTRL);
+		pr_info("L2C-310 dynamic clock gating %sabled, standby mode %sabled\n",
+			power_ctrl & L310_DYNAMIC_CLK_GATING_EN ? "en" : "dis",
+			power_ctrl & L310_STNDBY_MODE_EN ? "en" : "dis");
+	}
+
+	/*
+	 * Always enable non-secure access to the lockdown registers -
+	 * we write to them as part of the L2C enable sequence so they
+	 * need to be accessible.
+	 */
+	aux |= L310_AUX_CTRL_NS_LOCKDOWN;
+
+	l2c_enable(base, aux, num_lock);
+
+	if (aux & L310_AUX_CTRL_FULL_LINE_ZERO) {
+		set_auxcr(get_auxcr() | BIT(3) | BIT(2) | BIT(1));
+		cpu_notifier(l2c310_cpu_enable_flz, 0);
+	}
+}
+
+static void __init l2c310_fixup(void __iomem *base, u32 cache_id,
+	struct outer_cache_fns *fns)
+{
+	unsigned revision = cache_id & L2X0_CACHE_ID_RTL_MASK;
+	const char *errata[8];
+	unsigned n = 0;
+
+	if (IS_ENABLED(CONFIG_PL310_ERRATA_588369) &&
+	    revision < L310_CACHE_ID_RTL_R2P0 &&
+	    /* For bcm compatibility */
+	    fns->inv_range == l2c210_inv_range) {
+		fns->inv_range = l2c310_inv_range_erratum;
+		fns->flush_range = l2c310_flush_range_erratum;
+		errata[n++] = "588369";
+	}
+
+	if (IS_ENABLED(CONFIG_PL310_ERRATA_727915) &&
+	    revision >= L310_CACHE_ID_RTL_R2P0 &&
+	    revision < L310_CACHE_ID_RTL_R3P1) {
+		fns->flush_all = l2c310_flush_all_erratum;
+		errata[n++] = "727915";
+	}
+
+	if (revision >= L310_CACHE_ID_RTL_R3P0 &&
+	    revision < L310_CACHE_ID_RTL_R3P2) {
+		u32 val = readl_relaxed(base + L310_PREFETCH_CTRL);
+		/* I don't think bit23 is required here... but iMX6 does so */
+		if (val & (BIT(30) | BIT(23))) {
+			val &= ~(BIT(30) | BIT(23));
+			l2c_write_sec(val, base, L310_PREFETCH_CTRL);
+			errata[n++] = "752271";
+		}
+	}
+
+	if (IS_ENABLED(CONFIG_PL310_ERRATA_753970) &&
+	    revision == L310_CACHE_ID_RTL_R3P0) {
+		sync_reg_offset = L2X0_DUMMY_REG;
+		errata[n++] = "753970";
+	}
 
 	for (i = 0; i < lockregs; i++) {
 		writel_relaxed(0x0, l2x0_base + L2X0_LOCKDOWN_WAY_D_BASE +

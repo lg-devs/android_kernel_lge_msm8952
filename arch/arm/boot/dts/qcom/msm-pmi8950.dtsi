@@ -41,11 +41,16 @@
 			reg = <0x3100 0x100>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <0x2 0x31 0x0>;
-			interrupt-names = "eoc-int-en-set";
+			interrupts = <0x2 0x31 0x0>,
+				     <0x2 0x31 0x3>,
+				     <0x2 0x31 0x4>;
+                        interrupt-names = "eoc-int-en-set",
+                                          "high-thr-en-set",
+                                          "low-thr-en-set";
 			qcom,adc-bit-resolution = <15>;
 			qcom,adc-vdd-reference = <1800>;
 			qcom,vadc-poll-eoc;
+			qcom,vadc-meas-int-mode;
 
 			chan@0 {
 				label = "usbin";
@@ -176,7 +181,6 @@
 			mpp@a100 {
 				reg = <0xa100 0x100>;
 				qcom,pin-num = <2>;
-				status = "disabled";
 			};
 
 			mpp@a200 {
@@ -204,7 +208,7 @@
 			qcom,chg-inhibit-fg;
 			qcom,rparasitic-uohm = <100000>;
 			qcom,bms-psy-name = "bms";
-			qcom,thermal-mitigation = <1500 700 600 0>;
+			qcom,thermal-mitigation = <1200 1100 1000 950 900 700>;
 			qcom,parallel-usb-min-current-ma = <1400>;
 			qcom,parallel-usb-9v-min-current-ma = <900>;
 			qcom,parallel-allowed-lowering-ma = <500>;
@@ -412,7 +416,6 @@
 		#size-cells = <1>;
 
 		pmi8950_pwm: pwm@b000 {
-			status = "disabled";
 			compatible = "qcom,qpnp-pwm";
 			reg = <0xb000 0x100>;
 			reg-names = "qpnp-lpg-channel-base";

@@ -19,6 +19,9 @@
 #include <linux/types.h>
 #include <linux/debugfs.h>
 
+#ifdef CONFIG_LGE_DISPLAY_POWER_SEQUENCE
+#include "lge/panel/oem_mdss_panel_info.h"
+#endif
 /* panel id type */
 struct panel_id {
 	u16 id;
@@ -472,6 +475,7 @@ struct mdss_panel_info {
 	u32 brightness_max;
 	u32 bl_max;
 	u32 bl_min;
+	u32 bl_default;
 	u32 fb_num;
 	u32 clk_rate;
 	u32 clk_min;
@@ -544,6 +548,14 @@ struct mdss_panel_info {
 	bool is_dba_panel;
 	/* debugfs structure for the panel */
 	struct mdss_panel_debugfs_info *debugfs_info;
+#ifdef CONFIG_LGE_DISPLAY_POWER_SEQUENCE
+	struct lge_pan_info	lge_pan_info;
+#endif
+#if defined(CONFIG_SHARP_NT35596_FHD_VIDEO_LCD_PANEL) || defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) \
+	|| defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+	int blmap_size;
+	int *blmap;
+#endif
 };
 
 struct mdss_panel_data {

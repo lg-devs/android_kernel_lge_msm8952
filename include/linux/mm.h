@@ -1919,6 +1919,10 @@ struct reclaim_param {
 };
 extern struct reclaim_param reclaim_task_anon(struct task_struct *task,
 		int nr_to_reclaim);
+#ifdef CONFIG_HSWAP
+extern struct reclaim_param reclaim_task_file_anon(struct task_struct *task,
+		int nr_to_reclaim);
+#endif
 #endif
 
 #endif /* __KERNEL__ */

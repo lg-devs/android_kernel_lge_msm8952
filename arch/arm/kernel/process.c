@@ -60,6 +60,10 @@ static const char *isa_modes[] = {
   "ARM" , "Thumb" , "Jazelle", "ThumbEE"
 };
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <soc/qcom/scm.h>
+#endif
+
 #ifdef CONFIG_SMP
 void arch_trigger_all_cpu_backtrace(void)
 {
@@ -292,6 +296,14 @@ void machine_power_off(void)
  */
 void machine_restart(char *cmd)
 {
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	struct scm_desc desc = {
+		.args[0] = 0x10,
+		.args[1] = 0,
+		.arginfo = SCM_ARGS(2),
+	};
+#endif
+
 	preempt_disable();
 	smp_send_stop();
 
@@ -306,6 +318,17 @@ void machine_restart(char *cmd)
 
 	/* Whoops - the platform was unable to reboot. Tell the user! */
 	printk("Reboot failed -- System halted\n");
+
+#ifdef CONFIG_LGE_HANDLE_PANIC
+/* trigger secure watchdog reset */
+	desc.args[0] = 0;
+	desc.arginfo = SCM_ARGS(1);
+	if (!is_scm_armv8()) {
+		scm_call_atomic1(SCM_SVC_BOOT, 0x8, 0);
+	} else {
+		scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_BOOT, 0x8), &desc);
+	}
+#endif
 	local_irq_disable();
 	while (1);
 }
@@ -437,7 +460,7 @@ void __show_regs(struct pt_regs *regs)
 		printk("Control: %08x%s\n", ctrl, buf);
 	}
 #endif
-	if (get_fs() == get_ds())
+	//if (get_fs() == get_ds())
 		show_extra_register_data(regs, 128);
 }
 

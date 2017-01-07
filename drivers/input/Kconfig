@@ -200,6 +200,20 @@ config SENSORS_HALL
 	 Say y here if you want to use this hall sensor driver, it
 	 is like a switch. For example, lid.
 
+config STYLUS_PEN
+	bool "Detect Stylus Pen interrupt"
+	default n
+	help
+	  This option enable device driver support for the Stylus Pen Detect
+	  Hall IC which is both poles/unipolar detection type.
+
+config LGE_USE_KICKSTAND
+	bool "Detect Kickstand interrupt"
+	default n
+	help
+	  This option enable device driver support for the Kickstand Detect
+	  Hall IC which is both poles/unipolar detection type.
+
 comment "Input Device Drivers"
 
 source "drivers/input/keyboard/Kconfig"
@@ -213,6 +227,8 @@ source "drivers/input/tablet/Kconfig"
 source "drivers/input/touchscreen/Kconfig"
 
 source "drivers/input/misc/Kconfig"
+
+source "drivers/input/sensor/Kconfig"
 
 endif
 

@@ -27,6 +27,45 @@ config MMC_PERF_PROFILING
 	  If you say Y here, support will be added for collecting
 	  performance numbers at the MMC Queue and Host layers.
 
+
+config MMC_SKHYNIX_AWAKE_CMD5
+	bool "Use CMD5 changing sleep/resume sequence"
+	default n
+	help
+	  In order to reduce the Sleep/Resume time,
+	  The Sequence was changed from (CMD7->CMD5->VCC off->VCC on->CMD0->CMD1->CMD2->CMD3)
+	  to (CMD7->CMD5->VCC off->VCC on->CMD5->CMD7).
+	  This time reduced to 30ms from 188ms.
+
+config LGE_MMC_P1V_VDD_ALWAYS_ON
+    bool "delete mmc_delay in the mmc_power_up()"
+    help
+        If you say Y here, delete mmc_delay in the mmc_power_up().
+        This mmc_delay occurs the resume time delay issue(PONEV-3156).
+	mmc_delay is not necessary because p1v of Vdd is always on.
+	root cause is unknown. this is workaround code.
+
+config LGE_MMC_BKOPS_ENABLE
+	bool "enable BKOPS for eMMC"
+	depends on MMC != n
+	default n
+	help
+	  If you want to use BKOPS for eMMC, you have to set Y in kernel/arch/arm/configs/XXXX_defconfig file.
+
+# LGE_CHANGE_S : D3-5T-FS@lge.com
+config LGE_MMC_RESET_IF_HANG
+	bool "MMC Reset if eMMC is hang. "
+	default n
+	help
+	    Reset eMMC if eMMC is unaccessible. continously error on r/w cmd.
+# LGE_CHANGE_E : D3-5T-FS@lge.com
+
+config LGE_SHOW_SDCARD_DETECT_PIN_STATUS
+    bool "Show SD Card Detect pin status"
+    default n
+    help
+        Show SD Card Detect pin status at /sys/devices/soc/7864900.sdhci/mmc_host/mmc1/cd_status
+
 if MMC
 
 source "drivers/mmc/core/Kconfig"

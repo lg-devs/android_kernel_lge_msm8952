@@ -32,6 +32,10 @@
 #include <soc/qcom/restart.h>
 #include <soc/qcom/watchdog.h>
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <soc/qcom/lge/lge_handle_panic.h>
+#endif
+
 #define EMERGENCY_DLOAD_MAGIC1    0x322A4F99
 #define EMERGENCY_DLOAD_MAGIC2    0xC67E4350
 #define EMERGENCY_DLOAD_MAGIC3    0x77777777
@@ -63,7 +67,11 @@ static void *emergency_dload_mode_addr;
 static bool scm_dload_supported;
 
 static int dload_set(const char *val, struct kernel_param *kp);
+#ifdef CONFIG_LGE_DEFAULT_DISABLE_DLOAD_MODE
+static int download_mode = 0;
+#else
 static int download_mode = 1;
+#endif
 module_param_call(download_mode, dload_set, param_get_int,
 			&download_mode, 0644);
 static int panic_prep_restart(struct notifier_block *this,
@@ -164,6 +172,13 @@ static int dload_set(const char *val, struct kernel_param *kp)
 		return -EINVAL;
 	}
 
+//TODO: panic handler fb reserved address change to TZ area
+#if 0
+//#ifdef CONFIG_LGE_HANDLE_PANIC
+	if (!download_mode)
+		lge_panic_handler_fb_cleanup();
+#endif
+
 	set_dload_mode(download_mode);
 
 	return 0;
@@ -214,8 +229,12 @@ static void halt_spmi_pmic_arbiter(void)
 
 static void msm_restart_prepare(const char *cmd)
 {
+	/* LGE_CHANGE : there's no reason to forcing a hard reset on reboot request */
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	bool is_warm_reset = true;
+#else
 	bool need_warm_reset = false;
-
+#endif
 #ifdef CONFIG_MSM_DLOAD_MODE
 
 	/* Write download mode flags if we're panic'ing
@@ -226,6 +245,35 @@ static void msm_restart_prepare(const char *cmd)
 	set_dload_mode(download_mode &&
 			(in_panic || restart_mode == RESTART_DLOAD));
 #endif
+
+
+#ifdef CONFIG_LGE_USE_DEFAULT_HARD_RESET
+	/* default & test purpose reboot should be hard reset since QTI doesn't gurantee repeated warm boot test */
+	if (cmd) {
+		if ((cmd[0] == '\0')
+			|| !strncmp(cmd, "Restarted by power key", 22)
+			|| !strncmp(cmd, "bootchart", 9)
+			|| !strncmp(cmd, "cuz resetTool", 13)
+			|| !strncmp(cmd, "PMCycleTest", 11)
+			|| !strncmp(cmd, "eMMCTest", 8)
+            ) {
+            printk("is_warm_reset is false with %s cmd\n", cmd);
+			is_warm_reset = false;
+        }
+	} else {
+        printk("is_warm_reset is false\n");
+		is_warm_reset = false;
+    }
+#endif
+
+	/* Hard reset the PMIC unless memory contents must be maintained. */
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	if (is_warm_reset || get_dload_mode() || in_panic || (restart_mode == RESTART_DLOAD)) {
+#else
+	if (get_dload_mode() || (cmd != NULL && cmd[0] != '\0'))
+
+	need_warm_reset = (get_dload_mode() ||
+				(cmd != NULL && cmd[0] != '\0'));
 
 	if (qpnp_pon_check_hard_reset_stored()) {
 		/* Set warm reset as true when device is in dload mode
@@ -247,8 +295,16 @@ static void msm_restart_prepare(const char *cmd)
 
 	/* Hard reset the PMIC unless memory contents must be maintained. */
 	if (need_warm_reset) {
+
+#endif
+#ifdef CONFIG_LGE_HANDLE_PANIC
+        printk("The device will be warm reset\n");
+#endif
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 	} else {
+#ifdef CONFIG_LGE_HANDLE_PANIC
+        printk("The device will be hard reset\n");
+#endif
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 	}
 
@@ -261,6 +317,13 @@ static void msm_restart_prepare(const char *cmd)
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RECOVERY);
 			__raw_writel(0x77665502, restart_reason);
+		} else if (!strncmp(cmd, "fota", 4)) {
+			pr_notice("FOTA restart\n");
+			__raw_writel(0x77665566, restart_reason);
+		} else if (!strncmp(cmd, "dm-verity device corrupted", 26 )) {
+			__raw_writel(0x77665506, restart_reason);
+		} else if (!strncmp(cmd, "wallpaper_fail", 14 )) {
+			__raw_writel(0x77665507, restart_reason);
 		} else if (!strcmp(cmd, "rtc")) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RTC);
@@ -284,6 +347,16 @@ static void msm_restart_prepare(const char *cmd)
 			__raw_writel(0x77665501, restart_reason);
 		}
 	}
+
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	if (restart_mode == RESTART_DLOAD) {
+		set_dload_mode(0);
+		lge_set_restart_reason(LAF_DLOAD_MODE);
+	}
+
+	if (in_panic)
+		lge_set_panic_reason();
+#endif
 
 	flush_cache_all();
 

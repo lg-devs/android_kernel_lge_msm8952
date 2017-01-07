@@ -25,6 +25,7 @@
 #include <linux/async.h>
 #include <linux/pm_runtime.h>
 #include <linux/pinctrl/devinfo.h>
+#include <soc/qcom/lge/lge_pre_selfd.h>
 
 #include "base.h"
 #include "power/power.h"
@@ -322,11 +323,23 @@ static int really_probe(struct device *dev, struct device_driver *drv)
 	}
 
 	if (dev->bus->probe) {
+#if defined(CONFIG_LGE_PROBE_TIME_PROFILING) || defined (CONFIG_PROC_EVENTS)
+		dev_err(dev, "bus probe_log s\n");
+#endif
 		ret = dev->bus->probe(dev);
+#if defined(CONFIG_LGE_PROBE_TIME_PROFILING) || defined (CONFIG_PROC_EVENTS)
+		dev_err(dev, "bus probe_log e\n");
+#endif
 		if (ret)
 			goto probe_failed;
 	} else if (drv->probe) {
+#if defined(CONFIG_LGE_PROBE_TIME_PROFILING) || defined (CONFIG_PROC_EVENTS)
+		dev_err(dev, "drv probe_log s\n");
+#endif
 		ret = drv->probe(dev);
+#if defined(CONFIG_LGE_PROBE_TIME_PROFILING) || defined (CONFIG_PROC_EVENTS)
+		dev_err(dev, "drv probe_log e\n");
+#endif
 		if (ret)
 			goto probe_failed;
 	}
@@ -352,10 +365,17 @@ probe_failed:
 			driver_deferred_probe_trigger();
 	} else if (ret != -ENODEV && ret != -ENXIO) {
 		/* driver matched but the probe failed */
+#if defined(CONFIG_PRE_SELF_DIAGNOSIS)
+		if(!strstr((char*)drv->name,"jtag") && !strstr((char*)drv->name,"coresight"))
+			lge_pre_self_diagnosis((char *) drv->bus->name,4,(char *) dev_name(dev),(char *) drv->name, ret);
+#endif
 		printk(KERN_WARNING
 		       "%s: probe of %s failed with error %d\n",
 		       drv->name, dev_name(dev), ret);
 	} else {
+#if defined(CONFIG_PRE_SELF_DIAGNOSIS)
+		lge_pre_self_diagnosis((char *) drv->bus->name,0,(char *) dev_name(dev),(char *) drv->name, ret);
+#endif
 		pr_debug("%s: probe of %s rejects match %d\n",
 		       drv->name, dev_name(dev), ret);
 	}

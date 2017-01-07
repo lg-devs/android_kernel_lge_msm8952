@@ -240,6 +240,40 @@ int msm_sensor_get_sub_module_index(struct device_node *of_node,
 		src_node = NULL;
 	}
 
+#if defined(CONFIG_LG_PROXY)
+	src_node = of_parse_phandle(of_node, "qcom,proxy-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		CDBG("%s qcom,proxy cell index %d, rc %d\n", __func__,
+			val, rc);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			goto ERROR;
+		}
+		sensor_info->subdev_id[SUB_MODULE_PROXY] = val;
+		of_node_put(src_node);
+		src_node = NULL;
+	}
+#endif
+#if defined(CONFIG_LG_TCS)
+	src_node = of_parse_phandle(of_node, "qcom,tcs-src", 0);
+        if (!src_node) {
+                pr_err("%s:%d src_node NULL\n", __func__, __LINE__);
+        } else {
+                rc = of_property_read_u32(src_node, "cell-index", &val);
+                CDBG("%s qcom,tcs cell index %d, rc %d\n", __func__,
+                        val, rc);
+                if (rc < 0) {
+                        pr_err("%s failed %d\n", __func__, __LINE__);
+                        goto ERROR;
+                }
+                sensor_info->subdev_id[SUB_MODULE_TCS] = val;
+                of_node_put(src_node);
+                src_node = NULL;
+        }
+#endif
 	src_node = of_parse_phandle(of_node, "qcom,eeprom-src", 0);
 	if (!src_node) {
 		CDBG("%s:%d eeprom src_node NULL\n", __func__, __LINE__);
@@ -553,6 +587,8 @@ int msm_camera_get_dt_power_setting_data(struct device_node *of_node,
 				ps[i].seq_val = SENSOR_GPIO_VAF;
 			else if (!strcmp(seq_name, "sensor_gpio_vio"))
 				ps[i].seq_val = SENSOR_GPIO_VIO;
+			else if (!strcmp(seq_name, "sensor_gpio_ldo"))
+				ps[i].seq_val = SENSOR_GPIO_LDO_EN;
 			else if (!strcmp(seq_name, "sensor_gpio_custom1"))
 				ps[i].seq_val = SENSOR_GPIO_CUSTOM1;
 			else if (!strcmp(seq_name, "sensor_gpio_custom2"))
@@ -1056,6 +1092,28 @@ int msm_camera_init_gpio_pin_tbl(struct device_node *of_node,
 	} else
 		rc = 0;
 
+#if defined(CONFIG_LG_PROXY)
+	rc = of_property_read_u32(of_node, "qcom,gpio-ldaf-en", &val);
+		if (rc != -EINVAL) {
+			if (rc < 0) {
+				pr_err("%s:%d read qcom,gpio-ldaf-en failed rc %d\n",
+					__func__, __LINE__, rc);
+				goto ERROR;
+			} else if (val >= gpio_array_size) {
+				pr_err("%s:%d qcom,gpio-ldaf-en invalid %d\n",
+					__func__, __LINE__, val);
+				rc = -EINVAL;
+				goto ERROR;
+			}
+			gconf->gpio_num_info->gpio_num[SENSOR_GPIO_LDAF_EN] =
+				gpio_array[val];
+			gconf->gpio_num_info->valid[SENSOR_GPIO_LDAF_EN] = 1;
+			CDBG("%s qcom,gpio-ldaf-en %d\n", __func__,
+				gconf->gpio_num_info->gpio_num[SENSOR_GPIO_LDAF_EN]);
+		} else {
+			rc = 0;
+		}
+#endif
 	rc = of_property_read_u32(of_node, "qcom,gpio-custom1", &val);
 	if (rc != -EINVAL) {
 		if (rc < 0) {
@@ -1098,6 +1156,26 @@ int msm_camera_init_gpio_pin_tbl(struct device_node *of_node,
 		rc = 0;
 	}
 
+	rc = of_property_read_u32(of_node, "qcom,gpio-ldo-en", &val);
+	if (rc != -EINVAL) {
+		if (rc < 0) {
+			pr_err("%s:%d read qcom,gpio-ldo-en failed rc %d\n",
+					__func__, __LINE__, rc);
+			goto ERROR;
+		} else if (val >= gpio_array_size) {
+			pr_err("%s:%d qcom,gpio-ldo-en invalid %d\n",
+					__func__, __LINE__, val);
+			rc = -EINVAL;
+			goto ERROR;
+		}
+		gconf->gpio_num_info->gpio_num[SENSOR_GPIO_LDO_EN] =
+			gpio_array[val];
+		gconf->gpio_num_info->valid[SENSOR_GPIO_LDO_EN] = 1;
+		CDBG("%s qcom,gpio-ldo-en %d\n", __func__,
+				gconf->gpio_num_info->gpio_num[SENSOR_GPIO_LDO_EN]);
+	} else {
+		rc = 0;
+	}
 	return rc;
 
 ERROR:
@@ -1345,7 +1423,14 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 		case SENSOR_GPIO:
 			if (no_gpio) {
 				pr_err("%s: request gpio failed\n", __func__);
+/* LGE_CHANGE_S, sync main and vt power, 2015-06-27, byungsoo.moon@lge.com */
+#if defined(CONFIG_SYNC_MAIN_VT_POWER)
+				rc = no_gpio;
+				goto power_up_failed;
+#else
 				return no_gpio;
+#endif
+/* LGE_CHANGE_S, sync main and vt power, 2015-06-27, byungsoo.moon@lge.com */
 			}
 			if (power_setting->seq_val >= SENSOR_GPIO_MAX ||
 				!ctrl->gpio_conf->gpio_num_info) {
@@ -1556,7 +1641,7 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 			gpio_set_value_cansleep(
 				ctrl->gpio_conf->gpio_num_info->gpio_num
 				[pd->seq_val],
-				(int) pd->config_val);
+				0); //pd->config_val); //LGE_CHANGE, 2014-06-05, temp fix for power down, jongkwon.chae
 			break;
 		case SENSOR_VREG:
 			if (pd->seq_val == INVALID_VREG)

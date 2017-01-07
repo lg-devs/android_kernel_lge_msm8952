@@ -4,6 +4,14 @@
 
 menu "Misc devices"
 
+config SPI_IR
+	tristate "SPI Ir Remote Control"
+	depends on SPI_MASTER
+
+config SPI_IR_LEARN
+	tristate "SPI Ir Remote Control Learn"
+	depends on SPI_MASTER
+
 config SENSORS_LIS3LV02D
 	tristate
 	depends on INPUT
@@ -644,6 +652,14 @@ config UID_CPUTIME
 	depends on PROFILING
 	help
 	  Per UID based cpu time statistics exported to /proc/uid_cputime
+
+config LGE_EVENT_LOCK
+    bool "factory 250-99 key lock cmd"
+    default n
+	depends on MACH_LGE
+    help
+      Support for keylock cmd using evdev.
+      If you need feature for keylock cmd using evdev, use this.
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"

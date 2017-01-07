@@ -85,6 +85,8 @@
 
 /* REG_LAB_IBB_EN_RDY */
 #define LAB_IBB_EN_RDY_EN		BIT(7)
+#define LAB_IBB_EN_RDY_MASK		0x7F
+#define LAB_IBB_EN_RDY_SHIFT	7
 
 /* REG_LAB_CURRENT_LIMIT */
 #define LAB_CURRENT_LIMIT_BITS		3
@@ -1428,6 +1430,17 @@ static int qpnp_lab_regulator_enable(struct regulator_dev *rdev)
 
 	if (!labibb->lab_vreg.vreg_enabled && !labibb->swire_control) {
 
+		rc = qpnp_labibb_read(labibb, &val,
+				labibb->lab_base + REG_LAB_IBB_EN_RDY, 1);
+		if (rc < 0)
+			return rc;
+		val &= LAB_IBB_EN_RDY_MASK;
+		val |= LAB_IBB_EN_RDY_EN;
+		rc = qpnp_labibb_write(labibb,
+			labibb->lab_base + REG_LAB_IBB_EN_RDY, &val, 1);
+		if (rc)
+			return rc;
+
 		if (labibb->mode != QPNP_LABIBB_STANDALONE_MODE)
 			return qpnp_labibb_regulator_enable(labibb);
 
@@ -1468,6 +1481,17 @@ static int qpnp_lab_regulator_disable(struct regulator_dev *rdev)
 	struct qpnp_labibb *labibb  = rdev_get_drvdata(rdev);
 
 	if (labibb->lab_vreg.vreg_enabled && !labibb->swire_control) {
+
+		rc = qpnp_labibb_read(labibb, &val,
+				labibb->lab_base + REG_LAB_IBB_EN_RDY, 1);
+		if (rc < 0)
+			return rc;
+		val &= LAB_IBB_EN_RDY_MASK;
+		val |= (0 << LAB_IBB_EN_RDY_SHIFT);
+		rc = qpnp_labibb_write(labibb,
+			labibb->lab_base + REG_LAB_IBB_EN_RDY, &val, 1);
+		if (rc)
+			return rc;
 
 		if (labibb->mode != QPNP_LABIBB_STANDALONE_MODE)
 			return qpnp_labibb_regulator_disable(labibb);
@@ -2624,11 +2648,21 @@ static int register_qpnp_ibb_regulator(struct qpnp_labibb *labibb,
 				REG_IBB_PWRUP_PWRDN_CTL_1, rc);
 			return rc;
 		}
-
-		labibb->ibb_vreg.pwrup_dly = ibb_pwrup_dly_plan[
-					(val >>
-					IBB_PWRUP_PWRDN_CTL_1_DLY1_SHIFT) &
-					IBB_PWRUP_PWRDN_CTL_1_DLY1_MASK];
+		if(IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL)){
+			rc = of_property_read_u32(of_node,
+				"qcom,qpnp-ibb-lab-pwrup-delay",
+				&(labibb->ibb_vreg.pwrup_dly));
+			if (rc) {
+				pr_err("get qcom,qpnp-ibb-lab-pwrup-delay  failed, rc = %d\n", rc);
+				return rc;
+			}
+			pr_err("qcom,qpnp-ibb-lab-pwrup-delay = %d, rc = %d\n", labibb->ibb_vreg.pwrup_dly, rc);
+		}else{
+			labibb->ibb_vreg.pwrup_dly = ibb_pwrup_dly_plan[
+						(val >>
+						IBB_PWRUP_PWRDN_CTL_1_DLY1_SHIFT) &
+						IBB_PWRUP_PWRDN_CTL_1_DLY1_MASK];
+		}
 		labibb->ibb_vreg.pwrdn_dly =  ibb_pwrdn_dly_plan[val &
 					IBB_PWRUP_PWRDN_CTL_1_DLY2_MASK];
 

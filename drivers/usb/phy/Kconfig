@@ -324,6 +324,20 @@ config USB_ULPI_VIEWPORT
 	  Provides read/write operations to the ULPI phy register set for
 	  controllers with a viewport register (e.g. Chipidea/ARC controllers).
 
+config LGE_USB_TYPE_A
+        bool "LGE Support Sradard A Type USB"
+	depends on USB_PHY
+        help
+          Say Y to enable standard USB A TYPE Port, to support this configuration Need Specific H/W.
+
+        default n
+
+config LGE_USB_G_OTG
+         bool "enable the OTG function using usb id adc detection"
+         help
+           Say Y to disable enable the OTG function using usb id adc detection
+	default n
+
 config DUAL_ROLE_USB_INTF
 	bool "Generic DUAL ROLE sysfs interface"
 	depends on SYSFS && USB_PHY

@@ -1,0 +1,45 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/dts-v1/;
+
+#include "msm8952-b3_tmo_us.dtsi"
+
+/ {
+	model = "Qualcomm Technologies, Inc. MSM8952 MTP";
+	compatible = "qcom,msm8952-mtp", "qcom,msm8952", "qcom,mtp", "lge,msm8952-p1v_att_us";
+	qcom,board-id= <0x708 0>; /* rev_1.1 */
+};
+
+/* 2nd cap sensor int_pin, enable_pin is swapped for GPIO_16/GPIO_17 after rev_1.0 */
+&soc {
+	tlmm_pinmux: pinctrl@1000000 {
+		atmf04_2nd_int_pin {
+			qcom,pins = <&gp 17>;
+		};
+	};
+
+	i2c@78b6000 {
+		adsemicon_atmf04@5a {
+			Adsemicon,chip_enable2 = <&msm_gpio 16 0x00>;  /* enable pin - to control 2ND */
+		};
+	};
+
+	i2c@7af5000 {
+		adsemicon_atmf04@5a {
+			interrupts = <17 0x2>;
+			Adsemicon,irq-gpio = <&msm_gpio 17 0x00>;	/* Interrupt Pin */
+			Adsemicon,chip_enable = <&msm_gpio 16 0x00>;  /* enable pin */
+		};
+	};
+};

@@ -295,4 +295,12 @@ config SEEMP_CORE
           This option enables Qualcomm Technologies, Inc. Snapdragron Smart Protection to
           detect anomalies in various activities. It records task activities in a log and
           rates the actions according to whether a typical user would use the tools.
+
+config LGE_QPNP_HAPTIC_OV_RB
+	boolean "LGE Add DIRECT MODE Over Drive, Reverse Brake voltage"
+	depends on QPNP_HAPTIC
+	help
+	  LGE implements Over Drive and Reverse Brake voltage on Direct mode.
+	default n
+
 endmenu

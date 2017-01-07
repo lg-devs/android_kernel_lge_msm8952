@@ -1722,6 +1722,7 @@ int qpnp_adc_get_revid_version(struct device *dev);
  */
 int32_t qpnp_vadc_channel_monitor(struct qpnp_vadc_chip *chip,
 					struct qpnp_adc_tm_btm_param *param);
+
 /**
  * qpnp_vadc_end_channel_monitor() - Disables recurring measurement mode for
  *		VADC_USR and disables the bank.

@@ -27,6 +27,10 @@
 #include <linux/hrtimer.h>
 #include <linux/power_supply.h>
 #include <linux/cdev.h>
+#if defined(CONFIG_LGE_PM_CABLE_DETECTION) || defined(CONFIG_LGE_USB_G_OTG)
+#include <linux/qpnp/qpnp-adc.h>
+#endif
+
 /*
  * The following are bit fields describing the usb_request.udc_priv word.
  * These bit fields are set by function drivers that wish to queue
@@ -194,6 +198,12 @@ enum usb_vdd_value {
 	VDD_VAL_MAX,
 };
 
+#ifdef CONFIG_LGE_USB_G_OTG
+enum msm_otg_id_state {
+	MSM_OTG_ID_GROUND = 0,
+	MSM_OTG_ID_FLOAT,
+};
+#endif
 /**
  * Maintain state for hvdcp external charger status
  * DEFAULT	This is used when DCP is detected
@@ -288,6 +298,9 @@ enum usb_id_state {
  */
 struct msm_otg_platform_data {
 	int *phy_init_seq;
+#if defined(CONFIG_LGE_USB_TYPE_A) || defined(CONFIG_LGE_USB_G_OTG)
+	int *phy_init_host_seq;
+#endif
 	int (*vbus_power)(bool on);
 	unsigned power_budget;
 	enum usb_mode_type mode;
@@ -318,6 +331,10 @@ struct msm_otg_platform_data {
 	int usb_id_gpio;
 	int hub_reset_gpio;
 	int switch_sel_gpio;
+#ifdef CONFIG_LGE_USB_TYPE_A
+	int hub_en_gpio;
+	int hub_res_gpio;
+#endif
 	bool phy_dvdd_always_on;
 	bool emulation;
 	bool enable_streaming;
@@ -601,6 +618,12 @@ struct msm_otg {
 	char (buf[DEBUG_MAX_MSG])[DEBUG_MSG_LEN];   /* buffer */
 	u32 max_nominal_system_clk_rate;
 	unsigned int vbus_state;
+#if defined(CONFIG_LGE_PM_CABLE_DETECTION) || defined(CONFIG_LGE_USB_G_OTG)
+	struct qpnp_adc_tm_btm_param adc_param;
+	struct delayed_work init_adc_work;
+	struct qpnp_adc_tm_chip *adc_tm_dev;
+	bool id_adc_detect;
+#endif
 };
 
 struct ci13xxx_platform_data {
@@ -817,5 +840,10 @@ static inline int msm_dwc3_reset_dbm_ep(struct usb_ep *ep)
 	return -ENODEV;
 }
 
+#endif
+#ifdef CONFIG_LGE_USB_TYPE_C
+#define USB_CC_NO_MODE        0
+#define USB_CC_SINK_MODE      1
+#define USB_CC_DBG_ACC_MODE   2
 #endif
 #endif

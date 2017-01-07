@@ -29,6 +29,9 @@
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/qpnp/power-on.h>
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+#include <linux/wakelock.h>
+#endif
 
 #define CREATE_MASK(NUM_BITS, POS) \
 	((unsigned char) (((1 << (NUM_BITS)) - 1) << (POS)))
@@ -183,6 +186,9 @@ struct qpnp_pon {
 	u8			warm_reset_reason2;
 	bool			is_spon;
 	bool			store_hard_reset_reason;
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+	struct wake_lock chg_logo_wake_lock;
+#endif
 };
 
 static struct qpnp_pon *sys_reset_dev;
@@ -224,6 +230,12 @@ static const char * const qpnp_poff_reason[] = {
 	[14] = "Triggered from OTST3 (Overtemp)",
 	[15] = "Triggered from STAGE3 (Stage 3 reset)",
 };
+
+#ifdef CONFIG_LGE_PM
+#include <soc/qcom/smem.h>
+#include <soc/qcom/lge/lge_boot_mode.h>
+int key_power_flag = false;
+#endif
 
 /*
  * On the kernel command line specify
@@ -661,6 +673,29 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_MACH_LGE
+	printk(KERN_ERR "PMIC input: code=%d%s, sts=0x%hhx\n",
+					cfg->key_code,
+					(cfg->key_code == KEY_POWER) ? "(KEY_POWER)" : ((cfg->key_code == KEY_VOLUMEDOWN) ? "(KEY_VOLUMEDOWN)" : ""),
+					pon_rt_sts);
+#endif
+#ifdef CONFIG_LGE_PM
+	if (lge_get_boot_mode() == LGE_BOOT_MODE_CHARGERLOGO) {
+		if(cfg->key_code == KEY_POWER){
+			key_power_flag = true;
+			pr_info("[DEBUG] Key_power_flag = true\n\n");
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+			if (wake_lock_active(&pon->chg_logo_wake_lock))
+				wake_unlock(&pon->chg_logo_wake_lock);
+			pr_info("[CHARGERLOGO MODE] active chg_logo wakelock during 2000ms\n");
+			wake_lock_timeout(&pon->chg_logo_wake_lock, msecs_to_jiffies(2000));
+#endif
+		} else {
+			key_power_flag = false;
+			pr_info("[DEBUG] Key_power_flag = false\n\n");
+		}
+	}
+#endif
 	pr_debug("PMIC input: code=%d, sts=0x%hhx\n",
 					cfg->key_code, pon_rt_sts);
 	key_status = pon_rt_sts & pon_rt_bit;
@@ -1725,6 +1760,7 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 	const char *s3_src;
 	u8 s3_src_reg;
 
+
 	pon = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_pon),
 							GFP_KERNEL);
 	if (!pon) {
@@ -1956,6 +1992,10 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 		boot_reason = ffs(pon_sts);
 	}
 
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+	wake_lock_init(&pon->chg_logo_wake_lock, WAKE_LOCK_SUSPEND, "chg_logo_wake_lock");
+#endif
+
 	/* config whether store the hard reset reason */
 	pon->store_hard_reset_reason = of_property_read_bool(
 					spmi->dev.of_node,
@@ -1972,6 +2012,10 @@ static int qpnp_pon_remove(struct spmi_device *spmi)
 	device_remove_file(&spmi->dev, &dev_attr_debounce_us);
 
 	cancel_delayed_work_sync(&pon->bark_work);
+
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+	wake_lock_destroy(&pon->chg_logo_wake_lock);
+#endif
 
 	if (pon->pon_input)
 		input_unregister_device(pon->pon_input);

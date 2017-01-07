@@ -26,6 +26,42 @@ fw-shipped- += acenic/tg1.bin
 else
 acenic-objs := acenic/tg1.bin acenic/tg2.bin
 endif
+
+ifdef CONFIG_TOUCHSCREEN_ATMEL_T1664
+atmel_fw_file := $(wildcard $(srctree)/firmware/atmel/b5/*.fw)
+$(foreach var, $(atmel_fw_file),  $(shell objcopy -I binary -O ihex $(var) $(var).ihex))
+atmel_ihex_list := $(subst .ihex, , $(notdir $(wildcard $(srctree)/firmware/atmel/b5/*.ihex)))
+atmel_ihex_files := $(foreach var, $(atmel_ihex_list), atmel/b5/$(var))
+
+fw-shipped-$(CONFIG_TOUCHSCREEN_ATMEL_T1664) += $(atmel_ihex_files)
+endif
+
+ifdef CONFIG_TOUCHSCREEN_ATMEL_T1664_JP
+atmel_fw_file := $(wildcard $(srctree)/firmware/atmel/b5_jp/*.fw)
+$(foreach var, $(atmel_fw_file),  $(shell objcopy -I binary -O ihex $(var) $(var).ihex))
+atmel_ihex_list := $(subst .ihex, , $(notdir $(wildcard $(srctree)/firmware/atmel/b5_jp/*.ihex)))
+atmel_ihex_files := $(foreach var, $(atmel_ihex_list), atmel/b5_jp/$(var))
+
+fw-shipped-$(CONFIG_TOUCHSCREEN_ATMEL_T1664_JP) += $(atmel_ihex_files)
+endif
+
+ifdef CONFIG_TOUCHSCREEN_SIC_FW_PATH
+fwpath := $(subst ",,$(CONFIG_TOUCHSCREEN_SIC_FW_PATH))
+sic_img_file := $(wildcard $(srctree)/firmware/sic/$(fwpath)/*.img)
+sic_img_file += $(wildcard $(srctree)/firmware/sic/$(fwpath)/*.txt)
+endif
+sic_firmware := $(subst $(srctree)/firmware/,,$(sic_img_file))
+
+ifdef CONFIG_LGE_TOUCH_FW_PATH
+fwpath := $(subst ",,$(CONFIG_LGE_TOUCH_FW_PATH))
+lge_touch_image_files := $(wildcard $(srctree)/firmware/$(fwpath)/*.img)
+lge_touch_image_files := $(wildcard $(srctree)/firmware/$(fwpath)/*.bin)
+lge_touch_image_files += $(wildcard $(srctree)/firmware/$(fwpath)/*.txt)
+endif
+lge_touch_firmware := $(subst $(srctree)/firmware/,,$(lge_touch_image_files))
+fw-shipped-$(CONFIG_LGE_TOUCH_CORE_BASE) += $(lge_touch_firmware)
+
+fw-shipped-$(CONFIG_TOUCHSCREEN_LGE_SIC) += $(sic_firmware)
 fw-shipped-$(CONFIG_ACENIC) += $(acenic-objs)
 fw-shipped-$(CONFIG_ADAPTEC_STARFIRE) += adaptec/starfire_rx.bin \
 					 adaptec/starfire_tx.bin
@@ -136,6 +172,44 @@ fw-shipped-$(CONFIG_USB_VICAM) += vicam/firmware.fw
 fw-shipped-$(CONFIG_VIDEO_CPIA2) += cpia2/stv0672_vp4.bin
 fw-shipped-$(CONFIG_YAM) += yam/1200.bin yam/9600.bin
 
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B3_ATT_US
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B3_TMO_US
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B3_JP_KDI
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B3_BELL_CA
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B3_RGS_CA
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B5_ATT_US
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B5_USC_US
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B5_ACG_US
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+# ATMF04
+ifdef CONFIG_MACH_MSM8952_B5_OPEN_US
+fw-shipped-$(CONFIG_SENSOR_ATMF04) += atmf04/atmf04_V0.66.fw
+endif
+
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 
 # Directories which we _might_ need to create, so we have a rule for them.
@@ -147,6 +221,8 @@ quiet_cmd_mkdir = MKDIR   $(patsubst $(objtree)/%,%,$@)
 quiet_cmd_ihex  = IHEX    $@
       cmd_ihex  = $(OBJCOPY) -Iihex -Obinary $< $@
 
+quiet_cmd_copy  = COPY    $@
+      cmd_copy  = cp -u $(srctree)/$@ $@
 quiet_cmd_ihex2fw  = IHEX2FW $@
       cmd_ihex2fw  = $(objtree)/$(obj)/ihex2fw $< $@
 
@@ -193,7 +269,10 @@ $(objtree)/$$(%) $(objtree)/$(obj)/$$(%): $(firmware-dirs)
 
 # For the $$(dir %) trick, where we need % to be expanded first.
 .SECONDEXPANSION:
-
+ifneq ($(objtree),$(srctree))
+$(patsubst %,$(obj)/%, $(fw-shipped-y)): %: %.gen.S
+	$(call cmd,copy)
+endif
 $(patsubst %,$(obj)/%.gen.S, $(fw-shipped-y)): %: $(wordsize_deps) \
 		| $(objtree)/$$(dir %)
 	$(call cmd,fwbin,$(patsubst %.gen.S,%,$@))

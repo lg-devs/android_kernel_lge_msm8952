@@ -70,7 +70,13 @@
 #include <linux/tracepoint.h>
 #include <linux/qcom/usb_trace.h>
 
+
 #include "ci13xxx_udc.h"
+
+#ifdef CONFIG_LGE_USB_G_ANDROID
+#include <soc/qcom/lge/lge_boot_mode.h>
+#define PORTSC_PFSC BIT(24)
+#endif
 
 /******************************************************************************
  * DEFINE
@@ -338,6 +344,10 @@ static int hw_device_reset(struct ci13xxx *udc)
 {
 	int delay_count = 25; /* 250 usec */
 
+#ifdef CONFIG_LGE_USB_G_ANDROID
+	enum lge_boot_mode_type boot_mode;
+#endif
+
 	/* should flush & stop before reset */
 	hw_cwrite(CAP_ENDPTFLUSH, ~0, ~0);
 	hw_cwrite(CAP_USBCMD, USBCMD_RS, 0);
@@ -376,6 +386,15 @@ static int hw_device_reset(struct ci13xxx *udc)
 		pr_err("lpm = %i", hw_bank.lpm);
 		return -ENODEV;
 	}
+
+#ifdef CONFIG_LGE_USB_G_ANDROID
+	/* USB FS only used in 130K */
+
+	boot_mode = lge_get_boot_mode();
+	if ((boot_mode == LGE_BOOT_MODE_QEM_130K) ||
+		(boot_mode == LGE_BOOT_MODE_PIF_130K))
+		hw_cwrite(CAP_PORTSC, PORTSC_PFSC, PORTSC_PFSC);
+#endif
 
 	return 0;
 }
@@ -1973,7 +1992,7 @@ static void ep_prime_timer_func(unsigned long data)
 		dbg_usb_op_fail(0xFF, "PRIMEF", mep);
 		mep->prime_fail_count++;
 		/* Notify to trigger h/w reset recovery later */
-		if (_udc->udc_driver->notify_event)
+		if (_udc && _udc->udc_driver && _udc->udc_driver->notify_event)
 			_udc->udc_driver->notify_event(_udc,
 					CI13XXX_CONTROLLER_ERROR_EVENT);
 	} else {

@@ -214,6 +214,16 @@ int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
 	bool need_sleep;
 	if (enable) {
 		for (i = 0; i < num_vreg; i++) {
+/*			if (IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL)) {
+				//TODO : Add it again temporarily due to sleep current issue.
+				//TODO : It needs to remove code. please check
+				if(!strcmp(in_vreg[i].vreg_name, "lab") || !strcmp(in_vreg[i].vreg_name, "ibb"))
+				{
+					pr_err("%s: skip if lab or ibb %d\n", __func__, i);
+					continue;
+				}
+			}
+*/
 			rc = PTR_RET(in_vreg[i].vreg);
 			if (rc) {
 				DEV_ERR("%pS->%s: %s regulator error. rc=%d\n",
@@ -244,6 +254,17 @@ int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
 		}
 	} else {
 		for (i = num_vreg-1; i >= 0; i--) {
+/*
+			if (IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL)) {
+				//TODO : Add it again temporarily due to sleep current issue.
+				//TODO : It needs to remove code. please check
+				if(!strcmp(in_vreg[i].vreg_name, "lab") || !strcmp(in_vreg[i].vreg_name, "ibb"))
+				{
+					pr_err("%s: skip if lab or ibb %d\n", __func__, i);
+					continue;
+				}
+			}
+*/
 			if (in_vreg[i].pre_off_sleep)
 				msleep(in_vreg[i].pre_off_sleep);
 			regulator_set_optimum_mode(in_vreg[i].vreg,

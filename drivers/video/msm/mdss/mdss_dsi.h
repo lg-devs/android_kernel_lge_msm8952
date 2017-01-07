@@ -396,6 +396,8 @@ struct mdss_dsi_ctrl_pdata {
 	int disp_en_gpio;
 	int bklt_en_gpio;
 	int lcd_mode_sel_gpio;
+	int mode_gpio;
+	int disp_vio_gpio;
 	int bklt_ctrl;	/* backlight ctrl */
 	bool pwm_pmi;
 	int pwm_period;
@@ -429,6 +431,25 @@ struct mdss_dsi_ctrl_pdata {
 	struct dsi_panel_cmds post_dms_on_cmds;
 	struct dsi_panel_cmds post_panel_on_cmds;
 	struct dsi_panel_cmds off_cmds;
+#ifdef CONFIG_LGE_READER_MODE
+	struct dsi_panel_cmds reader_mode_initial_step1_cmds;
+	struct dsi_panel_cmds reader_mode_initial_step2_cmds;
+	struct dsi_panel_cmds reader_mode_initial_step3_cmds;
+	struct dsi_panel_cmds reader_mode_step1_cmds;
+	struct dsi_panel_cmds reader_mode_step2_cmds;
+	struct dsi_panel_cmds reader_mode_step3_cmds;
+	struct dsi_panel_cmds reader_mode_off_cmds;
+	struct dsi_panel_cmds charging_time_on_cmds;
+	struct dsi_panel_cmds charging_time_off_cmds;
+	struct dsi_panel_cmds reader_mode_mono_enable_cmds;
+	struct dsi_panel_cmds reader_mode_mono_disable_cmds;
+	struct dsi_panel_cmds reader_mode_mono_step2_cmds;
+	struct dsi_panel_cmds reader_mode_mono_off_cmds;
+	bool need_charging_time_cmd;
+#endif
+#if defined CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL
+	//struct dsi_panel_cmds cabc_still_mode_cmds;
+#endif
 	struct dsi_panel_cmds status_cmds;
 	u32 status_cmds_rlen;
 	u32 *status_value;
@@ -490,6 +511,10 @@ struct mdss_dsi_ctrl_pdata {
 
 	struct workqueue_struct *workq;
 	struct delayed_work dba_work;
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+	struct lge_pan_data *lge_pan_data;
+#endif
+
 };
 
 struct dsi_status_data {

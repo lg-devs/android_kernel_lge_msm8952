@@ -25,9 +25,31 @@
 #include "mdss_dsi.h"
 #include "mdss_dba_utils.h"
 
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+#include "lge/panel/oem_mdss_dsi_common.h"
+#endif
+
+#ifdef CONFIG_LGE_READER_MODE
+static int reader_mode_old = 0;
+static int reader_mode_on_off;
+extern struct platform_device *of_find_device_by_node(struct device_node *np);
+struct mdss_panel_data *pdata_base;
+extern struct msm_fb_data_type *mfd_base;
+#include "mdss_mdp.h"
+#endif
+
 #define DT_CMD_HDR 6
 #define MIN_REFRESH_RATE 48
 #define DEFAULT_MDP_TRANSFER_TIME 14000
+
+#ifdef CONFIG_LGE_READER_MODE
+#define READER_MODE_OFF			0
+#define READER_MODE_STEP_1		1
+#define READER_MODE_STEP_2		2
+#define READER_MODE_STEP_3		3
+#define READER_MODE_MONO	4
+#endif
+
 
 DEFINE_LED_TRIGGER(bl_led_trigger);
 
@@ -178,6 +200,7 @@ static void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
 	cmdreq.cb = NULL;
 
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
+	pr_info("%s: -- \n", __func__);
 }
 
 static char led_pwm1[2] = {0x51, 0x0};	/* DTYPE_DCS_WRITE1 */
@@ -338,6 +361,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 					goto gpio_err;
 				}
 			}
+
 		}
 
 		if (gpio_is_valid(ctrl_pdata->lcd_mode_sel_gpio)) {
@@ -702,15 +726,80 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 			(pinfo->mipi.boot_mode != pinfo->mipi.mode))
 		on_cmds = &ctrl->post_dms_on_cmds;
 
+
+#ifdef CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL
+	msleep(30);
+#endif
+#ifdef CONFIG_LGE_READER_MODE
+	switch(reader_mode_on_off)
+	{
+	case READER_MODE_STEP_1:
+		pr_err("%s: reader_mode STEP1\n", __func__);
+		if (ctrl->reader_mode_initial_step1_cmds.cmd_cnt) {
+			pr_err("%s: reader_mode_initial_step1_cmds cnt : %d \n", __func__, ctrl->reader_mode_initial_step1_cmds.cmd_cnt);
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_initial_step1_cmds);
+		}
+		break;
+	case READER_MODE_STEP_2:
+		pr_err("%s: reader_mode STEP2\n", __func__);
+		if (ctrl->reader_mode_initial_step2_cmds.cmd_cnt) {
+			pr_err("%s: reader_mode_initial_step2_cmds cnt : %d \n", __func__, ctrl->reader_mode_initial_step2_cmds.cmd_cnt);
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_initial_step2_cmds);
+		}
+		break;
+	case READER_MODE_STEP_3:
+		pr_err("%s: reader_mode STEP3\n", __func__);
+		if (ctrl->reader_mode_initial_step3_cmds.cmd_cnt) {
+			pr_err("%s: reader_mode_initial_step3_cmds cnt : %d \n", __func__, ctrl->reader_mode_initial_step3_cmds.cmd_cnt);
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_initial_step3_cmds);
+		}
+		break;
+	case READER_MODE_MONO:
+		pr_err("%s: reader_mode MONO \n", __func__);
+		if (ctrl->reader_mode_initial_step2_cmds.cmd_cnt) {
+			pr_err("[LCD] sending reader mode OFF commands FIRST cnt : %d \n", ctrl->reader_mode_initial_step2_cmds.cmd_cnt);
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_initial_step2_cmds);
+		}
+		if (ctrl->reader_mode_mono_enable_cmds.cmd_cnt) {
+			pr_err("%s: reader_mode_mono_enable_cmds cnt : %d \n", __func__, ctrl->reader_mode_mono_enable_cmds.cmd_cnt);
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_mono_enable_cmds);
+		}
+		break;
+	case READER_MODE_OFF:
+	default:
+		pr_err("%s: on_cmds cnt : %d \n", __func__, on_cmds->cmd_cnt);
+		if (on_cmds->cmd_cnt)
+			mdss_dsi_panel_cmds_send(ctrl, on_cmds);
+		break;
+	}
+#else
 	pr_debug("%s: ctrl=%pK cmd_cnt=%d\n", __func__, ctrl, on_cmds->cmd_cnt);
 
 	if (on_cmds->cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, on_cmds);
+#endif
+
+#if defined CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL
+/*
+	if (ctrl->cabc_still_mode_cmds.cmd_cnt) {
+			pr_err("%s: cabc_still_mode_cmds cnt : %d \n", __func__, ctrl->cabc_still_mode_cmds.cmd_cnt);
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->cabc_still_mode_cmds);
+	}
+*/
+#endif
+
+	if ((IS_ENABLED(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL)) ||
+		(IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL)) ||
+		(IS_ENABLED(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL))) {
+		if (!pdata->panel_info.cont_splash_enabled)
+			led_trigger_event(bl_led_trigger, pinfo->bl_default);
+	}
 
 	if (ctrl->ds_registered)
 		mdss_dba_utils_video_on(pinfo->dba_data, pinfo);
+
 end:
-	pr_debug("%s:-\n", __func__);
+	pr_info("%s:-\n", __func__);
 	return ret;
 }
 
@@ -754,7 +843,7 @@ static int mdss_dsi_post_panel_on(struct mdss_panel_data *pdata)
 	}
 
 end:
-	pr_debug("%s:-\n", __func__);
+	pr_info("%s:-\n", __func__);
 	return 0;
 }
 
@@ -782,13 +871,20 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 	if (ctrl->off_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds);
 
+#ifdef CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL
+	msleep(100);
+#endif
+#ifdef CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL
+		msleep(200);
+#endif
+
 	if (ctrl->ds_registered) {
 		mdss_dba_utils_video_off(pinfo->dba_data);
 		mdss_dba_utils_hdcp_enable(pinfo->dba_data, false);
 	}
 
 end:
-	pr_debug("%s:-\n", __func__);
+	pr_info("%s:-\n", __func__);
 	return 0;
 }
 
@@ -815,6 +911,310 @@ static int mdss_dsi_panel_low_power_config(struct mdss_panel_data *pdata,
 	pr_debug("%s:-\n", __func__);
 	return 0;
 }
+
+#ifdef CONFIG_LGE_READER_MODE
+
+int reader_mode_off(void)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
+	struct mdss_panel_data *pdata;
+
+	pr_err("%s ++ \n", __func__);
+	//pr_err("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
+
+	if (pdata_base == NULL || mfd_base == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	if (mfd_base->panel_power_state== MDSS_PANEL_POWER_OFF) {
+		pr_err("%s: Panel is off\n", __func__);
+		return -EPERM;
+	}
+
+	ctrl = container_of(pdata_base, struct mdss_dsi_ctrl_pdata, panel_data);
+
+	pr_err("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
+	pdata = &(ctrl->panel_data);
+
+	pr_err("%s [reader mode] old : %d\n", __func__, reader_mode_old);
+
+	switch(reader_mode_old)
+	{
+	case READER_MODE_STEP_1:
+	case READER_MODE_STEP_2:
+	case READER_MODE_STEP_3:
+		if (ctrl->reader_mode_off_cmds.cmd_cnt) {
+			pr_err("[LCD] sending reader mode OFF commands cnt : %d\n", ctrl->reader_mode_off_cmds.cmd_cnt);
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_on_cmds);
+			}
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_off_cmds);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_off_cmds);
+			}
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+		}
+	    break;
+	case READER_MODE_MONO:
+		if (ctrl->reader_mode_mono_off_cmds.cmd_cnt) {
+			pr_err("[LCD] sending reader mode MONO OFF commands cnt : %d\n", ctrl->reader_mode_mono_off_cmds.cmd_cnt);
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_on_cmds);
+			}
+
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_mono_off_cmds);
+
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_off_cmds);
+			}
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+		}
+		break;
+	default:
+		pr_err("%s: Invalid old status : %d\n", __func__, reader_mode_old);
+		break;
+	}
+
+	reader_mode_old = READER_MODE_OFF;
+	pr_err("%s : reader_mode_old :%d \n", __func__, reader_mode_old);
+	pr_err("%s -- \n", __func__);
+	return 0;
+}
+EXPORT_SYMBOL(reader_mode_off);
+
+int reader_mode_on(int step)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
+	struct mdss_panel_data *pdata;
+
+	pr_err("%s ++ \n", __func__);
+
+	if (pdata_base == NULL || mfd_base == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	if (mfd_base->panel_power_state == MDSS_PANEL_POWER_OFF) {
+		pr_err("%s: Panel is off\n", __func__);
+		return -EPERM;
+	}
+
+	ctrl = container_of(pdata_base, struct mdss_dsi_ctrl_pdata, panel_data);
+
+	pdata = &(ctrl->panel_data);
+	pr_err("%s [reader mode] old : %d\n", __func__, reader_mode_old);
+
+	switch(reader_mode_old)
+	{
+		case READER_MODE_OFF:
+		case READER_MODE_STEP_1:
+		case READER_MODE_STEP_2:
+		case READER_MODE_STEP_3:
+			if(reader_mode_old == step)
+			{
+				pr_err("[LCD] Same as older mode : %d \n", step);
+				break;
+			}
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_on_cmds);
+			}
+			switch(step)
+			{
+			case READER_MODE_STEP_1:
+				if (ctrl->reader_mode_step1_cmds.cmd_cnt) {
+					pr_err("[LCD] sending reader mode STEP1 commands  cnt : %d \n", ctrl->reader_mode_step1_cmds.cmd_cnt);
+					mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_step1_cmds);
+				}
+				break;
+			case READER_MODE_STEP_2:
+				if (ctrl->reader_mode_step2_cmds.cmd_cnt) {
+					pr_err("[LCD] sending reader mode STEP2 commands  cnt : %d \n", ctrl->reader_mode_step2_cmds.cmd_cnt);
+					mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_step2_cmds);
+				}
+				break;
+			case READER_MODE_STEP_3:
+				if (ctrl->reader_mode_step3_cmds.cmd_cnt) {
+					pr_err("[LCD] sending reader mode STEP3 commands  cnt : %d \n", ctrl->reader_mode_step3_cmds.cmd_cnt);
+					mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_step3_cmds);
+				}
+				break;
+			default:
+				pr_err("[LCD] Input Invalid parameter : %d \n", step);
+				break;
+			}
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_off_cmds);
+			}
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+			break;
+		case READER_MODE_MONO:
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_on_cmds);
+			}
+			switch(step)
+			{
+			case READER_MODE_STEP_1:
+				if (ctrl->reader_mode_step1_cmds.cmd_cnt) {
+					pr_err("[LCD] sending reader mode STEP1 commands  cnt : %d \n", ctrl->reader_mode_step1_cmds.cmd_cnt);
+					mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_step1_cmds);
+				}
+				break;
+			case READER_MODE_STEP_2:
+				//if (ctrl->reader_mode_step2_cmds.cmd_cnt) {
+				//	pr_err("[LCD] sending reader mode STEP2 commands  cnt : %d \n", ctrl->reader_mode_step2_cmds.cmd_cnt);
+				//	mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_step2_cmds);
+				//}
+				break;
+			case READER_MODE_STEP_3:
+				if (ctrl->reader_mode_step3_cmds.cmd_cnt) {
+					pr_err("[LCD] sending reader mode STEP3 commands  cnt : %d \n", ctrl->reader_mode_step3_cmds.cmd_cnt);
+					mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_step3_cmds);
+				}
+				break;
+			default:
+				pr_err("[LCD] Input Invalid parameter : %d \n", step);
+				break;
+			}
+			if (ctrl->reader_mode_mono_disable_cmds.cmd_cnt) {
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_mono_disable_cmds);
+			}
+
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_off_cmds);
+			}
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+			break;
+		default:
+			pr_err("%s: Invalid old status : %d\n", __func__, reader_mode_old);
+			break;
+	}
+
+	reader_mode_old = step;
+	pr_err("%s -- \n", __func__);
+	return 0;
+}
+EXPORT_SYMBOL(reader_mode_on);
+
+int reader_mode_mono(void)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
+	struct mdss_panel_data *pdata;
+
+	pr_err("%s ++ \n", __func__);
+	if (pdata_base == NULL || mfd_base == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	if (mfd_base->panel_power_state == MDSS_PANEL_POWER_OFF) {
+		pr_err("%s: Panel is off\n", __func__);
+		return -EPERM;
+	}
+
+	ctrl = container_of(pdata_base, struct mdss_dsi_ctrl_pdata, panel_data);
+
+	pr_err("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
+	pdata = &(ctrl->panel_data);
+
+	pr_err("%s [reader mode] old : %d\n", __func__, reader_mode_old);
+	switch(reader_mode_old)
+	{
+	case READER_MODE_STEP_2:
+		if (ctrl->reader_mode_mono_enable_cmds.cmd_cnt) {
+			pr_err("[LCD] sending reader mode mono commands  cnt : %d \n", ctrl->reader_mode_mono_enable_cmds.cmd_cnt);
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_on_cmds);
+			}
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_mono_enable_cmds);
+			if(ctrl->need_charging_time_cmd)
+			{
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_off_cmds);
+			}
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+		}
+		break;
+	case READER_MODE_STEP_1:
+	case READER_MODE_OFF:
+	case READER_MODE_STEP_3:
+		// change STEP2 first
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+		if(ctrl->need_charging_time_cmd)
+		{
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_on_cmds);
+		}
+		if (ctrl->reader_mode_mono_step2_cmds.cmd_cnt) {
+				pr_err("[LCD] sending reader mode mono STEP2 commands  cnt : %d \n", ctrl->reader_mode_mono_step2_cmds.cmd_cnt);
+				mdss_dsi_panel_cmds_send(ctrl, &ctrl->reader_mode_mono_step2_cmds);
+		}
+
+		if(ctrl->need_charging_time_cmd)
+		{
+			mdss_dsi_panel_cmds_send(ctrl, &ctrl->charging_time_off_cmds);
+		}
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+		break;
+	default:
+		pr_err("%s: Invalid old status : %d\n", __func__, reader_mode_old);
+		break;
+	}
+
+	reader_mode_old = READER_MODE_MONO;
+	pr_err("%s -- \n", __func__);
+	return 0;
+}
+EXPORT_SYMBOL(reader_mode_mono);
+
+
+static ssize_t reader_mode(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+
+	if (!count)
+		return -EINVAL;
+
+	reader_mode_on_off = simple_strtoul(buf, NULL, 10);
+
+	pr_err("[LCD][DEBUG] %s, %d", __func__, reader_mode_on_off);
+
+	switch (reader_mode_on_off)
+	{
+	case READER_MODE_OFF:
+		reader_mode_off();
+		break;
+	case READER_MODE_STEP_1:
+	case READER_MODE_STEP_2:
+	case READER_MODE_STEP_3:
+		reader_mode_on(reader_mode_on_off);
+		break;
+	case READER_MODE_MONO:
+		reader_mode_mono();
+		break;
+	default:
+		pr_err("[LCD][DEBUG] %s, Invalid input %d", __func__, reader_mode_on_off);
+		break;
+	}
+
+	return count;
+}
+
+DEVICE_ATTR(reader_mode, S_IWUSR, NULL, reader_mode);
+#endif
 
 static void mdss_dsi_parse_trigger(struct device_node *np, char *trigger,
 		char *trigger_key)
@@ -1863,6 +2263,10 @@ static int mdss_panel_parse_dt(struct device_node *np,
 	int rc, i, len;
 	const char *data;
 	struct mdss_panel_info *pinfo = &(ctrl_pdata->panel_data.panel_info);
+#if defined(CONFIG_SHARP_NT35596_FHD_VIDEO_LCD_PANEL) || defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) \
+	|| defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+	u32 *array;
+#endif
 
 	rc = of_property_read_u32(np, "qcom,mdss-dsi-panel-width", &tmp);
 	if (rc) {
@@ -1969,6 +2373,43 @@ static int mdss_panel_parse_dt(struct device_node *np,
 	pinfo->bl_max = (!rc ? tmp : 255);
 	ctrl_pdata->bklt_max = pinfo->bl_max;
 
+	if (IS_ENABLED(CONFIG_TOVIS_ILI7807B_FHD_VIDEO_LCD_PANEL)) {
+		rc = of_property_read_u32(np, "lge,mdss-dsi-bl-default-level", &tmp);
+		pinfo->bl_default = (!rc ? tmp : pinfo->bl_max);
+	}
+
+#if defined(CONFIG_SHARP_NT35596_FHD_VIDEO_LCD_PANEL) || defined(CONFIG_INNOLUX_NT51021_WUXGA_VIDEO_PANEL) \
+	|| defined(CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL)
+	rc = of_property_read_u32(np, "lge,blmap-size", &tmp);
+	pinfo->blmap_size = (!rc ? tmp : 0);
+
+	if (pinfo->blmap_size) {
+		array = kzalloc(sizeof(u32) * pinfo->blmap_size, GFP_KERNEL);
+
+		if (!array)
+			return -ENOMEM;
+		rc = of_property_read_u32_array(np,
+			"lge,blmap", array, pinfo->blmap_size);
+
+		if (rc) {
+			pr_err("%s:%d, unable to read backlight map\n",
+					__func__, __LINE__);
+			kfree(array);
+			goto error;
+		}
+
+		pinfo->blmap = kzalloc(sizeof(int) * pinfo->blmap_size,
+					GFP_KERNEL);
+		if (!pinfo->blmap)
+			return -ENOMEM;
+
+		for (i = 0; i < pinfo->blmap_size; i++)
+			pinfo->blmap[i] = array[i];
+		kfree(array);
+	} else {
+		pinfo->blmap = NULL;
+	}
+#endif
 	rc = of_property_read_u32(np, "qcom,mdss-dsi-interleave-mode", &tmp);
 	pinfo->mipi.interleave_mode = (!rc ? tmp : 0);
 
@@ -2118,6 +2559,51 @@ static int mdss_panel_parse_dt(struct device_node *np,
 	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->off_cmds,
 		"qcom,mdss-dsi-off-command", "qcom,mdss-dsi-off-command-state");
 
+#ifdef CONFIG_LGE_READER_MODE
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_initial_step1_cmds,
+		"qcom,panel-reader-mode-initial-step1-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_initial_step2_cmds,
+		"qcom,panel-reader-mode-initial-step2-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_initial_step3_cmds,
+		"qcom,panel-reader-mode-initial-step3-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_step1_cmds,
+		"qcom,panel-reader-mode-step1-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_step2_cmds,
+		"qcom,panel-reader-mode-step2-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_step3_cmds,
+		"qcom,panel-reader-mode-step3-command", "qcom,mdss-dsi-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_off_cmds,
+		"qcom,panel-reader-mode-off-command", "qcom,mdss-dsi-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->charging_time_on_cmds,
+		"qcom,panel-charging-time-on-command", "qcom,mdss-dsi-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->charging_time_off_cmds,
+		"qcom,panel-charging-time-off-command", "qcom,mdss-dsi-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_mono_enable_cmds,
+		"qcom,panel-reader-mode-mono-enable-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_mono_disable_cmds,
+		"qcom,panel-reader-mode-mono-disable-command", "qcom,mdss-dsi-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_mono_step2_cmds,
+		"qcom,panel-reader-mode-mono-step2-command", "qcom,mdss-dsi-on-command-state");
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->reader_mode_mono_off_cmds,
+		"qcom,panel-reader-mode-mono-off-command", "qcom,mdss-dsi-on-command-state");
+
+	rc = of_property_read_bool(np, "lge,charging-time-command");
+	ctrl_pdata->need_charging_time_cmd = rc;
+	pr_err("%s: need_charging_time_cmd = %d \n", __func__, ctrl_pdata->need_charging_time_cmd);
+#endif
+
+#if defined CONFIG_TOVIS_NT51021_WUXGA_VIDEO_PANEL
+/*
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->cabc_still_mode_cmds,
+		"qcom,panel-cabc-still-command", "qcom,mdss-dsi-on-command-state");
+*/
+#endif
+
 	pinfo->mipi.force_clk_lane_hs = of_property_read_bool(np,
 		"qcom,mdss-dsi-force-clock-lane-hs");
 
@@ -2174,6 +2660,11 @@ int mdss_dsi_panel_init(struct device_node *node,
 	static const char *panel_name;
 	struct mdss_panel_info *pinfo;
 
+#ifdef CONFIG_LGE_READER_MODE
+	struct device_node *dsi_ctrl_np = NULL;
+	struct platform_device *ctrl_pdev = NULL;
+#endif
+
 	if (!node || !ctrl_pdata) {
 		pr_err("%s: Invalid arguments\n", __func__);
 		return -ENODEV;
@@ -2190,7 +2681,12 @@ int mdss_dsi_panel_init(struct device_node *node,
 	} else {
 		pr_info("%s: Panel Name = %s\n", __func__, panel_name);
 		strlcpy(&pinfo->panel_name[0], panel_name, MDSS_MAX_PANEL_LEN);
+#if defined(CONFIG_LGE_DISPLAY_POWER_SEQUENCE)
+		if (lge_mdss_dsi.lge_mdss_dsi_panel_init)
+			rc = lge_mdss_dsi.lge_mdss_dsi_panel_init(node, ctrl_pdata);
+#endif
 	}
+
 	rc = mdss_panel_parse_dt(node, ctrl_pdata);
 	if (rc) {
 		pr_err("%s:%d panel dt parse failed\n", __func__, __LINE__);
@@ -2209,5 +2705,24 @@ int mdss_dsi_panel_init(struct device_node *node,
 	ctrl_pdata->panel_data.set_backlight = mdss_dsi_panel_bl_ctrl;
 	ctrl_pdata->switch_mode = mdss_dsi_panel_switch_mode;
 
+#ifdef CONFIG_LGE_READER_MODE
+	/* Panel device is not created since KK release										*/
+	/* create the node file for controling the reader mode under the dsi controller device 				*/
+	/* file path: /sys/devices/1a98000.qcom,mdss_dsi/reader_mode 						*/
+
+	dsi_ctrl_np = of_parse_phandle(node,
+				"qcom,mdss-dsi-panel-controller", 0);
+
+	pr_err("%s: CONFIG_LGE_READER_MODE \n", __func__);
+	if (!dsi_ctrl_np) {
+		pr_err("%s: Dsi controller node not initialized\n", __func__);
+		return -EPROBE_DEFER;
+	}
+
+	ctrl_pdev = of_find_device_by_node(dsi_ctrl_np);
+
+	pr_err("%s: create file \n", __func__);
+	rc = device_create_file(&ctrl_pdev->dev, &dev_attr_reader_mode);
+#endif
 	return 0;
 }

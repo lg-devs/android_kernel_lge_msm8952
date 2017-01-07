@@ -49,6 +49,10 @@
 #include <soc/qcom/msm-core.h>
 #include <linux/cpumask.h>
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <soc/qcom/lge/lge_handle_panic.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #define TRACE_MSM_THERMAL
 #include <trace/trace_thermal.h>
@@ -403,7 +407,9 @@ static ssize_t thermal_config_debugfs_write(struct file *file,
 					const char __user *buffer,
 					size_t count, loff_t *ppos);
 
+#ifndef __ATTR_RW
 #define __ATTR_RW(attr) __ATTR(attr, 0644, attr##_show, attr##_store)
+#endif
 
 #define SYNC_CORE(_cpu) \
 	(core_ptr && cpus[_cpu].parent_ptr->sync_cluster)
@@ -2623,6 +2629,10 @@ static void msm_thermal_bite(int zone_id, long temp)
 		pr_err("Tsens:%d reached temperature:%ld. System reset\n",
 			tsens_id, temp);
 	}
+
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	lge_set_restart_reason(LGE_RB_MAGIC | LGE_ERR_TSENS);
+#endif
 	if (!is_scm_armv8()) {
 		scm_call(SCM_SVC_BOOT, THERM_SECURE_BITE_CMD,
 			NULL, 0, NULL, 0);
@@ -3287,7 +3297,8 @@ static void do_prog_freq_control(struct thermal_progressive_rule *prog,
 		cluster_ptr ? cluster_ptr->cluster_id : 0,
 		freq_table[idx].frequency);
 	pr_debug("Sensor:%s Limiting Cluster%d max frequency to %u. Temp:%ld\n",
-		prog->sensor_info->name, cluster_ptr->cluster_id,
+		prog->sensor_info->name,
+		cluster_ptr ? cluster_ptr->cluster_id : 0,
 		freq_table[idx].frequency, temp);
 }
 

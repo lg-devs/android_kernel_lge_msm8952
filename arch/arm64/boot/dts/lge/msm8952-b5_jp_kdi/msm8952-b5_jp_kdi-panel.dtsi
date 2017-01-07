@@ -1,0 +1,96 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "../dsi-panel-tovis-nt51021-wuxga-video.dtsi"
+
+&mdss_mdp {
+	qcom,mdss-pref-prim-intf = "dsi";
+
+
+	dsi_tovis_vid: qcom,mdss_dsi_tovis_nt51021_wuxga_video {
+		lge,blmap = <
+			0 45 45 45 45 45 45 45 45 45                            /* 0 ~ 9 */
+			45 47 49 51 53 55 57 59 61 63                           /* 10 ~ 19 */
+			65 67 69 71 73 75 77 79 81 84                           /* 20 ~ 29 */
+			86 88 90 92 94 97 98 100 102 104                                   /* 30 ~ 39 */
+			106 108 110 111 113 115 117 119 121 123                         /* 40 ~ 49 */
+			125 128 131 133 136 140 145 150 150 150                         /* 50 ~ 59 */
+			150 150 157 170 182 189 195 202 208 215                         /* 60 ~ 69 */
+			221 228 234 241 248 256 263 271 278 286                         /* 70 ~ 79 */
+			294 301 309 316 324 332 339 346 353 360                         /* 80 ~ 89 */
+			367 374 381 388 395 402 409 416 423 431                         /* 90 ~ 99 */
+			439 448 456 464 473 481 495 515 515 515                         /* 100 ~ 109 */
+			515 515 540 567 580 593 607 620 633 646                         /* 110 ~ 119 */
+			659 672 686 700 714 728 743 757 771 785                         /* 120 ~ 129 */
+			800 814 828 842 857 872 888 903 919 934                         /* 130 ~ 139 */
+			950 965 981 996 1012 1028 1041 1054 1067 1080                 /* 140 ~ 149 */
+			1094 1107 1120 1133 1147 1160 1180 1200 1200 1200           /* 150 ~ 159 */
+			1224 1250 1278 1305 1332 1354 1376 1398 1420 1450           /* 160 ~ 169 */
+			1450 1450 1450 1450 1500 1566 1587 1607 1607 1607           /* 170 ~ 179 */
+			1668 1689 1709 1730 1752 1774 1796 1818 1840 1862           /* 180 ~ 189 */
+			1884 1906 1928 1950 1972 1995 2015 2035 2056 2076           /* 190 ~ 199 */
+			2096 2117 2137 2158 2178 2198 2260 2260 2260 2260           /* 200 ~ 209 */
+			2260 2321 2395 2429 2462 2496 2530 2564 2598 2632           /* 210 ~ 219 */
+			2660 2689 2717 2746 2775 2803 2832 2860 2889 2918           /* 220 ~ 229 */
+			2946 2975 3004 3035 3066 3097 3128 3159 3190 3221           /* 230 ~ 239 */
+			3252 3283 3314 3345 3376 3410 3444 3478 3512 3546           /* 240 ~ 249 */
+			3580 3614 3648 3682 3716 3750>;
+	};
+};
+
+&dsi_tovis_vid {
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <4095>;
+	lge,mdss-dsi-bl-default-level = <1500>;
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+};
+
+&pmx_mdss {
+       qcom,num-grp-pins = <2>;
+       qcom,pins = <&gp 0>, <&gp 63>;
+};
+
+&pmx_mdss_te {
+	qcom,num-grp-pins = <1>;
+	qcom,pins = <&gp 24>;
+};
+
+&mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_tovis_vid>;
+	pinctrl-names = "mdss_default", "mdss_sleep";
+	pinctrl-0 = <&mdss_dsi_active>;
+	pinctrl-1 = <&mdss_dsi_suspend>;
+	qcom,regulator-ldo-mode;
+	qcom,platform-reset-gpio = <&msm_gpio 0 0>;
+	lge,platform-disp-vio-gpio = <&msm_gpio 63 0>;
+	/delete-property/ vdd-supply;
+	/delete-property/ lab-supply;
+	/delete-property/ 	ibb-supply;
+};
+
+&dsi_panel_pwr_supply {
+	/delete-node/ qcom,panel-supply-entry@0;
+	/delete-node/ qcom,panel-supply-entry@2;
+	/delete-node/ qcom,panel-supply-entry@3;
+};
+
+
+&labibb {
+	status = "disable";
+	qpnp,qpnp-labibb-mode = "lcd";
+};
+
+&mdss_fb0 {
+	/delete-property/ qcom,mdss-fb-splash-logo-enabled;
+};

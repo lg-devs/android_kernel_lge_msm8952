@@ -114,6 +114,18 @@ static int mmc_decode_cid(struct mmc_card *card)
 		card->cid.prv		= UNSTUFF_BITS(resp, 48, 8);
 		card->cid.serial	= UNSTUFF_BITS(resp, 16, 32);
 		card->cid.month		= UNSTUFF_BITS(resp, 12, 4);
+	#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		 * modify date cid register values
+		 * see CID register part in JEDEC Spec.
+		 * ex) 0000 : 1997, or 2013 if EXT_CSD_REV [192] > 4
+		 * don't care MDT y Field[11:8] value over 1101b.
+		 * 2014-03-07, B2-BSP-FS@lge.com
+		 */
+		if (card->ext_csd.rev > 4)
+			card->cid.year		= UNSTUFF_BITS(resp, 8, 4) + 2013;
+		else
+	#endif
 		card->cid.year		= UNSTUFF_BITS(resp, 8, 4) + 1997;
 		break;
 
@@ -513,7 +525,11 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		if ((ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1) &&
 		    card->ext_csd.hpi) {
 			card->ext_csd.bkops = 1;
+#ifdef CONFIG_LGE_MMC_BKOPS_ENABLE
 			card->ext_csd.bkops_en = ext_csd[EXT_CSD_BKOPS_EN];
+#else
+			card->ext_csd.bkops_en = 0;
+#endif
 			card->ext_csd.raw_bkops_status =
 				ext_csd[EXT_CSD_BKOPS_STATUS];
 			if (!(mmc_card_get_bkops_en_manual(card)) &&
@@ -528,7 +544,6 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 						mmc_hostname(card->host));
 					mmc_card_clr_bkops_en_manual(card);
 				}
-
 			}
 		}
 
@@ -652,6 +667,13 @@ static int mmc_compare_ext_csds(struct mmc_card *card, unsigned bus_width)
 	err = mmc_get_ext_csd(card, &bw_ext_csd);
 
 	if (err || bw_ext_csd == NULL) {
+		#ifdef CONFIG_MACH_LGE
+			/* LGE_CHANGE, 2013-04-19, G2-FS@lge.com
+			* Adding Print, Requested by QMC-CASE-01158823
+			*/
+			pr_err("%s: %s: 0x%x, 0x%x\n", mmc_hostname(card->host), __func__, err, bw_ext_csd ? *bw_ext_csd : 0x0);
+		#endif
+
 		err = -EINVAL;
 		goto out;
 	}
@@ -691,8 +713,19 @@ static int mmc_compare_ext_csds(struct mmc_card *card, unsigned bus_width)
 			bw_ext_csd[EXT_CSD_SEC_CNT + 2]) &&
 		(card->ext_csd.raw_sectors[3] ==
 			bw_ext_csd[EXT_CSD_SEC_CNT + 3]));
+
+	#ifdef CONFIG_MACH_LGE
+	/* LGE_CHANGE, 2014-09-01, Z2G4-BSP-FileSys@lge.com
+	* Adding Print, Requested by QMC-CASE-01158823
+	*/
+	if (err) {
+		pr_err("%s: %s: fail during compare, err = 0x%x\n", mmc_hostname(card->host), __func__, err);
+		err = -EINVAL;
+	}
+	#else
 	if (err)
 		err = -EINVAL;
+	#endif
 
 out:
 	mmc_free_ext_csd(bw_ext_csd);
@@ -817,8 +850,15 @@ static int mmc_select_powerclass(struct mmc_card *card,
 				EXT_CSD_PWR_CL_200_360;
 		break;
 	default:
+		#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE, 2014-09-01, Z2G4-BSP-FileSys@lge.com
+		* Adding Print, Requested by QMC-CASE-01158823
+		*/
+		pr_err("%s: %s: Voltage range not supported for power class, host->ios.vdd = 0x%x\n", mmc_hostname(host), __func__, host->ios.vdd);
+		#else
 		pr_warning("%s: Voltage range not supported "
 			   "for power class.\n", mmc_hostname(host));
+		#endif
 		return -EINVAL;
 	}
 
@@ -1624,12 +1664,18 @@ reinit:
 					mmc_hostname(host), __func__, err);
 			goto free_card;
 		}
+#ifndef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		 *  ext_csd.rev value are required while decoding cid.year, so move down.
+		 *  2014-09-01, Z2G4-BSP-FileSys@lge.com
+		 */
 		err = mmc_decode_cid(card);
 		if (err) {
 			pr_err("%s: %s: mmc_decode_cid() fails %d\n",
 					mmc_hostname(host), __func__, err);
 			goto free_card;
 		}
+#endif
 	}
 
 	/*
@@ -1662,6 +1708,18 @@ reinit:
 					mmc_hostname(host), __func__, err);
 			goto free_card;
 		}
+#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		 * decode cid here.
+		 * 2014-09-01, Z2G4-BSP-FileSys@lge.com
+		 */
+		err = mmc_decode_cid(card);
+		if (err) {
+			pr_err("%s: %s: mmc_decode_cid() fails %d\n",
+					mmc_hostname(host), __func__, err);
+			goto free_card;
+		}
+#endif
 
 		/* If doing byte addressing, check if required to do sector
 		 * addressing.  Handle the case of <2GB cards needing sector
@@ -2037,6 +2095,10 @@ static int _mmc_suspend(struct mmc_host *host, bool is_suspend)
 		err = mmc_card_sleep(host);
 	else if (!mmc_host_is_spi(host))
 		err = mmc_deselect_cards(host);
+
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+	if (host->index != 0 || !mmc_card_can_sleep(host))
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
 	host->card->state &= ~(MMC_STATE_HIGHSPEED | MMC_STATE_HIGHSPEED_200);
 
 out:
@@ -2062,35 +2124,68 @@ static int mmc_resume(struct mmc_host *host)
 {
 	int err;
 	int retries;
+//	printk("mmc_resume start   \r\n");
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
 	mmc_claim_host(host);
-	retries = 3;
-	while (retries) {
-		err = mmc_init_card(host, host->ocr, host->card);
+
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+	if (host->index == 0 && mmc_card_can_sleep(host)) {
+		retries = 3;
+		err = mmc_card_awake(host);
 
 		if (err) {
-			pr_err("%s: MMC card re-init failed rc = %d (retries = %d)\n",
-			       mmc_hostname(host), err, retries);
-			retries--;
-			mmc_power_off(host);
-			usleep_range(5000, 5500);
-			mmc_power_up(host);
-			mmc_select_voltage(host, host->ocr);
-			continue;
+			while (retries) {
+				if (mmc_init_card(host, host->ocr, host->card)) {
+					pr_err("%s: MMC card re-init failed rc = %d (retries = %d)\n", mmc_hostname(host), err, retries);
+					retries--;
+					mmc_power_off(host);
+					usleep_range(5000, 5500);
+					mmc_power_up(host);
+					mmc_select_voltage(host, host->ocr);
+					continue;
+				}
+				break;
+			}
 		}
-		break;
+	} else {
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
+		retries = 3;
+
+		while (retries) {
+			err = mmc_init_card(host, host->ocr, host->card);
+
+			if (err) {
+				pr_err("%s: MMC card re-init failed rc = %d (retries = %d)\n",
+				       mmc_hostname(host), err, retries);
+				retries--;
+				mmc_power_off(host);
+				usleep_range(5000, 5500);
+				mmc_power_up(host);
+				mmc_select_voltage(host, host->ocr);
+				continue;
+			}
+			break;
+		}
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
 	}
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
+
 	mmc_release_host(host);
 
 	/*
 	 * We have done full initialization of the card,
 	 * reset the clk scale stats and current frequency.
 	 */
+#ifdef CONFIG_MMC_SKHYNIX_AWAKE_CMD5
+	if (mmc_can_scale_clk(host) && !(host->index == 0 && mmc_card_can_sleep(host)))
+#else
 	if (mmc_can_scale_clk(host))
+#endif /* CONFIG_MMC_SKHYNIX_AWAKE_CMD5 */
 		mmc_init_clk_scaling(host);
+//	printk("mmc_resume end  \r\n");
 
 	return err;
 }

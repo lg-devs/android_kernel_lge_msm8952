@@ -34,6 +34,7 @@
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
 #include "internal.h"
+#include "../fs/sreadahead_prof.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
@@ -628,6 +629,31 @@ void end_page_writeback(struct page *page)
 	wake_up_page(page, PG_writeback);
 }
 EXPORT_SYMBOL(end_page_writeback);
+
+/*
+ * After completing I/O on a page, call this routine to update the page
+ * flags appropriately
+ */
+void page_endio(struct page *page, int rw, int err)
+{
+	if (rw == READ) {
+		if (!err) {
+			SetPageUptodate(page);
+		} else {
+			ClearPageUptodate(page);
+			SetPageError(page);
+		}
+		unlock_page(page);
+	} else { /* rw == WRITE */
+		if (err) {
+			SetPageError(page);
+			if (page->mapping)
+				mapping_set_error(page->mapping, err);
+		}
+		end_page_writeback(page);
+	}
+}
+EXPORT_SYMBOL_GPL(page_endio);
 
 /**
  * __lock_page - get a lock on the page, assuming we need to sleep to get it
@@ -1568,7 +1594,25 @@ static int page_cache_read(struct file *file, pgoff_t offset)
 }
 
 #define MMAP_LOTSAMISS  (100)
+#define BOOT_OAT_FILE_NAME "boot.oat"
+#define BOOT_OAT_FILE_SIZE 8
+#define MAX_MMAP_READ_AHEAD_SIZE 128
 
+static inline int strncmp_ex(const char *cs, const char *ct, size_t count)
+{
+	unsigned char c1, c2;
+
+	while (count) {
+		c1 = *cs++;
+		c2 = *ct++;
+		if(c1 != c2)
+			return c1 < c2 ? -1 : 1;
+		if(!c1)
+			break;
+		count--;
+	}
+	return 0;
+}
 /*
  * Synchronous readahead happens when we don't even find
  * a page in the page cache at all.
@@ -1607,7 +1651,19 @@ static void do_sync_mmap_readahead(struct vm_area_struct *vma,
 	/*
 	 * mmap read-around
 	 */
+#ifdef CONFIG_READAHEAD_MMAP_SIZE_ENABLE
+	ra_pages = CONFIG_READAHEAD_MMAP_PAGE_CNT;
+
+	// To reduce application entry time...
+	if (file->f_path.dentry != NULL) {
+		if(strncmp_ex(BOOT_OAT_FILE_NAME, file->f_path.dentry->d_name.name,
+			BOOT_OAT_FILE_SIZE)==0) {
+			ra_pages = MAX_MMAP_READ_AHEAD_SIZE;
+		}
+	}
+#else
 	ra_pages = max_sane_readahead(ra->ra_pages);
+#endif
 	ra->start = max_t(long, 0, offset - ra_pages / 2);
 	ra->size = ra_pages;
 	ra->async_size = ra_pages / 4;
@@ -1678,6 +1734,14 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		/* No page in the page cache at all */
 		do_sync_mmap_readahead(vma, ra, file, offset);
 		count_vm_event(PGMAJFAULT);
+		/* LGE_CHANGE_S
+		*
+		* Profile files related to pgmajfault during 1st booting
+		* in order to use the data as readahead args
+		*
+		*/
+		sreadahead_prof(file, 0, 0);
+		/* LGE_CHANGE_E */
 		mem_cgroup_count_vm_event(vma->vm_mm, PGMAJFAULT);
 		ret = VM_FAULT_MAJOR;
 retry_find:

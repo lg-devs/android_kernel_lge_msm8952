@@ -170,6 +170,11 @@ int add_to_swap(struct page *page, struct list_head *list)
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(!PageUptodate(page));
 
+#ifdef CONFIG_HSWAP
+	if (!current_is_kswapd())
+		entry = get_lowest_prio_swap_page();
+	else
+#endif
 	entry = get_swap_page();
 	if (!entry.val)
 		return 0;

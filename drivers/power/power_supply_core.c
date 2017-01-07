@@ -19,7 +19,9 @@
 #include <linux/power_supply.h>
 #include <linux/thermal.h>
 #include "power_supply.h"
-
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+#include <soc/qcom/lge/power/lge_power_class.h>
+#endif
 /* exported for the APM Power driver, APM emulation */
 struct class *power_supply_class;
 EXPORT_SYMBOL_GPL(power_supply_class);
@@ -281,6 +283,66 @@ int power_supply_set_dp_dm(struct power_supply *psy, int value)
 	return -ENXIO;
 }
 EXPORT_SYMBOL(power_supply_set_dp_dm);
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+static bool __lge_power_is_supplied_by(struct power_supply *supplier,
+					 struct lge_power *supply)
+{
+	int i;
+
+	if (!supply->supplied_from && !supplier->lge_power_supplied_to)
+		return false;
+
+	/* Support both supplied_to and supplied_from modes */
+	if (supply->supplied_from) {
+		if (!supplier->name)
+			return false;
+		for (i = 0; i < supply->num_supplies; i++)
+			if (!strcmp(supplier->name, supply->supplied_from[i]))
+				return true;
+	}
+	if (supplier->lge_power_supplied_to){
+		if (!supply->name)
+			return false;
+		for (i = 0; i < supplier->num_lge_power_supplicants; i++)
+			if (!strcmp(supplier->lge_power_supplied_to[i], supply->name))
+				return true;
+	}
+
+	return false;
+}
+
+static int
+__power_supply_changed_for_lge_power_work(struct device *dev, void *data)
+{
+	struct power_supply *psy = (struct power_supply *)data;
+	struct lge_power *pst = dev_get_drvdata(dev);
+	if (__lge_power_is_supplied_by(psy, pst)) {
+		if (pst->external_power_changed)
+			pst->external_power_changed(pst);
+#ifdef CONFIG_LGE_PM_LGE_POWER_CLASS_UEVENT
+		if (pst->external_power_changed_with_psy)
+			pst->external_power_changed_with_psy(pst, psy);
+#endif
+	}
+
+	return 0;
+}
+
+int power_supply_do_i_have_property(struct power_supply *psy,
+					enum power_supply_property psp)
+{
+	int idx = 0;
+	for (idx=0;idx < psy->num_properties;idx++)
+	{
+		if (psp == psy->properties[idx])
+		{
+			return 1;
+		}
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(power_supply_do_i_have_property);
+#endif
 
 static int __power_supply_changed_work(struct device *dev, void *data)
 {
@@ -295,6 +357,19 @@ static int __power_supply_changed_work(struct device *dev, void *data)
 	return 0;
 }
 
+#ifdef CONFIG_LGE_PM_LGE_POWER_CLASS_UEVENT
+static int init_power_supply_property_data(struct power_supply *psy)
+{
+	int ret = 0;
+
+	psy->property_data = devm_kzalloc(psy->dev,
+			psy->num_properties*sizeof(enum power_supply_property),
+			GFP_KERNEL);
+	psy->update_uevent = 1;
+	ret = 1;
+	return ret;
+}
+#endif
 static void power_supply_changed_work(struct work_struct *work)
 {
 	unsigned long flags;
@@ -307,13 +382,24 @@ static void power_supply_changed_work(struct work_struct *work)
 	if (psy->changed) {
 		psy->changed = false;
 		spin_unlock_irqrestore(&psy->changed_lock, flags);
-
+#ifdef CONFIG_LGE_PM_LG_POWER_CORE
+		class_for_each_device(lge_power_class, NULL, psy,
+				      __power_supply_changed_for_lge_power_work);
+#endif
 		class_for_each_device(power_supply_class, NULL, psy,
 				      __power_supply_changed_work);
 
 		power_supply_update_leds(psy);
-
+#ifdef CONFIG_LGE_PM_LGE_POWER_CLASS_UEVENT
+		if (psy->update_uevent == 1) {
+			kobject_uevent(&psy->dev->kobj, KOBJ_CHANGE);
+			pr_debug("%s UEVENT UPDATE!!!!\n", psy->name);
+		} else {
+			pr_debug("%s UEVENT skip!!!!\n", psy->name);
+		}
+#else
 		kobject_uevent(&psy->dev->kobj, KOBJ_CHANGE);
+#endif
 		spin_lock_irqsave(&psy->changed_lock, flags);
 	}
 	if (!psy->changed)
@@ -767,7 +853,9 @@ int power_supply_register(struct device *parent, struct power_supply *psy)
 	rc = power_supply_create_triggers(psy);
 	if (rc)
 		goto create_triggers_failed;
-
+#ifdef CONFIG_LGE_PM_LGE_POWER_CLASS_UEVENT
+	rc = init_power_supply_property_data(psy);
+#endif
 	power_supply_changed(psy);
 
 	goto success;
