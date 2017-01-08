@@ -4,6 +4,10 @@ ifeq ($(CONFIG_MACH_MSM8952_B3_OPEN_KR),y)
 DTS_TARGET := msm8952-b3_open_kr
 endif
 
+ifeq ($(CONFIG_MACH_MSM8952_P1V_ATT_US),y)
+DTS_TARGET := msm8952-p1v_att_us
+endif
+
 ifeq ($(CONFIG_MACH_MSM8952_B3_ATT_US),y)
 DTS_TARGET := msm8952-b3_att_us
 endif
@@ -24,12 +28,28 @@ ifeq ($(CONFIG_MACH_MSM8952_B3_JP_KDI),y)
 DTS_TARGET := msm8952-b3_jp_kdi
 endif
 
+ifeq ($(CONFIG_MACH_MSM8952_B5_OPEN_KR),y)
+DTS_TARGET := msm8952-b5_open_kr
+endif
+
 ifeq ($(CONFIG_MACH_MSM8952_B5_ATT_US),y)
 DTS_TARGET := msm8952-b5_att_us
 endif
 
-ifeq ($(CONFIG_MACH_MSM8952_P1V_ATT_US),y)
-DTS_TARGET := msm8952-p1v_att_us
+ifeq ($(CONFIG_MACH_MSM8952_B5_USC_US),y)
+DTS_TARGET := msm8952-b5_usc_us
+endif
+
+ifeq ($(CONFIG_MACH_MSM8952_B5_ACG_US),y)
+DTS_TARGET := msm8952-b5_acg_us
+endif
+
+ifeq ($(CONFIG_MACH_MSM8952_B5_OPEN_US),y)
+DTS_TARGET := msm8952-b5_open_us
+endif
+
+ifeq ($(CONFIG_MACH_MSM8952_B5_JP_KDI),y)
+DTS_TARGET := msm8952-b5_jp_kdi
 endif
 
 ALL_DTS := $(notdir $(wildcard echo $(srctree)/$(src)/$(DTS_TARGET)/*.dts))
