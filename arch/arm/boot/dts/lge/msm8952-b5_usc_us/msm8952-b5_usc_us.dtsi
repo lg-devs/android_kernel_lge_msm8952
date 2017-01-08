@@ -1,0 +1,172 @@
+/*
+ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "../../qcom/msm8952.dtsi"
+#include "msm8952-b5_usc_us-pinctrl.dtsi"
+#include "msm8952-b5_usc_us-camera.dtsi"
+#include "msm8952-b5_usc_us-panel.dtsi"
+#include "msm8952-b5_usc_us-misc.dtsi"
+#include "msm8952-b5_usc_us-pm.dtsi"
+#include "msm8952-b5_usc_us-sensor.dtsi"
+#include "msm8952-b5_usc_us-sound.dtsi"
+#include "msm8952-b5_usc_us-usb.dtsi"
+
+#include "msm8952-b5_usc_us-nfc.dtsi"
+#include "msm8952-b5_usc_us-input.dtsi"
+/{
+    chosen {
+		bootargs = "boot_cpus=0,1,2,3,4,5,6,7 sched_enable_hmp=1";
+	};
+};
+
+&spmi_bus {
+	qcom,pm8950@1 {
+		pm8950_s5: spm-regulator@2000 {
+			regulator-min-microvolt = <1075000>;
+		};
+	};
+};
+
+&soc {
+	earjack-debugger {
+		compatible = "serial,earjack-debugger";
+		status = "ok";
+		interrupt-parent = <&msm_gpio>;
+		interrupts = <59 0x0>;
+		serial,irq-gpio = <&msm_gpio 59 0x00>;
+	};
+
+	msm_cpufreq: qcom,msm-cpufreq {
+		lge,cpufreq-table-0 =
+			<  960000 >,
+			< 1094400 >;
+
+		lge,cpufreq-table-4 =
+			<  800000 >,
+			<  998400 >;
+	};
+
+	apc_vreg_corner: regulator@b018000 {
+		qcom,cpr-voltage-ceiling = <1250000 1300000 1350000>;
+		qcom,cpr-voltage-floor = <1250000 1250000 1250000>;
+		qcom,cpr-voltage-floor-override =
+			<0xffffffff 0xffffffff 1075000 1075000 1075000
+			1075000 1075000 1155000 1180000 1180000>;
+	};
+};
+
+&spi_6 {
+	status = "ok";
+
+	sdc-spi-ir@0 { //Slave driver and CS ID
+		compatible = "sdc,spi-ir"; //Manufacture, and Model
+		reg = <0>; //Same as CS ID
+		spi-max-frequency = <1000000>; //Max Frequency for Device
+		/*
+		 * Following elements are optional. For more detail respect to
+		 * SPI please see /kernel/Documentation/devicetree/bindings/spi/spi-bus.txt
+		 * For general settings respect to device tree look @ sdcc device tree
+		 */
+		interrupt-parent = <&msm_gpio>; //GPIO Handler
+		sdc_spi_ir,default_hz = <38000>;
+		sdc_spi_ir,high_bit_size = <6>; // 0~15, resolution = 1/18, 33% 111111 000000 000000
+	};
+};
+
+&blsp1_uart2 {
+	status = "disabled";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart_console_sleep>;
+};
+
+&sdhc_1 {
+	vdd-supply = <&pm8950_l8>;
+	qcom,vdd-always-on;
+    qcom,vdd-voltage-level = <2900000 2900000>;
+	qcom,vdd-current-level = <200 570000>;
+
+	vdd-io-supply = <&pm8950_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 325000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc1_clk_on &sdc1_cmd_on &sdc1_data_on &sdc1_rclk_on>;
+	pinctrl-1 = <&sdc1_clk_off &sdc1_cmd_off &sdc1_data_off &sdc1_rclk_off>;
+
+	qcom,clk-rates = <400000 25000000 50000000 100000000 192000000 384000000>;
+	qcom,bus-speed-mode = "HS400_1p8v", "HS200_1p8v", "DDR_1p8v";
+	qcom,nonremovable;
+	status = "ok";
+};
+
+&sdhc_2 {
+	vdd-supply = <&pm8950_l11>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
+	qcom,vdd-current-level = <15000 400000>;
+
+	vdd-io-supply = <&pm8950_l12>;
+	qcom,vdd-io-voltage-level = <1800000 2950000>;
+	qcom,vdd-io-current-level = <200 22000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
+	pinctrl-1 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
+
+	#address-cells = <0>;
+	interrupt-parent = <&sdhc_2>;
+	interrupts = <0 1 2>;
+	#interrupt-cells = <1>;
+	interrupt-map-mask = <0xffffffff>;
+	interrupt-map = <0 &intc 0 125 0
+			1 &intc 0 221 0
+			2 &msm_gpio 67 0>;
+	interrupt-names = "hc_irq", "pwr_irq", "status_irq";
+	cd-gpios = <&msm_gpio 67 0x1>;
+
+	status = "ok";
+};
+
+
+
+/* CoreSight */
+&tpiu {
+	pinctrl-names = "sdcard", "trace", "swduart",
+			"swdtrc", "jtag", "spmi";
+	/* NIDnT */
+	pinctrl-0 = <&qdsd_clk_sdcard &qdsd_cmd_sdcard
+		     &qdsd_data0_sdcard &qdsd_data1_sdcard
+		     &qdsd_data2_sdcard &qdsd_data3_sdcard>;
+	pinctrl-1 = <&qdsd_clk_trace &qdsd_cmd_trace
+		     &qdsd_data0_trace &qdsd_data1_trace
+		     &qdsd_data2_trace &qdsd_data3_trace>;
+	pinctrl-2 = <&qdsd_cmd_swduart &qdsd_data0_swduart
+		     &qdsd_data1_swduart &qdsd_data2_swduart
+		     &qdsd_data3_swduart>;
+	pinctrl-3 = <&qdsd_clk_swdtrc &qdsd_cmd_swdtrc
+		     &qdsd_data0_swdtrc &qdsd_data1_swdtrc
+		     &qdsd_data2_swdtrc &qdsd_data3_swdtrc>;
+	pinctrl-4 = <&qdsd_cmd_jtag &qdsd_data0_jtag
+		     &qdsd_data1_jtag &qdsd_data2_jtag
+		     &qdsd_data3_jtag>;
+	pinctrl-5 = <&qdsd_clk_spmi &qdsd_cmd_spmi
+		     &qdsd_data0_spmi &qdsd_data3_spmi>;
+};
+
+&soc {
+	 sound {
+	qcom,msm-spk-ext-pa = <&msm_gpio 86 0>;
+	qcom,msm-spk-boost-en = <&msm_gpio 24 0>;
+	};
+};
+#include "../msm8952-common.dtsi"
