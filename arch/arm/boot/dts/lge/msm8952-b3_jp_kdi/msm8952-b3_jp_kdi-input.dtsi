@@ -65,11 +65,11 @@
 		sw_reset_delay = <90>;
 		use_lpwg = <1>;
 		use_lpwg_test = <1>;
-		hide_coordinate = <0>;
+		hide_coordinate = <1>;
 
 		/* firmware */
 		use_upgrade = <1>;
-		fw_image = "novatek/b3/B3_053.bin";
+		fw_image = "novatek/b3/B3J_004.bin";
 		panel_spec = "novatek/b3/NT11206_limit.txt";
 		panel_spec_mfts = "novatek/b3/NT11206_limit_mfts.txt";
 	};

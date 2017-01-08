@@ -213,7 +213,7 @@
 		qcom,calibration-type = "ratiometric";
 		qcom,scale-function = <0>;
 		qcom,hw-settle-time = <2>;
-		qcom,fast-avg-setup = <3>;
+		qcom,fast-avg-setup = <0>;
 	};
 };
 
@@ -266,6 +266,20 @@
 		qcom,limit-temp = <90>;
 		qcom,freq-step = <1>;
 		qcom,core-limit-temp = <100>;
+	};
+
+	qcom,bcl {
+		qcom,bcl-freq-control-list = <&CPU0 &CPU1 &CPU2 &CPU3
+						&CPU4 &CPU5 &CPU6 &CPU7>;
+		qcom,ibat-monitor {
+			qcom,low-threshold-uamp = <3000000>;
+			qcom,high-threshold-uamp = <3500000>;
+			qcom,mitigation-freq-khz = <998400>;
+			qcom,vph-high-threshold-uv = <3500000>;
+			qcom,vph-low-threshold-uv = <3200000>;
+			qcom,soc-low-threshold = <0>;
+			qcom,thermal-handle = <&msm_thermal_freq>;
+		};
 	};
 
 };

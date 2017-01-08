@@ -54,7 +54,7 @@
 	qcom,fg-iterm-ma = <180>;
 	qcom,ext-sense-type;
 	qcom,resume-soc = <99>;
-	vbat-estimate-diff-mv = <200>;
+	vbat-estimate-diff-mv = <250>;
 	qcom,fg-cutoff-voltage-mv = <3400>;
 };
 
@@ -200,7 +200,7 @@
 		qcom,calibration-type = "ratiometric";
 		qcom,scale-function = <0>;
 		qcom,hw-settle-time = <2>;
-		qcom,fast-avg-setup = <3>;
+		qcom,fast-avg-setup = <0>;
 	};
 };
 

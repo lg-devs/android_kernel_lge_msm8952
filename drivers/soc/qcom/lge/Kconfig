@@ -12,6 +12,13 @@ config MACH_MSM8952_B3
 	help
 	  Support for the Qualcomm MSM8952 B3 device.
 
+config MACH_MSM8952_B5
+	bool "MSM8952 B5"
+	depends on ARCH_MSM8916
+	select MACH_LGE
+	help
+	  Support for the Qualcomm MSM8952 B5 device.
+
 config MACH_MSM8952_B3_OPEN_KR
 	bool "MSM8952 B3_OPEN_KR"
 	depends on MACH_MSM8952_B3
@@ -56,14 +63,49 @@ config MACH_MSM8952_B3_JP_KDI
 
 config MACH_MSM8952_B5_ATT_US
 	bool "MSM8952 B5_ATT_US"
-	depends on MACH_MSM8952_B3
+	depends on MACH_MSM8952_B5
 	select MACH_LGE
 	help
 	  Support for the Qualcomm MSM8952 B5_ATT_US device.
 
+config MACH_MSM8952_B5_OPEN_KR
+	bool "MSM8952 B5_OPEN_KR"
+	depends on MACH_MSM8952_B5
+	select MACH_LGE
+	help
+	  Support for the Qualcomm MSM8952 B5_OPEN_KR device.
+
+config MACH_MSM8952_B5_ACG_US
+	bool "MSM8952 B5_ACG_US"
+	depends on MACH_MSM8952_B5
+	select MACH_LGE
+	help
+	  Support for the Qualcomm MSM8952 B5_ACG_US device.
+
+config MACH_MSM8952_B5_OPEN_US
+	bool "MSM8952 B5_OPEN_US"
+	depends on MACH_MSM8952_B5
+	select MACH_LGE
+	help
+	  Support for the Qualcomm MSM8952 B5_OPEN_US device.
+
+config MACH_MSM8952_B5_USC_US
+	bool "MSM8952 B5_USC_US"
+	depends on MACH_MSM8952_B5
+	select MACH_LGE
+	help
+	  Support for the Qualcomm MSM8952 B5_USC_US device.
+
+config MACH_MSM8952_B5_JP_KDI
+	bool "MSM8952 B5_JP_KDI"
+	depends on MACH_MSM8952_B5
+	select MACH_LGE
+	help
+	  Support for the Qualcomm MSM8952 B5_JP_KDI device.
+
 config MACH_MSM8952_P1V_ATT_US
 	bool "MSM8952 P1V_ATT_US"
-	depends on MACH_MSM8952_B3
+	depends on ARCH_MSM8916
 	select MACH_LGE
 	help
 	  Support for the Qualcomm MSM8952 P1V_ATT_US device.
