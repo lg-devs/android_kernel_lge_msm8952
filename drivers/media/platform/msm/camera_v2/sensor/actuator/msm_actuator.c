@@ -40,6 +40,7 @@ static struct msm_actuator msm_piezo_actuator_table;
 static struct msm_actuator msm_hvcm_actuator_table;
 static struct msm_actuator msm_bivcm_actuator_table;
 
+static int32_t actuator_num = 0;/* LGE_CHANGE, Fixes to separate i2c setting by actuator name, dongsu.bag, 2015.11.23*/
 static struct i2c_driver msm_actuator_i2c_driver;
 static struct msm_actuator *actuators[] = {
 	&msm_vcm_actuator_table,
@@ -100,6 +101,9 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 			if (write_arr[i].reg_addr != 0xFFFF) {
 				i2c_byte1 = write_arr[i].reg_addr;
 				i2c_byte2 = value;
+/* LGE_CHANGE_S, jaehan.jeong, 2014.2.13, To apply  the change I2C order for DW9718, [STARTS HERE] */
+				switch(actuator_num){
+					case 9714: //dw9714, QCT original
 				if (size != (i+1)) {
 					i2c_byte2 = value & 0xFF;
 					CDBG("byte1:0x%x, byte2:0x%x\n",
@@ -120,6 +124,26 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 					i2c_byte1 = write_arr[i].reg_addr;
 					i2c_byte2 = (value & 0xFF00) >> 8;
 				}
+						break;
+					case 9716: //dw9716
+					case 9718: //dw9718
+					case 9719: //dw9719
+					case 517: //wv517
+					default:
+						if (size != (i+1)) {
+							i2c_byte2 = (value & 0xFF00) >> 8;
+							CDBG("byte1:0x%x, byte2:0x%x\n", i2c_byte1, i2c_byte2);
+							i2c_tbl[a_ctrl->i2c_tbl_index].reg_addr = i2c_byte1;
+							i2c_tbl[a_ctrl->i2c_tbl_index].reg_data = i2c_byte2;
+							i2c_tbl[a_ctrl->i2c_tbl_index].delay = 0;
+							a_ctrl->i2c_tbl_index++;
+							i++;
+							i2c_byte1 = write_arr[i].reg_addr;
+							i2c_byte2 = (value & 0x00FF);
+						}
+						break;
+				}
+/* LGE_CHANGE_E, jaehan.jeong, 2014.2.13, To apply  the change I2C order for DW9718, [STARTS HERE] */
 			} else {
 				i2c_byte1 = (value & 0xFF00) >> 8;
 				i2c_byte2 = value & 0xFF;
@@ -398,6 +422,10 @@ static int32_t msm_actuator_init_focus(struct msm_actuator_ctrl_t *a_ctrl,
 
 		if (rc < 0)
 			break;
+		}
+		if (0 != settings[i].delay) {
+			msleep(settings[i].delay);
+			pr_err("[WAIT][%d] msleep(%d)\n", i, settings[i].delay);
 		}
 	}
 
@@ -1359,7 +1387,7 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 	return rc;
 }
 
-static int msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl)
+static int msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl, enum af_camera_name actuator_name)
 {
 	int rc = 0;
 	CDBG("Enter\n");
@@ -1372,6 +1400,35 @@ static int msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl)
 			&a_ctrl->i2c_client, MSM_CCI_INIT);
 		if (rc < 0)
 			pr_err("cci_init failed\n");
+	}
+	switch(actuator_name){
+			case ACTUATOR_MAIN_CAM_0: //dw9716
+				pr_err("[CHECK] this is dw9716!!\n");
+				actuator_num = 9716;
+				break;
+			case ACTUATOR_MAIN_CAM_1: //dw9718
+				pr_err("[CHECK] this is 9718!!\n");
+				actuator_num = 9718;
+				break;
+			case ACTUATOR_MAIN_CAM_2: //wv517
+				pr_err("[CHECK] this is wv517!!\n");
+				actuator_num = 517;
+				break;
+			case ACTUATOR_MAIN_CAM_3: //dw9714
+				pr_err("[CHECK] this is dw9714!!\n");
+				actuator_num = 9714;
+				break;
+			case ACTUATOR_MAIN_CAM_4: //dw9719
+				pr_err("[CHECK] this is dw9719!!\n");
+				actuator_num = 9719;
+				break;
+			case ACTUATOR_MAIN_CAM_5:
+				pr_info("[CHECK] this is zc533!!\n");
+				actuator_num = 533;
+				break;
+			default:
+				pr_err("[CHECK] check the actuator name in af_actuator_init() ");
+				break;
 	}
 	a_ctrl->actuator_state = ACT_OPS_ACTIVE;
 	CDBG("Exit\n");
@@ -1402,7 +1459,13 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 
 	switch (cdata->cfgtype) {
 	case CFG_ACTUATOR_INIT:
+		/* LGE_CHANGE_S, Fixes to separate i2c setting by actuator name, dongsu.bag, 2015.11.23*/
+		#if 0 // QCT orginal
 		rc = msm_actuator_init(a_ctrl);
+		#else 
+		rc = msm_actuator_init(a_ctrl, cdata->cfg.cam_name);
+		#endif
+		/* LGE_CHANGE_E, Fixes to separate i2c setting by actuator name, dongsu.bag, 2015.11.23*/
 		if (rc < 0)
 			pr_err("msm_actuator_init failed %d\n", rc);
 		break;

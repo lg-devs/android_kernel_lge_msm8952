@@ -113,6 +113,10 @@ enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_FL_RESET,
 	SENSOR_GPIO_CUSTOM1,
 	SENSOR_GPIO_CUSTOM2,
+/* LGE_CHANGE_S, camera bring-up, 2015-05-10, byungsoo.moon@lge.com */
+	SENSOR_GPIO_LDAF_EN,
+	SENSOR_GPIO_LDO_EN,
+/* LGE_CHANGE_E, camera bring-up, 2014-05-10, byungsoo.moon@lge.com */
 	SENSOR_GPIO_MAX,
 };
 
@@ -182,6 +186,8 @@ enum msm_flash_cfg_type_t {
 	CFG_FLASH_OFF,
 	CFG_FLASH_LOW,
 	CFG_FLASH_HIGH,
+/* LGE: For torch, Video recording */
+	CFG_FLASH_TORCH
 };
 
 enum msm_sensor_output_format_t {
@@ -262,6 +268,9 @@ struct msm_camera_sensor_slave_info {
 	char actuator_name[32];
 	char ois_name[32];
 	char flash_name[32];
+/* LGE_CHANGE_S, proxy, 2015-05-10, byungsoo.moon@lge.com */
+	char proxy_name[32];
+/* LGE_CHANGE_E, proxy, 2015-05-10, byungsoo.moon@lge.com */
 	enum msm_sensor_camera_id_t camera_id;
 	unsigned short slave_addr;
 	enum i2c_freq_mode_t i2c_freq_mode;
