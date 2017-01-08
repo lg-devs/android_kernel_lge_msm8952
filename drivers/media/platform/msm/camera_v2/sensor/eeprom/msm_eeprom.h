@@ -46,6 +46,39 @@ struct msm_eeprom_ctrl_t {
 	int32_t userspace_probe;
 	struct msm_eeprom_memory_block_t cal_data;
 	uint8_t is_supported;
+	/* LGE_CHANGE_S, Add CRC check code for AAT camera, 2016-01-08, dongsu.bag@lge.com */
+	enum camb_position_t position;
+	uint8_t AAT_Checksum;
+	/* LGE_CHANGE_E, Add CRC check code for AAT camera, 2016-01-08, dongsu.bag@lge.com */
 };
 
+//EEPROM Code Refinement, Camera-Driver@lge.com, 2015-06-11
+typedef enum {
+	BigEndian,
+	LittleEndian,
+} Endian;
+
+#define MODULE_VENDOR_ID 0x700
+
+//Module Selector
+int32_t msm_eeprom_checksum_imtech(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_lgit(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_cowell(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_sunny(struct msm_eeprom_ctrl_t *e_ctrl);
+uint32_t msm_s5k5e2_eeprom_checksum(struct msm_eeprom_ctrl_t *e_ctrl);
+
+//Module CheckSum routine
+int32_t msm_eeprom_checksum_cowell_zc533(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_cowell_hi841(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_imtech_ov8858(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_imtech_t4kb3(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_imtech_hi841(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_lgit_v0d(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_lgit_v0d_t4ka3(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_sunny_ov13850(struct msm_eeprom_ctrl_t *e_ctrl);
+int32_t msm_eeprom_checksum_lgit_at24c16d(struct msm_eeprom_ctrl_t *e_ctrl);
+
+//Helper function for arithmetic shifted addition / just accumulation
+uint32_t shiftedSum (struct msm_eeprom_ctrl_t *e_ctrl, uint32_t startAddr, uint32_t endAddr, Endian endian);
+uint32_t accumulation (struct msm_eeprom_ctrl_t *e_ctrl, uint32_t startAddr, uint32_t endAddr);
 #endif

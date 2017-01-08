@@ -321,6 +321,90 @@ static int32_t msm_sensor_fill_ois_subdevid_by_name(
 	return rc;
 }
 
+#if defined(CONFIG_LG_PROXY)
+static int32_t msm_sensor_fill_proxy_subdevid_by_name(
+				struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int32_t rc = 0;
+	struct device_node *src_node = NULL;
+	uint32_t val = 0;
+	int32_t *proxy_subdev_id;
+	struct  msm_sensor_info_t *sensor_info;
+	struct device_node *of_node = s_ctrl->of_node;
+	
+	if (!of_node)
+		return -EINVAL;
+
+	sensor_info = s_ctrl->sensordata->sensor_info;
+	proxy_subdev_id = &sensor_info->subdev_id[SUB_MODULE_PROXY];
+	/*
+	 * string for ois name is valid, set sudev id to -1
+	 * and try to found new id
+	 */
+	*proxy_subdev_id = -1;
+
+	src_node = of_parse_phandle(of_node, "qcom,proxy-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		CDBG("%s qcom,proxy cell index %d, rc %d\n", __func__,
+			val, rc);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			return -EINVAL;
+		}
+		*proxy_subdev_id = val;
+		of_node_put(src_node);
+		src_node = NULL;
+	}
+
+	return rc;
+}
+/* LGE_CHANGE_E, proxy, 2015-05-10, byungsoo.moon@lge.com */
+#endif
+
+#if defined(CONFIG_LG_TCS)
+static int32_t msm_sensor_fill_tcs_subdevid_by_name(
+                                struct msm_sensor_ctrl_t *s_ctrl)
+{
+        int32_t rc = 0;
+        struct device_node *src_node = NULL;
+        uint32_t val = 0;
+        int32_t *tcs_subdev_id;
+        struct  msm_sensor_info_t *sensor_info;
+        struct device_node *of_node = s_ctrl->of_node;
+
+        if (!of_node)
+                return -EINVAL;
+
+        sensor_info = s_ctrl->sensordata->sensor_info;
+        tcs_subdev_id = &sensor_info->subdev_id[SUB_MODULE_TCS];
+        /*
+         * string for tcs name is valid, set sudev id to -1
+         * and try to found new id
+         */
+        *tcs_subdev_id = -1;
+
+        src_node = of_parse_phandle(of_node, "qcom,tcs-src", 0);
+        if (!src_node) {
+                CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+        } else {
+                rc = of_property_read_u32(src_node, "cell-index", &val);
+                CDBG("%s qcom,tcs cell index %d, rc %d\n", __func__,
+                        val, rc);
+                if (rc < 0) {
+                        pr_err("%s failed %d\n", __func__, __LINE__);
+                        return -EINVAL;
+                }
+                *tcs_subdev_id = val;
+                of_node_put(src_node);
+                src_node = NULL;
+        }
+
+        return rc;
+}
+#endif
 static int32_t msm_sensor_fill_slave_info_init_params(
 	struct msm_camera_sensor_slave_info *slave_info,
 	struct msm_sensor_info_t *sensor_info)
@@ -922,6 +1006,22 @@ CSID_TG:
 		pr_err("%s failed %d\n", __func__, __LINE__);
 		goto free_camera_info;
 	}
+#if defined(CONFIG_LG_PROXY)
+	rc = msm_sensor_fill_proxy_subdevid_by_name(s_ctrl);
+	if (rc < 0) {
+		pr_err("%s failed %d\n", __func__, __LINE__);
+		goto free_camera_info;
+	}
+#endif
+
+#if defined(CONFIG_LG_TCS)
+	rc = msm_sensor_fill_tcs_subdevid_by_name(s_ctrl);
+                if (rc < 0) {
+                        pr_err("%s failed %d\n", __func__, __LINE__);
+                        goto free_camera_info;
+                }
+
+#endif
 
 	/* Power up and probe sensor */
 	rc = s_ctrl->func_tbl->sensor_power_up(s_ctrl);

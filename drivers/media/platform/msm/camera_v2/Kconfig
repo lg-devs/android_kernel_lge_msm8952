@@ -9,6 +9,18 @@ config MSM_CAMERA_SENSOR
           data for camera support. The driver support V4L2
           subdev APIs.
 
+config LG_PROXY
+        bool "Qualcomm MSM camera proxy support"
+        depends on MSMB_CAMERA
+        ---help---
+        Enable support for proxy sensor for msm camera.
+
+config LG_TCS
+        bool "Qualcomm MSM camera TCS support"
+        depends on MSMB_CAMERA
+        ---help---
+        Enable support for true color sensor for msm camera.
+
 config MSM_CPP
         bool "Qualcomm MSM Camera Post Processing Engine support"
         depends on MSMB_CAMERA
@@ -157,7 +169,37 @@ config OV5648
 		preview set to 1296*972 at 30 fps,
 		snapshot set to 2592*1944 at 12 fps,
 		This sensor driver does not support auto focus.
+config S5K3L2
+	bool "Sensor S5K3L2 (BAYER 13M)"
+	depends on MSMB_CAMERA
+	---help---
+		Samsung 13 MP Bayer Sensor, use 4 mipi lanes,
+		preview set to 1296*972 at 30 fps,
+		snapshot set to 2592*1944 at 12 fps,
+		This sensor driver does not support auto focus.
 
+config S5K3P3
+	bool "Sensor S5K3P3 (BAYER 16M)"
+	depends on MSMB_CAMERA
+	---help---
+		Samsung 16 MP Bayer Sensor, use 4 mipi lanes,
+		preview set to 1296*972 at 30 fps,
+		snapshot set to 4624*3466 at 12 fps,
+		This sensor driver does not support auto focus.
+
+config OV5670
+	bool "Sensor OV5670 (BAYER 5M)"
+	depends on MSMB_CAMERA
+	---help---
+		OmniVision 5 MP Bayer Sensor, use 2 mipi lanes,
+		preview set to 1296*972 at 30 fps,
+		snapshot set to 2592*1944 at 12 fps,
+		This sensor driver does not support auto focus.
+config SYNC_MAIN_VT_POWER
+	bool "sync main vt power"
+	depends on MSMB_CAMERA
+	---help---
+		for sync main vt power up/down
 config MT9M114
 	bool "Sensor MT9M114 (YUV 1.26MP)"
 	depends on MSMB_CAMERA
@@ -247,6 +289,14 @@ config OV8865
 		snapshot config = 3264 * 2448 at 30 fps.
 		Max fps is 30fps at 3264 * 2448, 60fps at 1632 * 1224
 
+config S5K5E2
+	bool "Sensor S5K5E2 (BAYER 5MP)"
+	depends on MSMB_CAMERA
+	---help---
+		Samsung 5 MP Bayer Sensor. It uses 2 mipi lanes,
+		supports 720P preview at 30 fps
+		and QSXGA snapshot at 15 fps.
+		This sensor driver does not support auto focus.
 config s5k4e1
 	bool "Sensor s5k4e1 (BAYER 5MP)"
 	depends on MSMB_CAMERA
@@ -264,6 +314,33 @@ config OV12830
 		4 mipi lanes, preview config = 2112 * 1500 at 30 fps,
 		snapshot config = 4224 * 3000 at 15 fps.
 		2 lanes max fps is 18, 4 lanes max fps is 24.
+
+
+config IMX219
+	bool "Sensor imx219 (Sony 8MP)"
+	depends on MSMB_CAMERA
+	---help---
+		Support for IMX219 sensor driver.
+		This is a Sony 8MP Bayer Sensor with autofocus.
+		Say Y if the platform uses IMX219 sensor.
+
+config OV8858
+	bool "OmniVision OV8858 (BAYER 8MP)"
+	depends on MSMB_CAMERA
+	---help---
+		OmniVision 8 MP Bayer Sensor with auto focus.uses
+		4 mipi lanes, preview config = 1632*1224 30 fps,
+		snapshot config = 3264 * 2448 at 30 fps.
+		Max fps is 30fps at 3264 * 2448, 60fps at 1632 * 1224
+
+config HI553
+	bool "Hinix HI553 (BAYER 5MP)"
+	depends on MSMB_CAMERA
+	---help---
+		Hinix 5 MP Bayer Sensor with auto focus.uses
+		2 mipi lanes, preview config = 1280*960 30 fps,
+		snapshot config = 2560 * 1920 at 30 fps.
+		Max fps is 30fps at 2560 * 1920
 
 config MSM_V4L2_VIDEO_OVERLAY_DEVICE
 	tristate "Qualcomm MSM V4l2 video overlay device"

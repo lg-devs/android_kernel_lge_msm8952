@@ -456,6 +456,7 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 			__func__, __LINE__, power_info, sensor_i2c_client);
 		return -EINVAL;
 	}
+	pr_err("%s for %s\n", __func__, s_ctrl->sensordata->sensor_name);
 	return msm_camera_power_down(power_info, sensor_device_type,
 		sensor_i2c_client);
 }
@@ -497,8 +498,18 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 	for (retry = 0; retry < 3; retry++) {
 		rc = msm_camera_power_up(power_info, s_ctrl->sensor_device_type,
 			sensor_i2c_client);
+/* LGE_CHANGE_S, sync main and vt power, 2015-06-27, byungsoo.moon@lge.com */
+#if defined(CONFIG_SYNC_MAIN_VT_POWER)
+		if (rc < 0) {
+			msleep(100);
+			pr_err("[CHECK] retry power_up %s:%d\n", __func__, __LINE__);
+			continue;
+		}
+#else
 		if (rc < 0)
 			return rc;
+#endif
+/* LGE_CHANGE_S, sync main and vt power, 2015-06-27, byungsoo.moon@lge.com */
 		rc = msm_sensor_check_id(s_ctrl);
 		if (rc < 0) {
 			msm_camera_power_down(power_info,
@@ -509,7 +520,7 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 			break;
 		}
 	}
-
+	pr_err("%s for %s\n", __func__, s_ctrl->sensordata->sensor_name);
 	return rc;
 }
 
@@ -564,7 +575,7 @@ int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 		return rc;
 	}
 
-	CDBG("%s: read id: 0x%x expected id 0x%x:\n", __func__, chipid,
+	pr_err("%s: read id: 0x%x expected id 0x%x:\n", __func__, chipid,
 		slave_info->sensor_id);
 	if (msm_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
 		pr_err("msm_sensor_match_id chip id doesnot match\n");
@@ -1650,6 +1661,8 @@ int32_t msm_sensor_platform_probe(struct platform_device *pdev,
 			return rc;
 		}
 	}
+	pr_err("%s sensor name %s\n", __func__,
+		s_ctrl->sensordata->sensor_name);
 	s_ctrl->sensordata->power_info.dev = &pdev->dev;
 	s_ctrl->sensor_device_type = MSM_CAMERA_PLATFORM_DEVICE;
 	s_ctrl->sensor_i2c_client->cci_client = kzalloc(sizeof(
@@ -1665,6 +1678,7 @@ int32_t msm_sensor_platform_probe(struct platform_device *pdev,
 	cci_client->sid =
 		s_ctrl->sensordata->slave_info->sensor_slave_addr >> 1;
 	cci_client->cid = 0;
+	cci_client->i2c_freq_mode = I2C_FAST_MODE; /* LGE_CHANGE, Fix for setting to use I2C speed as 400Khz , 2015-10-22, dongsu.bag@lge.com */
 	cci_client->retries = 3;
 	cci_client->id_map = 0;
 	if (!s_ctrl->func_tbl)
