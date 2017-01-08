@@ -12,6 +12,8 @@ menuconfig INPUT_TOUCHSCREEN
 if INPUT_TOUCHSCREEN
 
 source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
+source "drivers/input/touchscreen/lge/Kconfig"
+source "drivers/input/touchscreen/lge_jp/Kconfig"
 
 config TOUCHSCREEN_88PM860X
 	tristate "Marvell 88PM860x touchscreen"
@@ -1028,6 +1030,105 @@ config SECURE_TOUCH
 
 	  If unsure, say N.
 
+
+config TOUCHSCREEN_UNIFIED_DRIVER
+	bool "LGE Unified driver"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you use lge unified driver
+	 if unsure, say N
+
+config TOUCHSCREEN_UNIFIED_DRIVER_3
+        bool "LGE Unified driver Ver3.0"
+        depends on I2C
+        default n
+        help
+         Say Y here if you use lge unified driver ver3.0
+         if unsure, say N
+
+
+config TOUCHSCREEN_MSM8939_P1B
+	bool "LGE Device"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you use lge unified driver
+	 if unsure, say N
+
+
+config TOUCHSCREEN_S3320
+	bool "Synaptics S3320"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you have a LEADINGUI LU202x I2C touchscreen
+	 connected to your system.
+
+
+config TOUCHSCREEN_MSM8952_P1V
+	bool "LGE P1V Device"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you use lge unified driver
+	 if unsure, say N
+
+config TOUCHSCREEN_MSM8952_PH2
+	bool "LGE PH2 Device"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you use lge unified driver
+	 if unsure, say N
+
+config TOUCHSCREEN_LR388K5
+	bool "Sharp LR388K5"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you have a Sharp LR388K5 I2C touchscreen
+	 connected to your system.
+
+config TOUCHSCREEN_LR388K6
+	bool "Sharp LR388K56"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you have a Sharp LR388K6 I2C touchscreen
+	 connected to your system.
+
+config TOUCHSCREEN_SHTSC
+	tristate "SHARP touchscreen controllers"
+	depends on I2C
+	default n
+	help
+	  SHARP touchscreen controller driver.
+	  Do not forget to define either TOUCHSCREEN_SHTSC_I2C or TOUCHSCREEN_SHTSC_SPI
+	  (now supports LR388K5 i2c mode only)
+
+config TOUCHSCREEN_SHTSC_I2C
+	tristate "SHARP touchscreen driver for I2C"
+	depends on I2C
+	default n
+	help
+	  SHARP I2C touchscreen driver
+
+config TOUCHSCREEN_SHTSC_SPI
+	tristate "SHARP touchscreen driver for SPI"
+	depends on SPI_MASTER
+	default n
+	help
+	  SHARP SPI touchscreen driver
+
+config TOUCHSCREEN_LGE_LPWG
+	bool "LGE Touch LPWG feature"
+	depends on I2C
+	default n
+	help
+	 Say Y here if you use lge LPWG feature
+	 if unsure, say N
+
 config TOUCHSCREEN_GT9XX
 	bool "Goodix touchpanel GT9xx series"
 	depends on I2C
@@ -1074,4 +1175,66 @@ config TOUCHSCREEN_IT7260_I2C
 	  To compile this driver as a module, choose M here: the
 	  module will be called it7258_ts_i2c.
 
+config TOUCHSCREEN_ATMEL_2954
+	tristate "Atmel mXT 2954 I2C Touchscreen"
+	depends on I2C
+	help
+	  Say Y here if you have Atmel mXT series I2C touchscreen,
+	  such as AT42QT602240/ATMXT224, connected to your system.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called atmel_2954.
+
+config TOUCHSCREEN_ATMEL_T1664
+	tristate "Atmel mXT 1664T2 I2C Touchscreen"
+	depends on I2C
+	help
+	  Say Y here if you have Atmel mXT series I2C touchscreen,
+	  such as AT42QT602240/ATMXT224, connected to your system.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called atmel_t1664.
+
+config TOUCHSCREEN_ATMEL_LPWG_DEBUG_REASON
+    tristate "Atmel LPWG Debug Reason enable feature based touchscreens"
+    depends on I2C
+    default n
+    help
+        Say Y here if you have an Atmel Maxtouch based touchscreen and LPWG Debug Reason.
+
+config TOUCHSCREEN_MSG_INFO_PRINT
+	tristate "Touchscreen Message Information Print"
+	default n
+	help
+	  This enables support for printing the log message
+	  which has informative level.
+
+	  Say Y here if you want to enable the driver.
+
+	  If unsure, say N.
+
+config TOUCHSCREEN_ATMEL_STYLUS_PEN
+    tristate "Atmel Stylus pen enable feature based touchscreens"
+    depends on I2C
+    default n
+    help
+        Say Y here if you have an Atmel Maxtouch based touchscreen and stylus pen.
+
 endif
+
+config TOUCHSCREEN_LGE_SIC
+	tristate "LGE SIC I2C touchscreen"
+	depends on I2C
+	help
+	  Enables LGE SIC I2C Touch Screens
+
+config TOUCHSCREEN_SIC_FW_PATH
+	string "LGE SIC Touchscreen Firmware Path"
+	help
+	TOUCHSCREEN_SIC_FW_PATH is set to path of LGE SIC firmware
+	in firmware/sic
+	ex) TOUCHSCREEN_SIC_FW_PATH="p1v"
