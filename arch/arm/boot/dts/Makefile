@@ -214,6 +214,7 @@ targets += $(DTB_LIST)
 
 #used for cleaning - not building
 subdir- := dts/qcom
+subdir- += dts/lge
 endif
 
 # *.dtb used to be generated in the directory above. Clean out the
