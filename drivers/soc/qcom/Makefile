@@ -92,3 +92,5 @@ obj-$(CONFIG_MSM_PACMAN)        += msm_pacman.o
 obj-$(CONFIG_MSM_TEST_PACMAN)        += msm_test_pacman.o
 obj-$(CONFIG_TRACER_PKT) += tracer_pkt.o
 obj-$(CONFIG_MSM_VSENS) += vsens.o
+
+obj-y += lge/

@@ -62,6 +62,9 @@ enum {
 	HW_PLATFORM_RCM	= 21,
 	HW_PLATFORM_STP = 23,
 	HW_PLATFORM_SBC = 24,
+#ifdef CONFIG_MACH_MSM8952_P1V_ATT_US
+	HW_PLATFORM_P1V_ATT_US = 0x60,
+#endif
 	HW_PLATFORM_INVALID
 };
 
@@ -82,6 +85,9 @@ const char *hw_platform[] = {
 	[HW_PLATFORM_DTV] = "DTV",
 	[HW_PLATFORM_STP] = "STP",
 	[HW_PLATFORM_SBC] = "SBC",
+#ifdef CONFIG_MACH_MSM8952_P1V_ATT_US
+	[HW_PLATFORM_P1V_ATT_US] = "P1V_ATT_US",
+#endif
 };
 
 enum {
@@ -542,6 +548,19 @@ static struct socinfo_v1 dummy_socinfo = {
 	.format = 1,
 	.version = 1,
 };
+
+#ifdef CONFIG_LGE_PM_SMPL_COUNT
+u16 *poweron_st = 0;
+uint16_t power_on_status_info_get(void)
+{
+	poweron_st = smem_alloc(SMEM_POWER_ON_STATUS_INFO, sizeof(poweron_st),
+		0,SMEM_ANY_HOST_FLAG);
+
+	if( poweron_st == NULL ) return 0 ;
+	return *poweron_st;
+}
+EXPORT_SYMBOL(power_on_status_info_get);
+#endif
 
 uint32_t socinfo_get_id(void)
 {

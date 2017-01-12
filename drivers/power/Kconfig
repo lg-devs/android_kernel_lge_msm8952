@@ -564,8 +564,92 @@ config MSM_BCL_PERIPHERAL_CTL
 	  provides routines to configure and monitor the BCL
 	  PMIC peripheral.
 
+config LGE_PM_CHARGE_INFO
+	bool "LGE PM charging information"
+	depends on SPMI
+	depends on MSM_BCL_CTL
+	help
+	  Say Y here to enable LGE charging informaion kernel log.
+
+config LGE_PM_PWR_KEY_FOR_CHG_LOGO
+	bool "Control the PWR KEY for charger logo"
+	depends on LGE_PM
+	help
+	  PWR KEY could be controlled by this code.
+
+config LGE_PM_USE_SIDE_PWR_KEY
+	bool "Control for charger logo if use side power key"
+	depends on LGE_PM
+	help
+	  it could be controlled if used side PWR KEY
+
 source "drivers/power/reset/Kconfig"
 
+config LGE_PM_SOC_SCALING
+       bool "Battery Capacity Scaling"
+       depends on LGE_PM
+       help
+         Say Y here to enable the battery capacity to be scaled.
+
+config LGE_PM_SMPL_COUNT
+	bool "SMPL Counter"
+	depends on LGE_PM
+	help
+	  Say Y here to enable smpl count for hiddenmenu.
+config LGE_PM_FLOATED_CHARGER
+	bool "floated charger"
+	depends on LGE_PM
+	default n
+	help
+	  Enable floated charger
+
+config LGE_PM_OLD_PSY_NODE
+	bool "old power supply node"
+	depends on LGE_PM
+	default n
+	help
+	  Enable old power supply node
+
+config LGE_PM_EMBEDDED_BATTERY
+	bool "embedded battery"
+	depends on LGE_PM
+	default n
+	help
+	  Enable embedded battery
+
+config LGE_PM_NOT_USE_QC20
+	bool "doesn't quick charging 2.0"
+	depends on LGE_PM
+	help
+	  Disable quick charging 2.0
+
+config LGE_PM_WA_FG_WRONG_SOC
+	bool "work around for fuelgauge"
+	depends on LGE_PM
+	help
+	  Enable work around for fuelgauge
+
+config LGE_PM_FG_AGE
+	tristate "QPNP FG battery age mode"
+	depends on LGE_PM
+	default n
+	help
+	 Say Y to enable to battery age mode for KDDI.
+	 age value is 1 = very good condition
+	 age value is 2 = good condition
+	 age value is 3 = bad condition
+
+config LGE_PM_QC20_DETECT
+	bool "detect quick charging 2.0 for hiddenmenu"
+	depends on LGE_PM
+	help
+	  Detect quick charging 2.0 for hiddenmenu
+
+config LGE_PM_CHARGING_SLEEP
+	bool "enter sleep during charging"
+	depends on LGE_PM
+	help
+	  Enable sleep during charging
 endif # POWER_SUPPLY
 
 source "drivers/power/avs/Kconfig"

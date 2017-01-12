@@ -698,6 +698,6 @@ config MSM_VSENS
 	  Say yes to support these devices.
 
 source "drivers/soc/qcom/memshare/Kconfig"
-source "drivers/soc/qcom/lge/Kconfig""
+source "drivers/soc/qcom/lge/Kconfig"
 
 endif # ARCH_MSM
