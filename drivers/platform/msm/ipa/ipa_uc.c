@@ -428,7 +428,7 @@ static void ipa_uc_response_hdlr(enum ipa_irq_type interrupt,
 	WARN_ON(private_data != ipa_ctx);
 
 	ipa_inc_client_enable_clks();
-	IPADBG("uC rsp opcode=%u\n",
+	IPAERR("uC rsp opcode=%u\n",
 			ipa_ctx->uc_ctx.uc_sram_mmio->responseOp);
 
 	feature = EXTRACT_UC_FEATURE(ipa_ctx->uc_ctx.uc_sram_mmio->responseOp);
@@ -442,11 +442,12 @@ static void ipa_uc_response_hdlr(enum ipa_irq_type interrupt,
 
 	/* Feature specific handling */
 	if (uc_hdlrs[feature].ipa_uc_response_hdlr) {
+		IPAERR("Feaure specific handling will not be hit.\n");
 		res = uc_hdlrs[feature].ipa_uc_response_hdlr(
 			ipa_ctx->uc_ctx.uc_sram_mmio,
 			&ipa_ctx->uc_ctx.uc_status);
 		if (res == 0) {
-			IPADBG("feature %d specific response handler\n",
+			IPAERR("feature %d specific response handler\n",
 				feature);
 			complete_all(&ipa_ctx->uc_ctx.uc_completion);
 			ipa_dec_client_disable_clks();
@@ -471,7 +472,7 @@ static void ipa_uc_response_hdlr(enum ipa_irq_type interrupt,
 	} else if (ipa_ctx->uc_ctx.uc_sram_mmio->responseOp ==
 		   IPA_HW_2_CPU_RESPONSE_CMD_COMPLETED) {
 		uc_rsp.raw32b = ipa_ctx->uc_ctx.uc_sram_mmio->responseParams;
-		IPADBG("uC cmd response opcode=%u status=%u\n",
+		IPAERR("uC cmd response opcode=%u status=%u\n",
 		       uc_rsp.params.originalCmdOp,
 		       uc_rsp.params.status);
 		if (uc_rsp.params.originalCmdOp ==
@@ -593,6 +594,7 @@ int ipa_uc_send_cmd(u32 cmd, u32 opcode, u32 expected_status,
 		return -EBADF;
 	}
 
+//	IPAERR("Initializing the completion object, opcode: %d\n", opcode);
 	init_completion(&ipa_ctx->uc_ctx.uc_completion);
 
 	ipa_ctx->uc_ctx.uc_sram_mmio->cmdParams = cmd;
@@ -608,6 +610,8 @@ int ipa_uc_send_cmd(u32 cmd, u32 opcode, u32 expected_status,
 	wmb();
 
 	ipa_write_reg(ipa_ctx->mmio, IPA_IRQ_EE_UC_n_OFFS(0), 0x1);
+
+//	IPAERR("Wating for polling, opcode: %d\n", opcode);
 
 	if (polling_mode) {
 		for (index = 0; index < IPA_UC_POLL_MAX_RETRY; index++) {
@@ -736,7 +740,7 @@ int ipa_uc_reset_pipe(enum ipa_client_type ipa_client)
 	cmd.params.direction = (u8)(IPA_CLIENT_IS_PROD(ipa_client) ? 0 : 1);
 	cmd.params.pipeNum = (u8)ep_idx;
 
-	IPADBG("uC pipe reset on IPA %s pipe %d\n",
+	IPAERR("uC pipe reset on IPA %s pipe %d\n",
 	       IPA_CLIENT_IS_PROD(ipa_client) ? "CONS" : "PROD", ep_idx);
 
 	ret = ipa_uc_send_cmd(cmd.raw32b, IPA_CPU_2_HW_CMD_RESET_PIPE, 0,
